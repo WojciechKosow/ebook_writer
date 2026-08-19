@@ -25,7 +25,7 @@ public class JwtProvider {
     @Value("${jwt.expiration}")
     private long expiration;
 
-    @Value("${jwt.expiration.rememberMe:2592000000}")
+    @Value("${jwt.remember-me-expiration:2592000000}")
     private long rememberMeExpiration;
 
     private final UserRepository userRepository;
