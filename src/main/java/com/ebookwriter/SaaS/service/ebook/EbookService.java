@@ -2,14 +2,17 @@ package com.ebookwriter.SaaS.service.ebook;
 
 import com.ebookwriter.SaaS.dto.ChapterProgressDTO;
 import com.ebookwriter.SaaS.dto.EbookStatusResponse;
+import com.ebookwriter.SaaS.entity.CreditTransactionType;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookPdf;
 import com.ebookwriter.SaaS.entity.EbookStatus;
 import com.ebookwriter.SaaS.entity.User;
+import com.ebookwriter.SaaS.exceptions.InsufficientCreditsException;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookPdfRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.request.EbookRequest;
+import com.ebookwriter.SaaS.service.credit.CreditService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,9 +33,23 @@ public class EbookService {
     private final EbookChapterRepository chapterRepository;
     private final EbookPdfRepository pdfRepository;
     private final EbookGenerationService generationService;
+    private final CreditService creditService;
 
-    /** Persist the request and start generating in the background. */
+    /**
+     * Charge credits and start generating in the background. 1 credit per
+     * requested page. Throws {@link InsufficientCreditsException} (→ 402) if the
+     * balance can't cover it; the credits are refunded automatically if
+     * generation later fails.
+     */
     public Ebook createAndStart(User user, EbookRequest request) {
+        int requiredCredits = Math.max(1, request.getApproxPageCount());
+
+        // Fast pre-check so we don't create a row when the user clearly can't pay.
+        int balance = creditService.getBalance(user.getId());
+        if (balance < requiredCredits) {
+            throw new InsufficientCreditsException(requiredCredits, balance);
+        }
+
         Ebook ebook = Ebook.builder()
                 .user(user)
                 .topic(request.getTopic())
@@ -44,11 +61,22 @@ public class EbookService {
                 .sourceMaterial(request.getSourceMaterial())
                 .status(EbookStatus.PENDING)
                 .progress(0)
+                .creditsCharged(requiredCredits)
                 .build();
 
         ebook = ebookRepository.save(ebook);
 
-        // Row is committed by save(); safe to hand off to the async worker.
+        // Atomic deduct (race-safe). If a concurrent request drained the balance
+        // between the pre-check and here, roll back by removing the row.
+        try {
+            creditService.spend(user.getId(), requiredCredits, CreditTransactionType.GENERATION,
+                    ebook.getId(), "Ebook generation (" + requiredCredits + " pages)");
+        } catch (InsufficientCreditsException e) {
+            ebookRepository.delete(ebook);
+            throw e;
+        }
+
+        // Credits committed; safe to hand off to the async worker.
         generationService.generate(ebook.getId());
         return ebook;
     }
