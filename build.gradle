@@ -58,3 +58,14 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 }
+
+// Produce a single, predictably-named executable jar (build/libs/app.jar) and
+// skip the non-executable "-plain" jar, so the Docker/Railway run command is
+// unambiguous.
+tasks.named('bootJar') {
+	archiveFileName = 'app.jar'
+}
+
+tasks.named('jar') {
+	enabled = false
+}
