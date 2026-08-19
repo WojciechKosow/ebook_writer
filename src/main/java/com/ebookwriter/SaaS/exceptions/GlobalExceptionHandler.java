@@ -33,6 +33,18 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<?> handleNotFound(IllegalArgumentException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", e.getMessage() != null ? e.getMessage() : "Not found"));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<?> handleConflict(IllegalStateException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("message", e.getMessage() != null ? e.getMessage() : "Conflict"));
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<?> handleGeneric(RuntimeException ex) {
         String message = ex.getMessage() != null ? ex.getMessage() : "Unexpected error";
