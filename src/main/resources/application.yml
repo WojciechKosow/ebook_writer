@@ -59,6 +59,12 @@ app:
   cors:
     # Comma-separated exact origins (no trailing slash).
     allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
+  auth:
+    # Refresh-cookie attributes. Default None+Secure so the cookie works
+    # cross-site (frontend and backend on different domains). Use Lax/Strict
+    # only if the frontend and backend share a site.
+    cookie-same-site: ${APP_AUTH_COOKIE_SAME_SITE:None}
+    cookie-secure: ${APP_AUTH_COOKIE_SECURE:true}
 
 # Anthropic (Claude) — ebook generation. Model must be a Claude 4.6+ model
 # (adaptive thinking is used).
