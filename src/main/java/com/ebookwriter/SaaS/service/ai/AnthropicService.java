@@ -31,9 +31,14 @@ public class AnthropicService {
      * malformed response doesn't fail a whole book.
      */
     public String complete(String systemPrompt, String userPrompt, long maxTokens) {
+        return complete(systemPrompt, userPrompt, maxTokens, properties.getModel());
+    }
+
+    /** As {@link #complete(String, String, long)} but with an explicit model. */
+    public String complete(String systemPrompt, String userPrompt, long maxTokens, String model) {
 
         MessageCreateParams params = MessageCreateParams.builder()
-                .model(properties.getModel())
+                .model(model)
                 .maxTokens(maxTokens)
                 .system(systemPrompt)
                 .thinking(ThinkingConfigAdaptive.builder().build())

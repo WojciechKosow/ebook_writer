@@ -2,6 +2,7 @@ package com.ebookwriter.SaaS.service.ebook;
 
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
+import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.entity.EbookStatus;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
@@ -36,6 +37,7 @@ public class EbookGenerationService {
     private final ChapterGenerationService chapterGenerationService;
     private final BookEditingService editingService;
     private final PdfGenerationService pdfGenerationService;
+    private final AnthropicProperties anthropicProperties;
 
     @Async("ebookExecutor")
     public void generate(UUID ebookId) {
@@ -59,10 +61,14 @@ public class EbookGenerationService {
                         WRITING_START + (int) Math.round((double) WRITING_SPAN * done / total));
             }
 
-            // Step 3 — editorial pass
-            updateStatus(ebookId, EbookStatus.EDITING, 90);
-            for (EbookChapter chapter : chapters) {
-                editingService.edit(ebookId, chapter.getId());
+            // Step 3 — editorial pass (optional; the most expensive step)
+            if (anthropicProperties.isEditingEnabled()) {
+                updateStatus(ebookId, EbookStatus.EDITING, 90);
+                for (EbookChapter chapter : chapters) {
+                    editingService.edit(ebookId, chapter.getId());
+                }
+            } else {
+                log.info("Editorial pass disabled — skipping for ebook {}", ebookId);
             }
 
             // Step 4 — render PDF
