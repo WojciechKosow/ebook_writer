@@ -15,6 +15,7 @@ import com.ebookwriter.SaaS.service.RefreshTokenService;
 import com.ebookwriter.SaaS.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
@@ -31,6 +32,15 @@ import java.util.UUID;
 public class AuthController {
 
     private static final String REFRESH_COOKIE = "refreshToken";
+
+    // Cross-site by default: the frontend (e.g. Vercel) and backend (e.g.
+    // Railway) are different sites, so the refresh cookie must be SameSite=None
+    // + Secure to be sent on /refresh and /logout. Override for same-site setups.
+    @Value("${app.auth.cookie-same-site:None}")
+    private String cookieSameSite;
+
+    @Value("${app.auth.cookie-secure:true}")
+    private boolean cookieSecure;
 
     private final UserService userService;
     private final JwtProvider jwtProvider;
@@ -145,8 +155,8 @@ public class AuthController {
     private ResponseCookie refreshCookie(String value, Duration maxAge) {
         return ResponseCookie.from(REFRESH_COOKIE, value)
                 .httpOnly(true)
-                .secure(true)
-                .sameSite("Strict")
+                .secure(cookieSecure)
+                .sameSite(cookieSameSite)
                 .path("/")
                 .maxAge(maxAge)
                 .build();
