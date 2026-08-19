@@ -36,6 +36,16 @@ dependencies {
 	runtimeOnly "io.jsonwebtoken:jjwt-impl:${jjwtVersion}"
 	runtimeOnly "io.jsonwebtoken:jjwt-jackson:${jjwtVersion}"
 
+	// Official Anthropic SDK — the Claude API client for the ebook pipeline.
+	implementation 'com.anthropic:anthropic-java:2.34.0'
+
+	// Ebook rendering: Markdown -> HTML (commonmark), HTML normalisation
+	// (jsoup), HTML -> PDF (openhtmltopdf).
+	implementation 'org.commonmark:commonmark:0.24.0'
+	implementation 'org.commonmark:commonmark-ext-gfm-tables:0.24.0'
+	implementation 'org.jsoup:jsoup:1.18.1'
+	implementation 'com.openhtmltopdf:openhtmltopdf-pdfbox:1.0.10'
+
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'org.springframework.security:spring-security-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
