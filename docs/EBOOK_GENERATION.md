@@ -86,6 +86,22 @@ and code blocks render correctly. Styling lives in
 | `ANTHROPIC_MODEL` | `claude-opus-5` | Must be a Claude 4.6+ model (adaptive thinking is used). Set to `claude-sonnet-5` to trade quality for cost/speed. |
 | `ANTHROPIC_TIMEOUT_MINUTES` | `15` | Per-call client timeout. |
 | `ANTHROPIC_MAX_RETRIES` | `2` | Extra retries on top of the SDK's own. |
+| `ANTHROPIC_EDITING_ENABLED` | `true` | Whether to run the Step 3 editorial pass (below). |
+| `ANTHROPIC_EDITING_MODEL` | *(blank)* | Model for the editorial pass; blank = same as `ANTHROPIC_MODEL`. Set a cheaper model to reduce cost. |
+
+### Cost & the editorial pass
+
+The editorial pass (Step 3) is a **second full pass over every chapter**, so it
+roughly doubles the per-book cost — it is typically the largest line item.
+Three ways to run it, cheapest to best:
+
+- **Off** (`ANTHROPIC_EDITING_ENABLED=false`): cheapest. Chapters are still
+  written by the main model but you lose cross-chapter consistency cleanup
+  (repetition / terminology drift between chapters).
+- **Cheaper editing model** (`ANTHROPIC_EDITING_MODEL=claude-sonnet-5`): keeps
+  the consistency pass at a fraction of the cost — a good default for
+  validation.
+- **On, same model**: best quality, highest cost.
 
 ## Page-count handling
 

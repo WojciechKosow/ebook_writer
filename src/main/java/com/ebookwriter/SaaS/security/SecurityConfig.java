@@ -42,6 +42,10 @@ public class SecurityConfig {
                         // refresh, verify, forgot/reset password. Every other
                         // endpoint needs a valid access token.
                         .requestMatchers("/api/auth/**").permitAll()
+                        // Stripe webhook: authenticated by signature verification
+                        // (see StripeWebhookService), not a JWT — Stripe calls it
+                        // server-to-server.
+                        .requestMatchers("/api/stripe/webhook").permitAll()
                         .anyRequest().authenticated()
                 )
                 .httpBasic(basic -> basic.disable())

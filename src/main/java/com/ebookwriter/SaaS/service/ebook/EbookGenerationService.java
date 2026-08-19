@@ -2,9 +2,11 @@ package com.ebookwriter.SaaS.service.ebook;
 
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
+import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.entity.EbookStatus;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.service.credit.CreditService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -36,6 +38,8 @@ public class EbookGenerationService {
     private final ChapterGenerationService chapterGenerationService;
     private final BookEditingService editingService;
     private final PdfGenerationService pdfGenerationService;
+    private final AnthropicProperties anthropicProperties;
+    private final CreditService creditService;
 
     @Async("ebookExecutor")
     public void generate(UUID ebookId) {
@@ -59,10 +63,14 @@ public class EbookGenerationService {
                         WRITING_START + (int) Math.round((double) WRITING_SPAN * done / total));
             }
 
-            // Step 3 — editorial pass
-            updateStatus(ebookId, EbookStatus.EDITING, 90);
-            for (EbookChapter chapter : chapters) {
-                editingService.edit(ebookId, chapter.getId());
+            // Step 3 — editorial pass (optional; the most expensive step)
+            if (anthropicProperties.isEditingEnabled()) {
+                updateStatus(ebookId, EbookStatus.EDITING, 90);
+                for (EbookChapter chapter : chapters) {
+                    editingService.edit(ebookId, chapter.getId());
+                }
+            } else {
+                log.info("Editorial pass disabled — skipping for ebook {}", ebookId);
             }
 
             // Step 4 — render PDF
@@ -98,6 +106,15 @@ public class EbookGenerationService {
             ebookRepository.findById(ebookId).ifPresent(ebook -> {
                 ebook.setStatus(EbookStatus.FAILED);
                 ebook.setErrorMessage(truncate(e.getMessage()));
+
+                // Refund the credits charged for a generation that didn't finish.
+                if (ebook.getCreditsCharged() > 0 && !ebook.isCreditsRefunded()) {
+                    ebookRepository.findUserIdById(ebookId).ifPresent(userId -> {
+                        creditService.refundGeneration(userId, ebook.getCreditsCharged(), ebookId);
+                        ebook.setCreditsRefunded(true);
+                    });
+                }
+
                 ebookRepository.save(ebook);
             });
         } catch (Exception inner) {

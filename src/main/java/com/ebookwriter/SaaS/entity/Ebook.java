@@ -66,6 +66,13 @@ public class Ebook {
     @Column(columnDefinition = "text")
     private String errorMessage;
 
+    /** Credits deducted for this generation (1 per requested page). */
+    private int creditsCharged;
+
+    /** True once those credits have been refunded (after a failure). */
+    @Builder.Default
+    private boolean creditsRefunded = false;
+
     // ---- Plan-derived metadata ----------------------------------------------
 
     private String title;

@@ -1,0 +1,9 @@
+.git
+.gradle
+build
+/workspace
+*.md
+docs
+.idea
+*.iml
+HELP.md

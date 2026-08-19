@@ -5,6 +5,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -16,6 +17,23 @@ public class GlobalExceptionHandler {
     public ResponseEntity<?> handleEmailExists(EmailAlreadyExistsException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(Map.of("message", e.getMessage()));
+    }
+
+    /** Not enough credits to generate — 402 with the numbers the UI needs. */
+    @ExceptionHandler(InsufficientCreditsException.class)
+    public ResponseEntity<?> handleInsufficientCredits(InsufficientCreditsException e) {
+        return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED).body(Map.of(
+                "message", e.getMessage(),
+                "required", e.getRequired(),
+                "available", e.getAvailable()
+        ));
+    }
+
+    /** Preserve the intended status of explicitly-thrown ResponseStatusExceptions. */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<?> handleResponseStatus(ResponseStatusException e) {
+        String reason = e.getReason() != null ? e.getReason() : "Error";
+        return ResponseEntity.status(e.getStatusCode()).body(Map.of("message", reason));
     }
 
     /**

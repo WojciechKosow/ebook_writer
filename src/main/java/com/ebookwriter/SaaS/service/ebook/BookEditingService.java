@@ -3,6 +3,7 @@ package com.ebookwriter.SaaS.service.ebook;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
+import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.prompt.EditingPrompts;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
@@ -27,6 +28,7 @@ public class BookEditingService {
     private static final long MAX_OUTPUT_TOKENS = 16000L;
 
     private final AnthropicService anthropicService;
+    private final AnthropicProperties anthropicProperties;
     private final EbookRepository ebookRepository;
     private final EbookChapterRepository chapterRepository;
 
@@ -60,7 +62,9 @@ public class BookEditingService {
                 ManuscriptContext.otherSummaries(chapters, chapter.getChapterNumber())
         );
 
-        String edited = anthropicService.complete(system, userPrompt, maxTokens).trim();
+        String edited = anthropicService
+                .complete(system, userPrompt, maxTokens, anthropicProperties.resolveEditingModel())
+                .trim();
 
         if (!edited.isEmpty()) {
             chapter.setContent(edited);

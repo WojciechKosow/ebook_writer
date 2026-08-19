@@ -23,4 +23,23 @@ public class AnthropicProperties {
 
     /** How many times to retry a failed generation call before giving up. */
     private int maxRetries = 2;
+
+    /**
+     * Whether to run the Step 3 editorial pass. It roughly doubles the cost of
+     * a book (a second full pass over every chapter), so it can be turned off
+     * for cheap validation runs. Default on.
+     */
+    private boolean editingEnabled = true;
+
+    /**
+     * Model to use for the editorial pass. Blank = same as {@link #model}. Set
+     * this to a cheaper model (e.g. claude-sonnet-5) to keep the consistency
+     * pass at a fraction of the cost.
+     */
+    private String editingModel;
+
+    /** Resolve the model used for editing (falls back to the main model). */
+    public String resolveEditingModel() {
+        return (editingModel == null || editingModel.isBlank()) ? model : editingModel.trim();
+    }
 }

@@ -51,6 +51,10 @@ public class User {
     // reset invalidates every outstanding access token.
     private LocalDateTime credentialsUpdatedAt;
 
+    // Stripe customer id — created lazily on first checkout and reused for all
+    // future purchases, subscriptions and the billing portal.
+    private String stripeCustomerId;
+
     @PrePersist
     void onCreate() {
         this.createdAt = LocalDateTime.now();
