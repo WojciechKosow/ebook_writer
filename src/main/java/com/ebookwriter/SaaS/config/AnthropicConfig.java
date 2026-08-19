@@ -3,11 +3,13 @@ package com.ebookwriter.SaaS.config;
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
 
+@Slf4j
 @Configuration
 public class AnthropicConfig {
 
@@ -21,9 +23,19 @@ public class AnthropicConfig {
 
     @Bean
     public AnthropicClient anthropicClient(AnthropicProperties properties) {
-        String apiKey = (properties.getApiKey() != null && !properties.getApiKey().isBlank())
-                ? properties.getApiKey()
-                : PLACEHOLDER_KEY;
+        String configured = properties.getApiKey() == null ? "" : properties.getApiKey().trim();
+        boolean present = !configured.isBlank();
+        String apiKey = present ? configured : PLACEHOLDER_KEY;
+
+        // Masked diagnostic — never logs the key itself, only whether one was
+        // found and its length, so a 401 can be traced to config vs. a bad key.
+        if (present) {
+            log.info("Anthropic API key detected (length={}, model={}).",
+                    configured.length(), properties.getModel());
+        } else {
+            log.warn("No Anthropic API key configured (anthropic.api-key / ANTHROPIC_API_KEY is empty). "
+                    + "Ebook generation will fail with 401 until one is set.");
+        }
 
         return AnthropicOkHttpClient.builder()
                 .apiKey(apiKey)
