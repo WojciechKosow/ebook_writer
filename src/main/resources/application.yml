@@ -53,7 +53,7 @@ app:
   mail:
     # Must be a verified Sender Signature / domain in Postmark or sends fail.
     from: ${MAIL_FROM:no-reply@localhost}
-    app-name: ${MAIL_APP_NAME:eBook Writer}
+    app-name: ${MAIL_APP_NAME:Scrivetta}
   # Base URL of the frontend — used to build verification / reset links.
   frontend-url: ${FRONTEND_URL:http://localhost:5173}
   cors:
