@@ -10,6 +10,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class PostmarkProperties {
 
     private Api api = new Api();
+    private Timeout timeout = new Timeout();
 
     @Getter
     @Setter
@@ -19,5 +20,13 @@ public class PostmarkProperties {
         // just fail auth).
         private String baseUrl = "https://api.postmarkapp.com";
         private String serverToken;
+    }
+
+    @Getter
+    @Setter
+    public static class Timeout {
+        // Connect / read timeouts (ms) for the Reactor Netty HTTP client.
+        private long connect = 5_000;
+        private long read = 10_000;
     }
 }

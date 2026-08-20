@@ -44,10 +44,14 @@ jwt:
   expiration: ${JWT_EXPIRATION:900000}                       # access token, ms (15 min)
   remember-me-expiration: ${JWT_EXPIRATION_REMEMBER_ME:2592000000}  # with "remember me", ms (30 days)
 
-# Email (Postmark transactional API).
+# Email (Postmark transactional API). Sent over the reactive WebClient
+# (Reactor Netty) rather than SMTP — PaaS containers block outbound SMTP ports.
 postmark:
   api:
     server-token: ${POSTMARK_SERVER_TOKEN:}
+  timeout:
+    connect: ${POSTMARK_CONNECT_TIMEOUT_MS:5000}
+    read: ${POSTMARK_READ_TIMEOUT_MS:10000}
 
 app:
   mail:

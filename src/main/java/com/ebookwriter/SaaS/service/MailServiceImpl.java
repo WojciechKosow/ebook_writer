@@ -4,8 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.Map;
 import java.util.UUID;
@@ -14,7 +13,7 @@ import java.util.UUID;
 @Service
 public class MailServiceImpl implements MailService {
 
-    private final RestClient postmarkRestClient;
+    private final WebClient postmarkWebClient;
 
     @Value("${app.mail.from}")
     private String mailFrom;
@@ -25,15 +24,15 @@ public class MailServiceImpl implements MailService {
     @Value("${app.frontend-url}")
     private String frontendUrl;
 
-    public MailServiceImpl(@Qualifier("postmarkRestClient") RestClient postmarkRestClient) {
-        this.postmarkRestClient = postmarkRestClient;
+    public MailServiceImpl(@Qualifier("postmarkWebClient") WebClient postmarkWebClient) {
+        this.postmarkWebClient = postmarkWebClient;
     }
 
     private void send(String to, String subject, String content) {
         try {
-            String response = postmarkRestClient.post()
+            postmarkWebClient.post()
                     .uri("/email")
-                    .body(Map.of(
+                    .bodyValue(Map.of(
                             "From", appName + " <" + mailFrom + ">",
                             "To", to,
                             "Subject", subject,
@@ -41,17 +40,15 @@ public class MailServiceImpl implements MailService {
                             "MessageStream", "outbound"
                     ))
                     .retrieve()
-                    .body(String.class);
-            log.info("[Postmark] Accepted send '{}' to {} (from={}): {}", subject, to, mailFrom, response);
-        } catch (RestClientResponseException e) {
-            // Postmark answers failures with a JSON body carrying ErrorCode +
-            // Message — that's the real reason a send was rejected (bad token,
-            // unverified sender, account pending approval, …). Log it verbatim.
-            log.error("[Postmark] Rejected send to {} (from={}): HTTP {} — {}",
-                    to, mailFrom, e.getStatusCode().value(), e.getResponseBodyAsString());
-            throw new RuntimeException("error: cannot send an email", e);
+                    .toBodilessEntity()
+                    .block();
+            log.info("[Postmark] Accepted send '{}' to {} (from={})", subject, to, mailFrom);
         } catch (Exception e) {
-            log.error("[Postmark] Could not reach Postmark to send to {} (from={}): {}",
+            // WebClientConfig's error-logging filter already logs Postmark's
+            // response body — the precise rejection reason (bad token, unverified
+            // sender, account pending approval, …) shows up there rather than in
+            // this generic message.
+            log.error("[Postmark] Could not send email to {} (from={}): {}",
                     to, mailFrom, e.getMessage(), e);
             throw new RuntimeException("error: cannot send an email", e);
         }
