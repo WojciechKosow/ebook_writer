@@ -33,5 +33,8 @@ public class StripeProperties {
     private String successUrl = "http://localhost:3000/billing/success?order={ORDER_ID}";
     private String cancelUrl = "http://localhost:3000/billing";
 
+    /** Where the Stripe billing portal returns the user after they're done. */
+    private String portalReturnUrl = "http://localhost:3000/billing";
+
     private String currency = "usd";
 }

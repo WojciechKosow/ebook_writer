@@ -34,4 +34,17 @@ public interface CreditBalanceRepository extends JpaRepository<CreditBalance, UU
            where b.userId = :userId
            """)
     int increment(@Param("userId") UUID userId, @Param("amount") int amount);
+
+    /**
+     * Unconditionally subtract credits — used for refund/chargeback clawbacks,
+     * which are allowed to drive the balance negative (blocking further spends
+     * until the user tops up again). Returns rows updated (1 if the wallet exists).
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("""
+           update CreditBalance b
+           set b.balance = b.balance - :amount
+           where b.userId = :userId
+           """)
+    int decrement(@Param("userId") UUID userId, @Param("amount") int amount);
 }

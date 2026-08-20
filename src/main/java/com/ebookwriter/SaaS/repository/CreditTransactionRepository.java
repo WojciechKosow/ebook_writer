@@ -11,4 +11,6 @@ import java.util.UUID;
 public interface CreditTransactionRepository extends JpaRepository<CreditTransaction, UUID> {
 
     List<CreditTransaction> findTop50ByUserIdOrderByCreatedAtDesc(UUID userId);
+
+    List<CreditTransaction> findByStripeReference(String stripeReference);
 }

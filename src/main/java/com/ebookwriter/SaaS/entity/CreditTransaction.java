@@ -47,6 +47,12 @@ public class CreditTransaction {
     /** The payment order involved, for CREDIT_PURCHASE / SUBSCRIPTION_GRANT. */
     private UUID paymentOrderId;
 
+    /**
+     * The Stripe payment_intent this row relates to. Set on REFUND_CLAWBACK rows
+     * so repeated refund/chargeback events for the same charge stay idempotent.
+     */
+    private String stripeReference;
+
     private String description;
 
     @Column(nullable = false)

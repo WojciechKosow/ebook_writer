@@ -10,6 +10,8 @@ public enum CreditTransactionType {
     GENERATION,
     /** Credits returned after a failed generation. */
     GENERATION_REFUND,
+    /** Credits reclaimed after a Stripe refund or chargeback (may go negative). */
+    REFUND_CLAWBACK,
     /** Optional one-time grant when the wallet is created. */
     SIGNUP_BONUS
 }

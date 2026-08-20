@@ -57,7 +57,7 @@ public class CreditService {
         }
 
         int balanceAfter = currentBalance(userId);
-        writeLedger(userId, type, -amount, balanceAfter, ebookId, null, description);
+        writeLedger(userId, type, -amount, balanceAfter, ebookId, null, null, description);
         log.info("Spent {} credits for user {} ({}), balance now {}", amount, userId, type, balanceAfter);
     }
 
@@ -70,7 +70,7 @@ public class CreditService {
 
         balanceRepository.increment(userId, amount);
         int balanceAfter = currentBalance(userId);
-        writeLedger(userId, type, amount, balanceAfter, ebookId, paymentOrderId, description);
+        writeLedger(userId, type, amount, balanceAfter, ebookId, paymentOrderId, null, description);
         log.info("Granted {} credits to user {} ({}), balance now {}", amount, userId, type, balanceAfter);
     }
 
@@ -79,6 +79,43 @@ public class CreditService {
     public void refundGeneration(UUID userId, int amount, UUID ebookId) {
         grant(userId, amount, CreditTransactionType.GENERATION_REFUND, ebookId, null,
                 "Refund for failed generation");
+    }
+
+    /**
+     * Reclaim credits after a Stripe refund or chargeback. Unlike {@link #spend}
+     * this is unconditional and MAY drive the balance negative — that is
+     * deliberate: a user who spent granted credits and then refunded or charged
+     * back is left with a deficit that blocks further generation until they pay
+     * again. {@code stripeReference} (the payment_intent) makes repeated events
+     * for the same charge idempotent when combined with {@link #clawedForReference}.
+     *
+     * @return the number of credits actually reclaimed (0 if amount ≤ 0).
+     */
+    @Transactional
+    public int clawback(UUID userId, int amount, String stripeReference, String description) {
+        if (amount <= 0) {
+            return 0;
+        }
+        ensureWallet(userId);
+        balanceRepository.decrement(userId, amount);
+        int balanceAfter = currentBalance(userId);
+        writeLedger(userId, CreditTransactionType.REFUND_CLAWBACK, -amount, balanceAfter,
+                null, null, stripeReference, description);
+        log.info("Reclaimed {} credits from user {} (ref {}), balance now {}",
+                amount, userId, stripeReference, balanceAfter);
+        return amount;
+    }
+
+    /** How many credits have already been reclaimed for a given Stripe charge. */
+    @Transactional(readOnly = true)
+    public int clawedForReference(String stripeReference) {
+        if (stripeReference == null || stripeReference.isBlank()) {
+            return 0;
+        }
+        return transactionRepository.findByStripeReference(stripeReference).stream()
+                .filter(t -> t.getType() == CreditTransactionType.REFUND_CLAWBACK)
+                .mapToInt(t -> -t.getAmount()) // stored negative → positive reclaimed
+                .sum();
     }
 
     // ------------------------------------------------------------------------
@@ -91,7 +128,7 @@ public class CreditService {
         try {
             balanceRepository.save(CreditBalance.builder().userId(userId).balance(bonus).build());
             if (bonus > 0) {
-                writeLedger(userId, CreditTransactionType.SIGNUP_BONUS, bonus, bonus, null, null, "Signup bonus");
+                writeLedger(userId, CreditTransactionType.SIGNUP_BONUS, bonus, bonus, null, null, null, "Signup bonus");
             }
         } catch (DataIntegrityViolationException e) {
             // Created concurrently by another request — that's fine.
@@ -104,7 +141,7 @@ public class CreditService {
     }
 
     private void writeLedger(UUID userId, CreditTransactionType type, int amount, int balanceAfter,
-                             UUID ebookId, UUID paymentOrderId, String description) {
+                             UUID ebookId, UUID paymentOrderId, String stripeReference, String description) {
         transactionRepository.save(CreditTransaction.builder()
                 .userId(userId)
                 .type(type)
@@ -112,6 +149,7 @@ public class CreditService {
                 .balanceAfter(balanceAfter)
                 .ebookId(ebookId)
                 .paymentOrderId(paymentOrderId)
+                .stripeReference(stripeReference)
                 .description(description)
                 .build());
     }

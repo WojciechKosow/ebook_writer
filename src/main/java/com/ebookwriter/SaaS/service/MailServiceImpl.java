@@ -18,7 +18,7 @@ public class MailServiceImpl implements MailService {
     @Value("${app.mail.from}")
     private String mailFrom;
 
-    @Value("${app.mail.app-name:eBook Writer}")
+    @Value("${app.mail.app-name:Scrivetta}")
     private String appName;
 
     @Value("${app.frontend-url}")

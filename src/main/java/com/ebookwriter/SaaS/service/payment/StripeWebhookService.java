@@ -5,11 +5,14 @@ import com.ebookwriter.SaaS.config.properties.StripeProperties;
 import com.ebookwriter.SaaS.entity.*;
 import com.ebookwriter.SaaS.repository.PaymentOrderRepository;
 import com.ebookwriter.SaaS.repository.ProcessedStripeEventRepository;
+import com.ebookwriter.SaaS.repository.UserRepository;
 import com.ebookwriter.SaaS.repository.UserSubscriptionRepository;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import com.stripe.exception.EventDataObjectDeserializationException;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.exception.StripeException;
+import com.stripe.model.Charge;
+import com.stripe.model.Dispute;
 import com.stripe.model.Event;
 import com.stripe.model.Invoice;
 import com.stripe.model.StripeObject;
@@ -45,6 +48,7 @@ public class StripeWebhookService {
     private final ProcessedStripeEventRepository processedStripeEventRepository;
     private final PaymentOrderRepository paymentOrderRepository;
     private final UserSubscriptionRepository userSubscriptionRepository;
+    private final UserRepository userRepository;
     private final CreditService creditService;
 
     @Transactional
@@ -72,6 +76,16 @@ public class StripeWebhookService {
             // granted here — every successful subscription payment produces an
             // invoice, which is the reliable "money received" signal.
             case "invoice.paid" -> handleInvoicePaid(event);
+
+            // Dunning: a renewal charge failed. Stripe will retry per your
+            // dunning settings; mark the subscription past_due so no fresh
+            // credits are granted until a payment succeeds again.
+            case "invoice.payment_failed" -> handleInvoicePaymentFailed(event);
+
+            // Clawbacks: reclaim credits when money is pulled back so a refund or
+            // chargeback can't leave the user with free credits.
+            case "charge.refunded" -> handleChargeRefunded(event);
+            case "charge.dispute.created" -> handleChargeDisputed(event);
 
             case "customer.subscription.updated" -> handleSubscriptionUpdated(event);
             case "customer.subscription.deleted" -> handleSubscriptionDeleted(event);
@@ -198,6 +212,128 @@ public class StripeWebhookService {
             log.warn("[Stripe] Could not retrieve subscription {} to resolve user: {}", subscriptionId, e.getMessage());
         }
         return null;
+    }
+
+    /**
+     * A subscription renewal (or first) payment failed. Reflect it as past_due;
+     * Stripe retries on its dunning schedule, and a later invoice.paid grants the
+     * credits while a final failure arrives as customer.subscription.deleted.
+     */
+    private void handleInvoicePaymentFailed(Event event) {
+        if (!(extractObject(event) instanceof Invoice invoice)) {
+            return;
+        }
+        String subscriptionId = subscriptionIdOf(invoice);
+        if (subscriptionId == null) {
+            return;
+        }
+        userSubscriptionRepository.findByStripeSubscriptionId(subscriptionId).ifPresent(sub -> {
+            sub.setStatus("past_due");
+            userSubscriptionRepository.save(sub);
+            log.info("[Stripe] invoice.payment_failed → subscription {} marked past_due", subscriptionId);
+        });
+    }
+
+    /**
+     * A charge was (partially or fully) refunded — reclaim credits in proportion
+     * to the amount refunded.
+     */
+    private void handleChargeRefunded(Event event) {
+        if (!(extractObject(event) instanceof Charge charge)) {
+            return;
+        }
+        String paymentIntentId = charge.getPaymentIntent();
+        long amount = charge.getAmount() != null ? charge.getAmount() : 0L;
+        long refunded = charge.getAmountRefunded() != null ? charge.getAmountRefunded() : 0L;
+        if (paymentIntentId == null || amount <= 0 || refunded <= 0) {
+            log.warn("[Stripe] charge.refunded with no usable amount/payment_intent — skipping");
+            return;
+        }
+        double fraction = Math.min(1.0, (double) refunded / amount);
+        reclaimForCharge(paymentIntentId, charge.getCustomer(), fraction, refunded >= amount, "Refund");
+    }
+
+    /**
+     * A chargeback (dispute) was opened — a chargeback pulls the whole payment,
+     * so reclaim everything that charge granted.
+     */
+    private void handleChargeDisputed(Event event) {
+        if (!(extractObject(event) instanceof Dispute dispute)) {
+            return;
+        }
+        String paymentIntentId = dispute.getPaymentIntent();
+        String customerId = null;
+        if (dispute.getCharge() != null) {
+            try {
+                Charge charge = Charge.retrieve(dispute.getCharge());
+                if (paymentIntentId == null) {
+                    paymentIntentId = charge.getPaymentIntent();
+                }
+                customerId = charge.getCustomer();
+            } catch (StripeException e) {
+                log.warn("[Stripe] Could not retrieve charge {} for dispute: {}", dispute.getCharge(), e.getMessage());
+            }
+        }
+        if (paymentIntentId == null) {
+            log.warn("[Stripe] dispute with no resolvable payment_intent — skipping");
+            return;
+        }
+        reclaimForCharge(paymentIntentId, customerId, 1.0, true, "Chargeback");
+    }
+
+    /**
+     * Reclaim credits for a charge that was refunded or charged back. The charge
+     * is matched to what it originally granted:
+     *   - a credit-pack order (by payment_intent) → its {@code creditsGranted};
+     *   - otherwise a subscription payment → the monthly grant, with the user
+     *     resolved from the order or the Stripe customer.
+     * Reclaims {@code round(granted * fraction)} minus whatever was already
+     * reclaimed for this payment_intent, so partial refunds and a
+     * refund-then-dispute sequence stay idempotent.
+     */
+    private void reclaimForCharge(String paymentIntentId, String customerId,
+                                  double fraction, boolean full, String label) {
+        PaymentOrder order = paymentOrderRepository.findByStripePaymentIntentId(paymentIntentId).orElse(null);
+
+        UUID userId;
+        int granted;
+        if (order != null && order.getPurpose() == PaymentPurpose.CREDIT_PACK) {
+            userId = order.getUserId();
+            granted = order.getCreditsGranted();
+        } else {
+            userId = order != null ? order.getUserId() : resolveUserByCustomer(customerId);
+            granted = creditProperties.getSubscriptionMonthlyGrant();
+        }
+        if (userId == null) {
+            log.warn("[Stripe] {} for payment_intent {} — could not resolve a user, skipping",
+                    label, paymentIntentId);
+            return;
+        }
+
+        int target = (int) Math.round(granted * fraction);
+        int already = creditService.clawedForReference(paymentIntentId);
+        int toReclaim = target - already;
+        if (toReclaim <= 0) {
+            log.info("[Stripe] {} for payment_intent {} — nothing further to reclaim (target {}, already {})",
+                    label, paymentIntentId, target, already);
+            return;
+        }
+
+        creditService.clawback(userId, toReclaim, paymentIntentId, label + " — credits reclaimed");
+
+        if (full && order != null && order.getStatus() != PaymentOrderStatus.REFUNDED) {
+            order.setStatus(PaymentOrderStatus.REFUNDED);
+            paymentOrderRepository.save(order);
+        }
+        log.info("[Stripe] {} reclaimed {} credits from user {} for payment_intent {}",
+                label, toReclaim, userId, paymentIntentId);
+    }
+
+    private UUID resolveUserByCustomer(String customerId) {
+        if (customerId == null || customerId.isBlank()) {
+            return null;
+        }
+        return userRepository.findByStripeCustomerId(customerId).map(User::getId).orElse(null);
     }
 
     private void handleSubscriptionUpdated(Event event) {

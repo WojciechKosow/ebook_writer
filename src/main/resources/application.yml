@@ -53,7 +53,7 @@ app:
   mail:
     # Must be a verified Sender Signature / domain in Postmark or sends fail.
     from: ${MAIL_FROM:no-reply@localhost}
-    app-name: ${MAIL_APP_NAME:eBook Writer}
+    app-name: ${MAIL_APP_NAME:Scrivetta}
   # Base URL of the frontend — used to build verification / reset links.
   frontend-url: ${FRONTEND_URL:http://localhost:5173}
   cors:
@@ -85,6 +85,7 @@ stripe:
   subscription-price-id: ${STRIPE_SUBSCRIPTION_PRICE_ID:}
   success-url: ${STRIPE_SUCCESS_URL:http://localhost:3000/billing/success?order={ORDER_ID}}
   cancel-url: ${STRIPE_CANCEL_URL:http://localhost:3000/billing}
+  portal-return-url: ${STRIPE_PORTAL_RETURN_URL:http://localhost:3000/billing}
   currency: ${STRIPE_CURRENCY:usd}
 
 credits:
