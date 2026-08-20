@@ -10,5 +10,7 @@ public enum PaymentOrderStatus {
     /** Payment failed. */
     FAILED,
     /** Checkout session expired before payment. */
-    EXPIRED
+    EXPIRED,
+    /** Payment was later refunded or charged back and its credits reclaimed. */
+    REFUNDED
 }
