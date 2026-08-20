@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.util.Map;
 import java.util.UUID;
@@ -30,7 +31,7 @@ public class MailServiceImpl implements MailService {
 
     private void send(String to, String subject, String content) {
         try {
-            postmarkRestClient.post()
+            String response = postmarkRestClient.post()
                     .uri("/email")
                     .body(Map.of(
                             "From", appName + " <" + mailFrom + ">",
@@ -40,9 +41,18 @@ public class MailServiceImpl implements MailService {
                             "MessageStream", "outbound"
                     ))
                     .retrieve()
-                    .toBodilessEntity();
+                    .body(String.class);
+            log.info("[Postmark] Accepted send '{}' to {} (from={}): {}", subject, to, mailFrom, response);
+        } catch (RestClientResponseException e) {
+            // Postmark answers failures with a JSON body carrying ErrorCode +
+            // Message — that's the real reason a send was rejected (bad token,
+            // unverified sender, account pending approval, …). Log it verbatim.
+            log.error("[Postmark] Rejected send to {} (from={}): HTTP {} — {}",
+                    to, mailFrom, e.getStatusCode().value(), e.getResponseBodyAsString());
+            throw new RuntimeException("error: cannot send an email", e);
         } catch (Exception e) {
-            log.error("Failed to send email to {} (from={}): {}", to, mailFrom, e.getMessage(), e);
+            log.error("[Postmark] Could not reach Postmark to send to {} (from={}): {}",
+                    to, mailFrom, e.getMessage(), e);
             throw new RuntimeException("error: cannot send an email", e);
         }
     }
