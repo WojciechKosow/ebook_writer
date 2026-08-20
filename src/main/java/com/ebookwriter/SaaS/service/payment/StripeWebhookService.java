@@ -9,6 +9,7 @@ import com.ebookwriter.SaaS.repository.UserSubscriptionRepository;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import com.stripe.exception.EventDataObjectDeserializationException;
 import com.stripe.exception.SignatureVerificationException;
+import com.stripe.exception.StripeException;
 import com.stripe.model.Event;
 import com.stripe.model.Invoice;
 import com.stripe.model.StripeObject;
@@ -62,22 +63,15 @@ public class StripeWebhookService {
         }
 
         switch (event.getType()) {
-            case "checkout.session.completed", "checkout.session.async_payment_succeeded" -> {
-                Session session = extractSession(event);
-                if (session != null && "paid".equals(session.getPaymentStatus())) {
-                    fulfill(session);
-                } else if (session != null) {
-                    log.info("[Stripe] Session {} completed but payment_status={} — awaiting payment",
-                            session.getId(), session.getPaymentStatus());
-                }
-            }
+            case "checkout.session.completed", "checkout.session.async_payment_succeeded" ->
+                    handleCheckoutCompleted(extractSession(event));
             case "checkout.session.expired" -> updateOrderStatus(extractSession(event), PaymentOrderStatus.EXPIRED);
             case "checkout.session.async_payment_failed" -> updateOrderStatus(extractSession(event), PaymentOrderStatus.FAILED);
 
-            // Renewals only. The first invoice is already handled by
-            // checkout.session.completed above, so acting on it here would
-            // double-grant — hence the billing_reason == subscription_cycle guard.
-            case "invoice.paid" -> handleRenewal(event);
+            // Subscription credits (both the first month and renewals) are
+            // granted here — every successful subscription payment produces an
+            // invoice, which is the reliable "money received" signal.
+            case "invoice.paid" -> handleInvoicePaid(event);
 
             case "customer.subscription.updated" -> handleSubscriptionUpdated(event);
             case "customer.subscription.deleted" -> handleSubscriptionDeleted(event);
@@ -92,32 +86,43 @@ public class StripeWebhookService {
         processedStripeEventRepository.save(processed);
     }
 
-    private void fulfill(Session session) {
+    private void handleCheckoutCompleted(Session session) {
+        if (session == null) {
+            return;
+        }
         PaymentOrder order = resolveOrder(session);
         if (order == null) {
             log.warn("[Stripe] No order for session {} — cannot fulfil", session.getId());
             return;
         }
         if (order.getStatus() == PaymentOrderStatus.PAID) {
-            log.info("[Stripe] Order {} already PAID — skipping fulfilment", order.getId());
+            log.info("[Stripe] Order {} already PAID — skipping", order.getId());
             return;
         }
 
         order.setStripePaymentIntentId(session.getPaymentIntent());
 
         switch (order.getPurpose()) {
-            case CREDIT_PACK -> creditService.grant(
-                    order.getUserId(), order.getCreditsGranted(),
-                    CreditTransactionType.CREDIT_PURCHASE, null, order.getId(),
-                    "Purchased " + (order.getCreditPack() != null ? order.getCreditPack().getDisplayName() : "credits"));
-
+            case CREDIT_PACK -> {
+                // One-time payment: require the money to be in before granting.
+                if (!"paid".equals(session.getPaymentStatus())) {
+                    log.info("[Stripe] Pack order {} not paid yet (payment_status={}) — awaiting payment",
+                            order.getId(), session.getPaymentStatus());
+                    return; // leave PENDING; an async event will settle it
+                }
+                creditService.grant(order.getUserId(), order.getCreditsGranted(),
+                        CreditTransactionType.CREDIT_PURCHASE, null, order.getId(),
+                        "Purchased " + (order.getCreditPack() != null ? order.getCreditPack().getDisplayName() : "credits"));
+            }
             case SUBSCRIPTION -> {
-                order.setStripeSubscriptionId(session.getSubscription());
-                upsertSubscription(order.getUserId(), session.getSubscription(), "active", false);
-                creditService.grant(
-                        order.getUserId(), order.getCreditsGranted(),
-                        CreditTransactionType.SUBSCRIPTION_GRANT, null, order.getId(),
-                        "Subscription — monthly credits");
+                // Activate the subscription here; the CREDITS are granted by
+                // invoice.paid (subscription_create for the first month), so the
+                // grant never depends on the checkout session's payment_status.
+                String subscriptionId = session.getSubscription();
+                order.setStripeSubscriptionId(subscriptionId);
+                if (subscriptionId != null) {
+                    upsertSubscription(order.getUserId(), subscriptionId, "active", false);
+                }
             }
         }
 
@@ -128,13 +133,21 @@ public class StripeWebhookService {
                 order.getId(), order.getPurpose(), order.getUserId());
     }
 
-    /** Monthly renewal: grant the subscription's credits again. */
-    private void handleRenewal(Event event) {
+    /**
+     * Grant subscription credits on every paid invoice — the first one
+     * (billing_reason "subscription_create") and every renewal
+     * ("subscription_cycle"). Deduped by the Stripe event id, so one grant per
+     * successful invoice.
+     */
+    private void handleInvoicePaid(Event event) {
         if (!(extractObject(event) instanceof Invoice invoice)) {
             return;
         }
-        if (!"subscription_cycle".equals(invoice.getBillingReason())) {
-            log.debug("[Stripe] invoice.paid billing_reason={} — not a renewal, skipping", invoice.getBillingReason());
+        String reason = invoice.getBillingReason();
+        boolean subscriptionInvoice =
+                "subscription_create".equals(reason) || "subscription_cycle".equals(reason);
+        if (!subscriptionInvoice) {
+            log.debug("[Stripe] invoice.paid billing_reason={} — not a subscription invoice, skipping", reason);
             return;
         }
         String subscriptionId = subscriptionIdOf(invoice);
@@ -142,13 +155,49 @@ public class StripeWebhookService {
             log.warn("[Stripe] invoice.paid without a subscription id — skipping");
             return;
         }
-        userSubscriptionRepository.findByStripeSubscriptionId(subscriptionId).ifPresentOrElse(sub -> {
-            sub.setStatus("active");
-            userSubscriptionRepository.save(sub);
-            creditService.grant(sub.getUserId(), creditProperties.getSubscriptionMonthlyGrant(),
-                    CreditTransactionType.SUBSCRIPTION_GRANT, null, null, "Subscription renewal — monthly credits");
-            log.info("[Stripe] Renewed subscription {} for user {}", subscriptionId, sub.getUserId());
-        }, () -> log.warn("[Stripe] Renewal for unknown subscription {}", subscriptionId));
+        UUID userId = resolveSubscriptionUser(subscriptionId);
+        if (userId == null) {
+            log.warn("[Stripe] invoice.paid for unresolved subscription {} — skipping", subscriptionId);
+            return;
+        }
+        creditService.grant(userId, creditProperties.getSubscriptionMonthlyGrant(),
+                CreditTransactionType.SUBSCRIPTION_GRANT, null, null,
+                "subscription_create".equals(reason)
+                        ? "Subscription — monthly credits"
+                        : "Subscription renewal — monthly credits");
+        log.info("[Stripe] Granted subscription credits ({}) to user {} for subscription {}",
+                reason, userId, subscriptionId);
+    }
+
+    /**
+     * Resolve the user for a subscription. Uses the stored mapping, falling back
+     * to the subscription's own metadata (set at checkout) when invoice.paid
+     * races ahead of checkout.session.completed.
+     */
+    private UUID resolveSubscriptionUser(String subscriptionId) {
+        Optional<UserSubscription> mapping = userSubscriptionRepository.findByStripeSubscriptionId(subscriptionId);
+        if (mapping.isPresent()) {
+            UserSubscription sub = mapping.get();
+            if (!"active".equals(sub.getStatus())) {
+                sub.setStatus("active");
+                userSubscriptionRepository.save(sub);
+            }
+            return sub.getUserId();
+        }
+        try {
+            Subscription subscription = Subscription.retrieve(subscriptionId);
+            String uid = subscription.getMetadata() != null ? subscription.getMetadata().get("userId") : null;
+            if (uid != null && !uid.isBlank()) {
+                UUID userId = UUID.fromString(uid);
+                upsertSubscription(userId, subscriptionId,
+                        subscription.getStatus() != null ? subscription.getStatus() : "active",
+                        Boolean.TRUE.equals(subscription.getCancelAtPeriodEnd()));
+                return userId;
+            }
+        } catch (StripeException e) {
+            log.warn("[Stripe] Could not retrieve subscription {} to resolve user: {}", subscriptionId, e.getMessage());
+        }
+        return null;
     }
 
     private void handleSubscriptionUpdated(Event event) {
