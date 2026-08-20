@@ -55,13 +55,13 @@ public class UserServiceImpl implements UserService {
         user.setEmail(request.getEmail().toLowerCase());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
 
-        //disable enabled for testing without postmark
-        user.setEnabled(true);
+        // New accounts start disabled and are activated by clicking the link in
+        // the verification email (see verifyAccount).
+        user.setEnabled(false);
 
         userRepository.save(user);
 
-//        issueTokenAndSendVerification(user);
-
+        issueTokenAndSendVerification(user);
 
         return new AuthResponse(null, null, mapToDTO(user));
     }
