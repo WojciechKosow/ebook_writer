@@ -18,9 +18,20 @@ import java.util.UUID;
 
 /**
  * The credit ledger. Every balance change goes through here and writes a
- * {@link CreditTransaction} row, so the balance is always explainable. Spends
- * use a conditional atomic UPDATE so two concurrent generations can never spend
- * the same credits or push the balance negative.
+ * {@link CreditTransaction} row, so the balance is always explainable.
+ *
+ * <p>Concurrency and correctness follow the proven bossAi wallet pattern: the
+ * balance row is taken under a pessimistic {@code SELECT ... FOR UPDATE} lock
+ * ({@link CreditBalanceRepository#findForUpdate}), mutated as a <em>managed</em>
+ * entity, and saved. Two concurrent generations therefore serialise on the row
+ * and can never both spend the same credits or push the balance negative.
+ *
+ * <p>Deliberately <b>not</b> using a bulk {@code @Modifying(clearAutomatically =
+ * true)} update: that clears the whole persistence context mid-transaction,
+ * which used to detach the {@code PaymentOrder} the Stripe webhook was
+ * fulfilling and blow up its follow-up save with an optimistic-lock failure —
+ * rolling back the whole webhook so credits were never delivered and the order
+ * stayed stuck on "processing".
  */
 @Slf4j
 @Service
@@ -42,23 +53,23 @@ public class CreditService {
     }
 
     /**
-     * Spend credits atomically. Throws {@link InsufficientCreditsException} if
-     * the balance can't cover the amount (checked in the same UPDATE, so it is
-     * race-free).
+     * Spend credits. The wallet is locked for the transaction and the balance is
+     * checked against the amount under that lock, so the check is race-free.
+     * Throws {@link InsufficientCreditsException} if the balance can't cover it.
      */
     @Transactional
     public void spend(UUID userId, int amount, CreditTransactionType type, UUID ebookId, String description) {
         requirePositive(amount);
-        ensureWallet(userId);
+        CreditBalance wallet = lockOrCreateWallet(userId);
 
-        int updated = balanceRepository.deductIfEnough(userId, amount);
-        if (updated == 0) {
-            throw new InsufficientCreditsException(amount, currentBalance(userId));
+        if (wallet.getBalance() < amount) {
+            throw new InsufficientCreditsException(amount, wallet.getBalance());
         }
 
-        int balanceAfter = currentBalance(userId);
-        writeLedger(userId, type, -amount, balanceAfter, ebookId, null, null, description);
-        log.info("Spent {} credits for user {} ({}), balance now {}", amount, userId, type, balanceAfter);
+        wallet.setBalance(wallet.getBalance() - amount);
+        balanceRepository.save(wallet);
+        writeLedger(userId, type, -amount, wallet.getBalance(), ebookId, null, null, description);
+        log.info("Spent {} credits for user {} ({}), balance now {}", amount, userId, type, wallet.getBalance());
     }
 
     /** Grant credits (subscription, purchase, refund, signup bonus). */
@@ -66,12 +77,12 @@ public class CreditService {
     public void grant(UUID userId, int amount, CreditTransactionType type,
                       UUID ebookId, UUID paymentOrderId, String description) {
         requirePositive(amount);
-        ensureWallet(userId);
+        CreditBalance wallet = lockOrCreateWallet(userId);
 
-        balanceRepository.increment(userId, amount);
-        int balanceAfter = currentBalance(userId);
-        writeLedger(userId, type, amount, balanceAfter, ebookId, paymentOrderId, null, description);
-        log.info("Granted {} credits to user {} ({}), balance now {}", amount, userId, type, balanceAfter);
+        wallet.setBalance(wallet.getBalance() + amount);
+        balanceRepository.save(wallet);
+        writeLedger(userId, type, amount, wallet.getBalance(), ebookId, paymentOrderId, null, description);
+        log.info("Granted {} credits to user {} ({}), balance now {}", amount, userId, type, wallet.getBalance());
     }
 
     /** Convenience for returning credits after a failed generation. */
@@ -96,13 +107,13 @@ public class CreditService {
         if (amount <= 0) {
             return 0;
         }
-        ensureWallet(userId);
-        balanceRepository.decrement(userId, amount);
-        int balanceAfter = currentBalance(userId);
-        writeLedger(userId, CreditTransactionType.REFUND_CLAWBACK, -amount, balanceAfter,
+        CreditBalance wallet = lockOrCreateWallet(userId);
+        wallet.setBalance(wallet.getBalance() - amount); // allowed to go negative
+        balanceRepository.save(wallet);
+        writeLedger(userId, CreditTransactionType.REFUND_CLAWBACK, -amount, wallet.getBalance(),
                 null, null, stripeReference, description);
         log.info("Reclaimed {} credits from user {} (ref {}), balance now {}",
-                amount, userId, stripeReference, balanceAfter);
+                amount, userId, stripeReference, wallet.getBalance());
         return amount;
     }
 
@@ -120,24 +131,30 @@ public class CreditService {
 
     // ------------------------------------------------------------------------
 
-    private void ensureWallet(UUID userId) {
-        if (balanceRepository.existsById(userId)) {
-            return;
-        }
+    /**
+     * Return the wallet row locked FOR UPDATE, creating it (with the optional
+     * signup bonus) on first use. Mirrors bossAi's lock-or-create wallet flow.
+     */
+    private CreditBalance lockOrCreateWallet(UUID userId) {
+        return balanceRepository.findForUpdate(userId)
+                .orElseGet(() -> createWallet(userId));
+    }
+
+    private CreditBalance createWallet(UUID userId) {
         int bonus = Math.max(0, creditProperties.getSignupBonus());
         try {
-            balanceRepository.save(CreditBalance.builder().userId(userId).balance(bonus).build());
+            CreditBalance wallet = balanceRepository.saveAndFlush(
+                    CreditBalance.builder().userId(userId).balance(bonus).build());
             if (bonus > 0) {
                 writeLedger(userId, CreditTransactionType.SIGNUP_BONUS, bonus, bonus, null, null, null, "Signup bonus");
             }
+            return wallet;
         } catch (DataIntegrityViolationException e) {
-            // Created concurrently by another request — that's fine.
+            // Created concurrently by another request — re-read under the lock.
             log.debug("Wallet for {} already created concurrently", userId);
+            return balanceRepository.findForUpdate(userId)
+                    .orElseThrow(() -> new IllegalStateException("Wallet vanished after concurrent create for " + userId));
         }
-    }
-
-    private int currentBalance(UUID userId) {
-        return balanceRepository.findById(userId).map(CreditBalance::getBalance).orElse(0);
     }
 
     private void writeLedger(UUID userId, CreditTransactionType type, int amount, int balanceAfter,
