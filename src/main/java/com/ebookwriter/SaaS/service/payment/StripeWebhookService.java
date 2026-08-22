@@ -53,9 +53,20 @@ public class StripeWebhookService {
 
     @Transactional
     public void handle(String payload, String signatureHeader) {
+        String webhookSecret = stripeProperties.getWebhookSecret();
+        if (webhookSecret == null || webhookSecret.isBlank()) {
+            // Misconfiguration — not a bad request. Without the signing secret we
+            // cannot verify or fulfil anything, and every payment would silently
+            // hang on "processing". Return 503 so Stripe keeps retrying and the
+            // failure is obvious in both our logs and the Stripe dashboard.
+            log.error("[Stripe] Cannot process webhook: stripe.webhook-secret is not configured "
+                    + "— set STRIPE_WEBHOOK_SECRET. Paid orders cannot be fulfilled until it is set.");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Webhook not configured");
+        }
+
         Event event;
         try {
-            event = Webhook.constructEvent(payload, signatureHeader, stripeProperties.getWebhookSecret());
+            event = Webhook.constructEvent(payload, signatureHeader, webhookSecret);
         } catch (SignatureVerificationException e) {
             log.warn("[Stripe] Webhook signature verification failed: {}", e.getMessage());
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid signature");
@@ -124,9 +135,18 @@ public class StripeWebhookService {
                             order.getId(), session.getPaymentStatus());
                     return; // leave PENDING; an async event will settle it
                 }
+                // Persist the order's PAID state BEFORE granting. grant() runs a
+                // bulk update that clears the persistence context: if the order is
+                // still dirty/managed at that point, the follow-up save collides on
+                // its @Version (ObjectOptimisticLockingFailureException) and the
+                // whole webhook rolls back — credits lost and the order stuck
+                // PENDING ("payment is processing" forever). Flushing first, then
+                // never touching the order again, keeps fulfilment atomic and safe.
+                markPaid(order);
                 creditService.grant(order.getUserId(), order.getCreditsGranted(),
                         CreditTransactionType.CREDIT_PURCHASE, null, order.getId(),
                         "Purchased " + (order.getCreditPack() != null ? order.getCreditPack().getDisplayName() : "credits"));
+                log.info("[Stripe] Fulfilled order {} (CREDIT_PACK) for user {}", order.getId(), order.getUserId());
             }
             case SUBSCRIPTION -> {
                 // Activate the subscription here; the CREDITS are granted by
@@ -137,14 +157,18 @@ public class StripeWebhookService {
                 if (subscriptionId != null) {
                     upsertSubscription(order.getUserId(), subscriptionId, "active", false);
                 }
+                markPaid(order);
+                log.info("[Stripe] Fulfilled order {} (SUBSCRIPTION) for user {}", order.getId(), order.getUserId());
             }
         }
+    }
 
+    /** Flip an order to PAID and flush it immediately, so later context-clearing
+     *  writes (e.g. the bulk update inside a credit grant) can't strand it. */
+    private void markPaid(PaymentOrder order) {
         order.setStatus(PaymentOrderStatus.PAID);
         order.setFulfilledAt(LocalDateTime.now());
-        paymentOrderRepository.save(order);
-        log.info("[Stripe] Fulfilled order {} ({}) for user {}",
-                order.getId(), order.getPurpose(), order.getUserId());
+        paymentOrderRepository.saveAndFlush(order);
     }
 
     /**
