@@ -111,6 +111,35 @@ public class StripeWebhookService {
         processedStripeEventRepository.save(processed);
     }
 
+    /**
+     * Fallback fulfilment for when the webhook is late, missing, or the endpoint
+     * simply isn't subscribed to {@code checkout.session.completed}: the frontend's
+     * status poll ({@code GET /api/payments/orders/{id}}) calls this, which asks
+     * Stripe directly whether the checkout was paid and fulfils it idempotently if
+     * so. This makes a returning user get their credits without depending on the
+     * webhook at all — the webhook remains the path for users who close the tab.
+     *
+     * <p>Idempotent and safe against a racing webhook: fulfilment flips the order
+     * PENDING → PAID under its @Version guard, so only one path can grant.
+     */
+    @Transactional
+    public void reconcilePendingOrder(UUID orderId) {
+        PaymentOrder order = paymentOrderRepository.findById(orderId).orElse(null);
+        if (order == null
+                || order.getStatus() == PaymentOrderStatus.PAID
+                || order.getStripeCheckoutSessionId() == null) {
+            return;
+        }
+        try {
+            Session session = Session.retrieve(order.getStripeCheckoutSessionId());
+            log.info("[Stripe] Reconciling order {} from session {} (payment_status={})",
+                    orderId, session.getId(), session.getPaymentStatus());
+            handleCheckoutCompleted(session);
+        } catch (StripeException e) {
+            log.warn("[Stripe] Reconcile: could not retrieve session for order {}: {}", orderId, e.getMessage());
+        }
+    }
+
     private void handleCheckoutCompleted(Session session) {
         if (session == null) {
             return;
