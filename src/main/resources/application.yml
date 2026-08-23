@@ -37,10 +37,12 @@ server:
   # real https scheme and client IP (needed for Secure cookies and IP logging).
   forward-headers-strategy: framework
 
-# JWT. jwt.secret MUST be at least 32 chars (256 bits) for HS256 — set a strong,
-# random JWT_SECRET in the environment; the default is for local dev only.
+# JWT. jwt.secret MUST be at least 32 chars (256 bits) for HS256. There is NO
+# default: production sets a strong, random JWT_SECRET in the environment; for
+# local dev put `jwt.secret=...` in a gitignored src/main/resources/
+# application.properties. The app refuses to start if it is missing/weak.
 jwt:
-  secret: ${JWT_SECRET:change-me-local-dev-secret-please-override-32b}
+  secret: ${JWT_SECRET:}
   expiration: ${JWT_EXPIRATION:900000}                       # access token, ms (15 min)
   remember-me-expiration: ${JWT_EXPIRATION_REMEMBER_ME:2592000000}  # with "remember me", ms (30 days)
 

@@ -54,24 +54,31 @@ public class StartupConfigValidator implements ApplicationRunner {
         validateStripe();
     }
 
+    /**
+     * The JWT secret is security-critical for the whole app (a weak/known secret
+     * means forgeable access tokens → account takeover), and there is no longer a
+     * working default, so these checks ALWAYS fail the boot — regardless of
+     * {@code require-strong-secrets}. Local dev supplies the secret via a
+     * gitignored application.properties; the test suite via its own test config.
+     */
     private void validateJwtSecret() {
         int bytes = jwtSecret == null ? 0 : jwtSecret.getBytes(StandardCharsets.UTF_8).length;
 
         if (jwtSecret == null || jwtSecret.isBlank()) {
-            fail("jwt.secret is not set — set a strong, random JWT_SECRET (>= 32 bytes).");
-            return;
+            throw new IllegalStateException("[Startup] Refusing to start: jwt.secret is not set. "
+                    + "Set a strong, random JWT_SECRET (>= 32 bytes) in the environment, or "
+                    + "jwt.secret in a local application.properties.");
         }
         if (bytes < MIN_JWT_SECRET_BYTES) {
             // Too short for HS256 — Keys.hmacShaKeyFor would throw on first use
             // anyway, so stop now with a clear message rather than at login time.
-            fail("jwt.secret is only " + bytes + " bytes — HS256 needs at least "
-                    + MIN_JWT_SECRET_BYTES + ". Set a longer JWT_SECRET.");
-            return;
+            throw new IllegalStateException("[Startup] Refusing to start: jwt.secret is only " + bytes
+                    + " bytes — HS256 needs at least " + MIN_JWT_SECRET_BYTES + ". Use a longer JWT_SECRET.");
         }
         if (DEV_JWT_SECRET.equals(jwtSecret)) {
-            fail("jwt.secret is still the built-in development default, which is public in "
-                    + "the repository — anyone could forge access tokens. Set a strong, random "
-                    + "JWT_SECRET before exposing this service.");
+            throw new IllegalStateException("[Startup] Refusing to start: jwt.secret is the old built-in "
+                    + "development default, which is public in the repository — anyone could forge access "
+                    + "tokens. Set a strong, random JWT_SECRET.");
         }
     }
 
@@ -89,23 +96,9 @@ public class StartupConfigValidator implements ApplicationRunner {
     }
 
     /**
-     * A security-critical problem: fail the boot when strong secrets are
-     * required (production), otherwise log a prominent warning (local dev).
-     */
-    private void fail(String message) {
-        if (requireStrongSecrets) {
-            throw new IllegalStateException("[Startup] Refusing to start: " + message);
-        }
-        log.warn("=================================================================");
-        log.warn("[Startup] INSECURE CONFIG: {}", message);
-        log.warn("[Startup] This is tolerated only because app.security.require-strong-secrets=false.");
-        log.warn("[Startup] Set APP_SECURITY_REQUIRE_STRONG_SECRETS=true in every deployed environment.");
-        log.warn("=================================================================");
-    }
-
-    /**
-     * A payment-config problem: fail the boot when strong secrets are required,
-     * otherwise warn. (Kept separate from {@link #fail} only for message clarity.)
+     * A payment-config problem: fail the boot when strong secrets are required
+     * (recommended for every deployment), otherwise warn — payments are a
+     * feature, so an environment that isn't using them can still boot in dev.
      */
     private void warnOrFail(String message) {
         if (requireStrongSecrets) {

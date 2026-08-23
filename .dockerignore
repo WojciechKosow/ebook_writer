@@ -7,3 +7,6 @@ docs
 .idea
 *.iml
 HELP.md
+# Never bake a local secret-bearing application.properties into an image;
+# production config comes from environment variables.
+**/application.properties
