@@ -64,7 +64,10 @@ public final class ChapterPrompts {
                 CHAPTER TO WRITE NOW
                 Chapter %d: %s
                 Scope: %s
-                Aim for approximately %d words.
+                Target length: about %d words. Treat this as a firm limit — write to
+                roughly this length and do NOT substantially exceed it. Staying a
+                little under is fine; going well over is not. Respecting the length
+                keeps the finished book within the reader's page budget.
 
                 Write this chapter now.
                 """.formatted(

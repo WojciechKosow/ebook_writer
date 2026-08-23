@@ -20,4 +20,15 @@ public class CreditProperties {
 
     /** Credits granted once when a user's wallet is first created (0 = none). */
     private int signupBonus = 0;
+
+    /**
+     * Head-room over the requested page count when reserving credits for a
+     * generation, as a fraction (e.g. {@code 0.20} = +20%). We reserve
+     * {@code min(requestedPages + requestedPages*tolerance, balance)} up front as
+     * a ceiling: it lets a book run slightly past the requested length for a
+     * clean ending, is always capped by what the user can actually pay, and the
+     * unused part is refunded once the real page count is known. Set to
+     * {@code 0} to hold exactly the requested page count.
+     */
+    private double pageBudgetTolerance = 0.20;
 }

@@ -35,13 +35,16 @@ public final class PlanningPrompts {
                 Rules for the plan:
                 - Choose a sensible number of chapters for the target length. Order
                   them so the book builds logically.
-                - Set each chapter's "approxPages" (an integer) so the sum is close to
-                  the requested total page count.
+                - Set each chapter's "approxPages" (an integer). The sum of all
+                  chapters' "approxPages" is a HARD MAXIMUM: it MUST NOT exceed the
+                  maximum page count given in the brief. Aim to use most of that
+                  budget, but never go over it. Fewer, shorter chapters are better
+                  than breaching the limit.
                 - Make chapter scopes distinct and non-overlapping.
                 """;
     }
 
-    public static String user(Ebook e) {
+    public static String user(Ebook e, int maxPages) {
         return """
                 Create the plan for an ebook based on this brief.
 
@@ -54,7 +57,8 @@ public final class PlanningPrompts {
                 Desired writing style:
                 %s
 
-                Approximate length:
+                Maximum total length (HARD LIMIT — the sum of all chapters'
+                approxPages must not exceed this):
                 %d pages
 
                 Language:
@@ -69,7 +73,7 @@ public final class PlanningPrompts {
                 nz(e.getTopic()),
                 nz(e.getTargetAudience()),
                 nz(e.getStyle()),
-                e.getApproxPageCount(),
+                maxPages,
                 blankToEnglish(e.getLanguage()),
                 nz(e.getAdditionalInstructions()),
                 nz(e.getSourceMaterial())

@@ -66,8 +66,22 @@ public class Ebook {
     @Column(columnDefinition = "text")
     private String errorMessage;
 
-    /** Credits deducted for this generation (1 per requested page). */
+    /**
+     * Credits the user ultimately pays for this generation. Starts equal to the
+     * reserved {@link #pageBudget} (the up-front hold) and is trued up to the
+     * real rendered page count once generation finishes.
+     */
     private int creditsCharged;
+
+    /**
+     * Page ceiling reserved for this generation (1 credit = 1 page): the most
+     * pages we will produce and the most credits we may charge. Generation is
+     * capped to this so we never spend on more pages than the user authorised.
+     */
+    private int pageBudget;
+
+    /** Real number of pages in the rendered PDF; set once rendering completes. */
+    private int actualPageCount;
 
     /** True once those credits have been refunded (after a failure). */
     @Builder.Default

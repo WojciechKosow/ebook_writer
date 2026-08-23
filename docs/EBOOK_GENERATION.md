@@ -103,11 +103,31 @@ Three ways to run it, cheapest to best:
   validation.
 - **On, same model**: best quality, highest cost.
 
-## Page-count handling
+## Page-count handling & billing
 
-The requested page count is a **soft target**. The planner distributes it
-across chapters (`approxPages`), and each chapter is written to a word target
-(~450 words/page). V0.1 aims for approximate matching, not exact page control.
+Pages are money: 1 credit ≈ 1 page, so the page count is a **hard budget**, not
+a soft target.
+
+1. **Reserve a budget up front.** On submit we don't charge the raw requested
+   count — we reserve `min(requestedPages + tolerance, balance)` credits as a
+   hold (`credits.page-budget-tolerance`, default `+20%`). This is the ceiling
+   generation may reach, and it can never exceed what the user can pay.
+2. **Plan is clamped to the budget.** The planner is told the budget is a hard
+   maximum, and `BookPlanningService` enforces it regardless: chapter
+   `approxPages` are scaled down (and extra chapters dropped) so their sum never
+   exceeds the budget. Chapter word targets (~450 words/page) follow from those
+   clamped page counts, which caps token spend.
+3. **Bill the real page count.** After rendering, the true page count is read
+   back from the PDF (`PDDocument.getNumberOfPages()`) — this is the
+   authoritative "pages generated", since the model returns markdown, not pages.
+   The hold is trued up: the user is charged for exactly the pages produced
+   (clamped to `[1, budget]`) and the unused reservation is refunded as a
+   `GENERATION_ADJUSTMENT` ledger entry. `Ebook.actualPageCount` records the
+   result.
+
+This closes the gap where a book that overran its requested length was still
+billed at the requested count — we now always pay for and charge the same
+number of pages.
 
 ## Not in V0.1 (deliberately)
 

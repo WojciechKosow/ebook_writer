@@ -97,3 +97,7 @@ credits:
   subscription-monthly-grant: ${CREDITS_SUBSCRIPTION_MONTHLY_GRANT:150}
   # Optional one-time grant when a wallet is first created (useful for testing).
   signup-bonus: ${CREDITS_SIGNUP_BONUS:0}
+  # Head-room over the requested page count when reserving the generation hold
+  # (0.20 = +20%). Always capped by the user's balance; the unused part is
+  # refunded once the real page count is known. Set 0 to hold exactly the ask.
+  page-budget-tolerance: ${CREDITS_PAGE_BUDGET_TOLERANCE:0.20}
