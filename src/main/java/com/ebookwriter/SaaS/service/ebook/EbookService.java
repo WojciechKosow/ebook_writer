@@ -11,6 +11,7 @@ import com.ebookwriter.SaaS.exceptions.InsufficientCreditsException;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookPdfRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.config.properties.CreditProperties;
 import com.ebookwriter.SaaS.request.EbookRequest;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import lombok.RequiredArgsConstructor;
@@ -34,34 +35,49 @@ public class EbookService {
     private final EbookPdfRepository pdfRepository;
     private final EbookGenerationService generationService;
     private final CreditService creditService;
+    private final CreditProperties creditProperties;
 
     /**
-     * Charge credits and start generating in the background. 1 credit per
-     * requested page. Throws {@link InsufficientCreditsException} (→ 402) if the
-     * balance can't cover it; the credits are refunded automatically if
+     * Reserve credits and start generating in the background. 1 credit per page.
+     *
+     * <p>We do <em>not</em> charge the raw requested count and hope the model
+     * matches it. Instead we reserve a <b>page budget</b> — the requested count
+     * plus a configurable tolerance, capped by what the user can actually pay —
+     * as an up-front hold. That hold is the ceiling generation may reach, so we
+     * never produce (and pay the model for) more pages than the user authorised.
+     * Once the PDF is rendered the real page count is known and the hold is
+     * trued up: the user is charged for exactly the pages produced and the
+     * unused reservation is refunded (see {@link EbookGenerationService}).
+     *
+     * <p>Throws {@link InsufficientCreditsException} (→ 402) if the balance can't
+     * cover the requested page count; the full hold is refunded automatically if
      * generation later fails.
      */
     public Ebook createAndStart(User user, EbookRequest request) {
-        int requiredCredits = Math.max(1, request.getApproxPageCount());
+        int requestedPages = Math.max(1, request.getApproxPageCount());
 
-        // Fast pre-check so we don't create a row when the user clearly can't pay.
+        // Fast pre-check so we don't create a row when the user clearly can't pay
+        // for even the pages they asked for.
         int balance = creditService.getBalance(user.getId());
-        if (balance < requiredCredits) {
-            throw new InsufficientCreditsException(requiredCredits, balance);
+        if (balance < requestedPages) {
+            throw new InsufficientCreditsException(requestedPages, balance);
         }
+
+        int pageBudget = reservedBudget(requestedPages, balance);
 
         Ebook ebook = Ebook.builder()
                 .user(user)
                 .topic(request.getTopic())
                 .targetAudience(request.getTargetAudience())
                 .style(request.getStyle())
-                .approxPageCount(request.getApproxPageCount())
+                .approxPageCount(requestedPages)
                 .language(blankToEnglish(request.getLanguage()))
                 .additionalInstructions(request.getAdditionalInstructions())
                 .sourceMaterial(request.getSourceMaterial())
                 .status(EbookStatus.PENDING)
                 .progress(0)
-                .creditsCharged(requiredCredits)
+                .pageBudget(pageBudget)
+                .creditsCharged(pageBudget)
                 .build();
 
         ebook = ebookRepository.save(ebook);
@@ -69,8 +85,8 @@ public class EbookService {
         // Atomic deduct (race-safe). If a concurrent request drained the balance
         // between the pre-check and here, roll back by removing the row.
         try {
-            creditService.spend(user.getId(), requiredCredits, CreditTransactionType.GENERATION,
-                    ebook.getId(), "Ebook generation (" + requiredCredits + " pages)");
+            creditService.spend(user.getId(), pageBudget, CreditTransactionType.GENERATION,
+                    ebook.getId(), "Ebook generation hold (up to " + pageBudget + " pages)");
         } catch (InsufficientCreditsException e) {
             ebookRepository.delete(ebook);
             throw e;
@@ -79,6 +95,16 @@ public class EbookService {
         // Credits committed; safe to hand off to the async worker.
         generationService.generate(ebook.getId());
         return ebook;
+    }
+
+    /**
+     * The page ceiling to reserve: requested pages plus tolerance head-room,
+     * never more than the user can pay and never below the requested count.
+     */
+    private int reservedBudget(int requestedPages, int balance) {
+        double tolerance = Math.max(0.0, creditProperties.getPageBudgetTolerance());
+        int withHeadroom = requestedPages + (int) Math.ceil(requestedPages * tolerance);
+        return Math.min(Math.max(withHeadroom, requestedPages), balance);
     }
 
     @Transactional(readOnly = true)

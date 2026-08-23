@@ -49,6 +49,38 @@ class CreditServiceTest {
     }
 
     @Test
+    void reservationHoldIsTrueDownToActualPages() {
+        UUID user = UUID.randomUUID();
+        UUID ebook = UUID.randomUUID();
+        creditService.grant(user, 100, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");
+
+        // Reserve a 60-page hold up front, then refund the unused part after the
+        // real render came in at 42 pages.
+        creditService.spend(user, 60, CreditTransactionType.GENERATION, ebook, "hold");
+        assertEquals(40, creditService.getBalance(user));
+
+        creditService.refundUnusedHold(user, 60 - 42, ebook);
+        assertEquals(58, creditService.getBalance(user), "user pays for 42 pages, keeps the rest");
+
+        CreditTransaction adjustment = creditService.recentTransactions(user).get(0);
+        assertEquals(CreditTransactionType.GENERATION_ADJUSTMENT, adjustment.getType());
+        assertEquals(18, adjustment.getAmount());
+    }
+
+    @Test
+    void refundUnusedHoldIsNoOpWhenTheWholeBudgetWasUsed() {
+        UUID user = UUID.randomUUID();
+        creditService.grant(user, 50, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");
+        creditService.spend(user, 50, CreditTransactionType.GENERATION, UUID.randomUUID(), "hold");
+
+        creditService.refundUnusedHold(user, 0, UUID.randomUUID());
+
+        assertEquals(0, creditService.getBalance(user));
+        // Only the grant and the spend were recorded — no adjustment row.
+        assertEquals(2, creditService.recentTransactions(user).size());
+    }
+
+    @Test
     void spendingMoreThanBalanceIsRejectedAndChangesNothing() {
         UUID user = UUID.randomUUID();
         creditService.grant(user, 20, CreditTransactionType.CREDIT_PURCHASE, null, null, "buy");

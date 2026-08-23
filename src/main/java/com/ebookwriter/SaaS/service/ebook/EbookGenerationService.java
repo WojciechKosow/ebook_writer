@@ -73,9 +73,13 @@ public class EbookGenerationService {
                 log.info("Editorial pass disabled — skipping for ebook {}", ebookId);
             }
 
-            // Step 4 — render PDF
+            // Step 4 — render PDF and learn the real page count
             updateStatus(ebookId, EbookStatus.RENDERING, 95);
-            pdfGenerationService.renderAndStore(ebookId);
+            int actualPages = pdfGenerationService.renderAndStore(ebookId);
+
+            // Step 5 — true up the up-front hold to what was actually produced:
+            // charge for real pages, refund the unused reservation.
+            reconcileCredits(ebookId, actualPages);
 
             updateStatus(ebookId, EbookStatus.COMPLETED, 100);
             log.info("Finished generation for ebook {}", ebookId);
@@ -84,6 +88,42 @@ public class EbookGenerationService {
             log.error("Generation failed for ebook {}", ebookId, e);
             fail(ebookId, e);
         }
+    }
+
+    /**
+     * True up the reserved hold to the real page count. The final charge is the
+     * actual number of pages, clamped to {@code [1, pageBudget]} — we never
+     * charge more than the user reserved, and never nothing for a produced book.
+     * Any unused reservation is refunded. Idempotent enough for the happy path:
+     * it runs once, right after a successful render.
+     */
+    private void reconcileCredits(UUID ebookId, int actualPages) {
+        ebookRepository.findById(ebookId).ifPresent(ebook -> {
+            int budget = ebook.getPageBudget();
+            int finalCharge = reconciledCharge(actualPages, budget);
+            int refund = budget - finalCharge;
+
+            ebook.setActualPageCount(actualPages);
+            ebook.setCreditsCharged(finalCharge);
+            ebookRepository.save(ebook);
+
+            if (refund > 0) {
+                ebookRepository.findUserIdById(ebookId).ifPresent(userId ->
+                        creditService.refundUnusedHold(userId, refund, ebookId));
+            }
+
+            log.info("Reconciled ebook {}: {} pages rendered, reserved {}, charged {}, refunded {}",
+                    ebookId, actualPages, budget, finalCharge, refund);
+        });
+    }
+
+    /**
+     * The credits a finished book is billed: the real page count, but never more
+     * than the reserved budget (the user only authorised that much) and never
+     * less than 1 (a produced book always costs at least one credit).
+     */
+    static int reconciledCharge(int actualPages, int budget) {
+        return Math.max(1, Math.min(actualPages, budget));
     }
 
     private void updateStatus(UUID ebookId, EbookStatus status, int progress) {

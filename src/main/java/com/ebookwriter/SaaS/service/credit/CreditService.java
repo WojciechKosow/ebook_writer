@@ -93,6 +93,20 @@ public class CreditService {
     }
 
     /**
+     * Return the unused part of a generation hold once the real rendered page
+     * count is known and came in under the reserved budget. No-op for {@code
+     * amount <= 0} (the book used its whole budget).
+     */
+    @Transactional
+    public void refundUnusedHold(UUID userId, int amount, UUID ebookId) {
+        if (amount <= 0) {
+            return;
+        }
+        grant(userId, amount, CreditTransactionType.GENERATION_ADJUSTMENT, ebookId, null,
+                "Adjustment for unused pages (" + amount + " credits)");
+    }
+
+    /**
      * Reclaim credits after a Stripe refund or chargeback. Unlike {@link #spend}
      * this is unconditional and MAY drive the balance negative — that is
      * deliberate: a user who spent granted credits and then refunded or charged

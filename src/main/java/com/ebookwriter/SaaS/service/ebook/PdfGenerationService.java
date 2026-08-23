@@ -10,6 +10,7 @@ import com.openhtmltopdf.extend.FSSupplier;
 import com.openhtmltopdf.outputdevice.helper.BaseRendererBuilder.FontStyle;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import lombok.RequiredArgsConstructor;
+import org.apache.pdfbox.pdmodel.PDDocument;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.helper.W3CDom;
@@ -45,16 +46,32 @@ public class PdfGenerationService {
 
     private volatile String cssCache;
 
+    /**
+     * Render the book, store the PDF, and return the <b>real</b> number of pages
+     * in it. The page count is what the user is billed for, so it is read back
+     * from the rendered bytes rather than estimated from word targets.
+     */
     @Transactional
-    public void renderAndStore(UUID ebookId) {
+    public int renderAndStore(UUID ebookId) {
         Ebook ebook = ebookRepository.findById(ebookId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found: " + ebookId));
         List<EbookChapter> chapters = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
 
         byte[] pdf = render(ebook, chapters);
+        int pageCount = countPages(pdf);
 
         pdfRepository.save(new EbookPdf(ebookId, pdf));
-        log.info("Rendered PDF for ebook {} ({} KB)", ebookId, pdf.length / 1024);
+        log.info("Rendered PDF for ebook {} ({} KB, {} pages)", ebookId, pdf.length / 1024, pageCount);
+        return pageCount;
+    }
+
+    /** Read the true page count from rendered PDF bytes. */
+    private int countPages(byte[] pdf) {
+        try (PDDocument document = PDDocument.load(pdf)) {
+            return document.getNumberOfPages();
+        } catch (IOException e) {
+            throw new RuntimeException("Could not read rendered PDF page count: " + e.getMessage(), e);
+        }
     }
 
     /** Build the book HTML and render it to PDF bytes (no persistence). */

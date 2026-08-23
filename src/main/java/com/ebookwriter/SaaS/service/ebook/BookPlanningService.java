@@ -42,8 +42,14 @@ public class BookPlanningService {
         Ebook ebook = ebookRepository.findById(ebookId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found: " + ebookId));
 
+        // The reserved page budget is a hard ceiling: the model's plan may not
+        // sum to more pages than this, or we'd generate (and pay for) more than
+        // the user authorised. Fall back to the requested count for legacy rows.
+        int pageBudget = ebook.getPageBudget() > 0 ? ebook.getPageBudget()
+                : Math.max(1, ebook.getApproxPageCount());
+
         String system = PlanningPrompts.system(ebook.getLanguage());
-        String user = PlanningPrompts.user(ebook);
+        String user = PlanningPrompts.user(ebook, pageBudget);
 
         String raw = anthropicService.complete(system, user, PLAN_MAX_TOKENS);
         BookPlan plan = parsePlan(raw);
@@ -54,9 +60,12 @@ public class BookPlanningService {
         ebook.setWritingGuidelines(plan.writingGuidelines());
         ebook.setPlanJson(raw);
 
+        // Enforce the ceiling even if the model ignored it in the prompt.
+        List<PlannedChapter> planned = clampToBudget(plan.chapters(), pageBudget);
+
         ebook.getChapters().clear();
         int number = 1;
-        for (PlannedChapter pc : plan.chapters()) {
+        for (PlannedChapter pc : planned) {
             EbookChapter chapter = EbookChapter.builder()
                     .ebook(ebook)
                     .chapterNumber(number++)
@@ -69,8 +78,42 @@ public class BookPlanningService {
         }
 
         ebookRepository.save(ebook);
-        log.info("Planned ebook {} — '{}' with {} chapters",
-                ebookId, ebook.getTitle(), ebook.getChapters().size());
+        log.info("Planned ebook {} — '{}' with {} chapters, {} pages (budget {})",
+                ebookId, ebook.getTitle(), ebook.getChapters().size(),
+                ebook.getChapters().stream().mapToInt(EbookChapter::getApproxPages).sum(), pageBudget);
+    }
+
+    /**
+     * Force the planned chapters to fit within {@code budget} pages. Each chapter
+     * keeps a floor of one page; if the model's totals exceed the budget the
+     * per-chapter page counts are scaled down proportionally, and if it planned
+     * more chapters than the budget can hold at one page each the tail is
+     * dropped. Returns page counts that sum to at most {@code budget}.
+     */
+    static List<PlannedChapter> clampToBudget(List<PlannedChapter> chapters, int budget) {
+        // If even one page per chapter overflows the budget, keep only as many
+        // chapters as the budget can afford.
+        List<PlannedChapter> kept = chapters.size() > budget
+                ? new ArrayList<>(chapters.subList(0, budget))
+                : new ArrayList<>(chapters);
+
+        int total = kept.stream().mapToInt(pc -> Math.max(1, pc.approxPages())).sum();
+        if (total <= budget) {
+            return kept;
+        }
+
+        double factor = (double) budget / total;
+        List<PlannedChapter> scaled = new ArrayList<>(kept.size());
+        int running = 0;
+        for (PlannedChapter pc : kept) {
+            int pages = Math.max(1, (int) Math.floor(Math.max(1, pc.approxPages()) * factor));
+            running += pages;
+            scaled.add(new PlannedChapter(pc.title(), pc.description(), pages));
+        }
+        // Flooring can leave a few pages of slack under the budget; that is fine
+        // (we round down, never up, so the ceiling is never breached).
+        log.debug("Clamped plan from {} to {} pages (budget {})", total, running, budget);
+        return scaled;
     }
 
     /** Extract the JSON object from the model output and parse it leniently. */
