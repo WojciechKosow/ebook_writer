@@ -48,8 +48,16 @@ public class BookPlanningService {
         int pageBudget = ebook.getPageBudget() > 0 ? ebook.getPageBudget()
                 : Math.max(1, ebook.getApproxPageCount());
 
+        // Aim for the length the user actually asked for; the reserved budget is
+        // only a ceiling for the headroom. The cover and table of contents cost
+        // pages too, so both are expressed in content pages (minus front matter).
+        int requestedPages = Math.max(1, ebook.getApproxPageCount());
+        int frontMatter = EbookHtmlBuilder.FRONT_MATTER_PAGES;
+        int contentTarget = Math.max(1, requestedPages - frontMatter);
+        int contentCeiling = Math.max(contentTarget, pageBudget - frontMatter);
+
         String system = PlanningPrompts.system(ebook.getLanguage());
-        String user = PlanningPrompts.user(ebook, pageBudget);
+        String user = PlanningPrompts.user(ebook, contentTarget, contentCeiling);
 
         String raw = anthropicService.complete(system, user, PLAN_MAX_TOKENS);
         BookPlan plan = parsePlan(raw);
@@ -61,7 +69,7 @@ public class BookPlanningService {
         ebook.setPlanJson(raw);
 
         // Enforce the ceiling even if the model ignored it in the prompt.
-        List<PlannedChapter> planned = clampToBudget(plan.chapters(), pageBudget);
+        List<PlannedChapter> planned = clampToBudget(plan.chapters(), contentCeiling);
 
         ebook.getChapters().clear();
         int number = 1;
@@ -78,9 +86,10 @@ public class BookPlanningService {
         }
 
         ebookRepository.save(ebook);
-        log.info("Planned ebook {} — '{}' with {} chapters, {} pages (budget {})",
+        log.info("Planned ebook {} — '{}' with {} chapters, {} content pages (target {}, ceiling {}, budget {})",
                 ebookId, ebook.getTitle(), ebook.getChapters().size(),
-                ebook.getChapters().stream().mapToInt(EbookChapter::getApproxPages).sum(), pageBudget);
+                ebook.getChapters().stream().mapToInt(EbookChapter::getApproxPages).sum(),
+                contentTarget, contentCeiling, pageBudget);
     }
 
     /**
