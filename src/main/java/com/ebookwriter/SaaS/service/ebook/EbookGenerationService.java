@@ -73,9 +73,12 @@ public class EbookGenerationService {
                 log.info("Editorial pass disabled — skipping for ebook {}", ebookId);
             }
 
-            // Step 4 — render PDF and learn the real page count
+            // Step 4 — render PDF and learn the real page count. The reserved
+            // page budget is a hard ceiling: an over-length book is trimmed to
+            // fit rather than delivered (and billed) beyond what the user paid.
             updateStatus(ebookId, EbookStatus.RENDERING, 95);
-            int actualPages = pdfGenerationService.renderAndStore(ebookId);
+            int pageBudget = ebookRepository.findById(ebookId).map(Ebook::getPageBudget).orElse(0);
+            int actualPages = pdfGenerationService.renderAndStore(ebookId, pageBudget);
 
             // Step 5 — true up the up-front hold to what was actually produced:
             // charge for real pages, refund the unused reservation.

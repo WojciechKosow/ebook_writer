@@ -44,7 +44,7 @@ public final class PlanningPrompts {
                 """;
     }
 
-    public static String user(Ebook e, int maxPages) {
+    public static String user(Ebook e, int targetPages, int maxPages) {
         return """
                 Create the plan for an ebook based on this brief.
 
@@ -57,9 +57,11 @@ public final class PlanningPrompts {
                 Desired writing style:
                 %s
 
-                Maximum total length (HARD LIMIT — the sum of all chapters'
-                approxPages must not exceed this):
-                %d pages
+                Target length: aim for the sum of all chapters' approxPages to be
+                about %d pages — this is the length the reader asked for, so plan
+                to hit it, not to pad beyond it. You may go a little higher only if
+                the material genuinely needs it, but the sum MUST NOT exceed %d
+                pages under any circumstances (a HARD LIMIT).
 
                 Language:
                 %s
@@ -73,6 +75,7 @@ public final class PlanningPrompts {
                 nz(e.getTopic()),
                 nz(e.getTargetAudience()),
                 nz(e.getStyle()),
+                targetPages,
                 maxPages,
                 blankToEnglish(e.getLanguage()),
                 nz(e.getAdditionalInstructions()),

@@ -112,22 +112,33 @@ a soft target.
    count — we reserve `min(requestedPages + tolerance, balance)` credits as a
    hold (`credits.page-budget-tolerance`, default `+20%`). This is the ceiling
    generation may reach, and it can never exceed what the user can pay.
-2. **Plan is clamped to the budget.** The planner is told the budget is a hard
-   maximum, and `BookPlanningService` enforces it regardless: chapter
-   `approxPages` are scaled down (and extra chapters dropped) so their sum never
-   exceeds the budget. Chapter word targets (~450 words/page) follow from those
-   clamped page counts, which caps token spend.
-3. **Bill the real page count.** After rendering, the true page count is read
-   back from the PDF (`PDDocument.getNumberOfPages()`) — this is the
-   authoritative "pages generated", since the model returns markdown, not pages.
-   The hold is trued up: the user is charged for exactly the pages produced
-   (clamped to `[1, budget]`) and the unused reservation is refunded as a
-   `GENERATION_ADJUSTMENT` ledger entry. `Ebook.actualPageCount` records the
-   result.
+2. **Aim for the requested length, cap at the budget.** Two pages are always
+   spent on front matter (cover + table of contents,
+   `EbookHtmlBuilder.FRONT_MATTER_PAGES`), so content is sized in *content
+   pages* = pages − front matter. The planner is told to **aim for** the
+   requested length and that the reserved budget is a **hard maximum**;
+   `BookPlanningService` enforces the ceiling regardless, scaling chapter
+   `approxPages` down (and dropping extra chapters) so their sum can't exceed it.
+3. **Size words to the real layout.** Chapter word targets use
+   `WORDS_PER_PAGE ≈ 200` — the number of words that actually fit on a page in
+   the 6×9" layout, measured against the real PDF pipeline
+   (`WordsPerPageCalibrationTest`). The previous `450` estimate was ~2× too high
+   and made every book render 2–3× over its requested length.
+4. **Hard-cap the delivered book.** After rendering, the true page count is read
+   from the PDF (`PDDocument.getNumberOfPages()`). If it still exceeds the budget
+   (the model overshot), trailing content is trimmed and the book re-rendered — a
+   cheap, API-free loop — until it fits; trimmed chapters are persisted so the
+   stored manuscript matches the PDF.
+5. **Bill the real page count.** The hold is trued up: the user is charged for
+   exactly the pages produced (clamped to `[1, budget]`) and the unused
+   reservation is refunded as a `GENERATION_ADJUSTMENT` ledger entry.
+   `Ebook.actualPageCount` records the result.
 
-This closes the gap where a book that overran its requested length was still
-billed at the requested count — we now always pay for and charge the same
-number of pages.
+Together these close the gap where a book overran its requested length — a
+5-page request rendering ~18–30 pages — while we billed only the requested
+count and ate the difference. We now aim for what the user asked, never deliver
+(or generate) past what they reserved, and pay for and charge the same number of
+pages.
 
 ## Not in V0.1 (deliberately)
 

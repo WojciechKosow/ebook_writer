@@ -24,8 +24,14 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ChapterGenerationService {
 
-    /** Rough words-per-page estimate for turning a page target into a word target. */
-    static final int WORDS_PER_PAGE = 450;
+    /**
+     * Words that fill one rendered page in the actual 6×9" book layout. Measured
+     * empirically against the real PDF pipeline (see WordsPerPageCalibrationTest)
+     * — the layout fits ~200 words per content page, NOT the ~450 a plain-text
+     * estimate suggests. Using the true value keeps generated length close to the
+     * requested page count instead of overshooting it 2–3×.
+     */
+    static final int WORDS_PER_PAGE = 200;
 
     private static final long MAX_OUTPUT_TOKENS = 16000L;
 

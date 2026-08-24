@@ -18,6 +18,13 @@ import java.util.List;
 @Component
 public class EbookHtmlBuilder {
 
+    /**
+     * Pages the book always spends on front matter regardless of content: the
+     * cover and the table of contents (each forces a page break). The user pays
+     * for these, so content is budgeted as {@code pageBudget - FRONT_MATTER_PAGES}.
+     */
+    public static final int FRONT_MATTER_PAGES = 2;
+
     private final Parser markdownParser;
     private final HtmlRenderer markdownRenderer;
 
