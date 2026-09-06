@@ -50,6 +50,8 @@ to the authenticated user.
 | POST   | `/api/ebooks`                 | Submit a brief; returns `202` with the ebook id and initial status. |
 | GET    | `/api/ebooks/{id}`            | Poll status/progress + per-chapter progress. |
 | GET    | `/api/ebooks`                 | List the current user's ebooks. |
+| GET    | `/api/ebooks/{id}/content`    | Load the editable manuscript: all chapters + their Markdown bodies. |
+| PUT    | `/api/ebooks/{id}/content`    | Save edited chapters, then re-render the PDF (`409` until COMPLETED). |
 | GET    | `/api/ebooks/{id}/download`   | Download the finished PDF (`409` until COMPLETED). |
 
 ### Request body (`POST /api/ebooks`)
@@ -68,6 +70,27 @@ to the authenticated user.
 
 Frontend flow: `POST` → get id → poll `GET /api/ebooks/{id}` until
 `status = COMPLETED` → `GET /api/ebooks/{id}/download`.
+
+### Editing (`GET`/`PUT /api/ebooks/{id}/content`)
+
+Once a book is `COMPLETED`, the frontend text editor loads the manuscript with
+`GET .../content` and saves changes with `PUT .../content`. Chapters are stored
+as Markdown, so the editor round-trips Markdown bodies directly. Saving persists
+the edited chapters and re-renders the PDF **uncapped** (no page-budget trim) so
+the download always matches the edited text. Editing is free — no credits are
+charged or refunded. A book that is still generating returns `409`.
+
+```json
+// PUT /api/ebooks/{id}/content
+{
+  "chapters": [
+    { "chapterNumber": 1, "title": "Introduction", "content": "# Introduction\n\nEdited body…" }
+  ]
+}
+```
+
+Chapters are matched by `chapterNumber`; omitted chapters are left untouched and
+unknown numbers are ignored.
 
 ## PDF rendering
 

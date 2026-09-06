@@ -1,9 +1,11 @@
 package com.ebookwriter.SaaS.controller;
 
+import com.ebookwriter.SaaS.dto.EbookContentResponse;
 import com.ebookwriter.SaaS.dto.EbookStatusResponse;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.UserRepository;
+import com.ebookwriter.SaaS.request.EbookContentUpdateRequest;
 import com.ebookwriter.SaaS.request.EbookRequest;
 import com.ebookwriter.SaaS.service.ebook.EbookService;
 import jakarta.validation.Valid;
@@ -49,6 +51,24 @@ public class EbookController {
     public ResponseEntity<List<EbookStatusResponse>> list(Authentication authentication) {
         User user = currentUser(authentication);
         return ResponseEntity.ok(ebookService.list(user.getId()));
+    }
+
+    /** Load the full editable manuscript (all chapters + Markdown bodies). */
+    @GetMapping("/{id}/content")
+    public ResponseEntity<EbookContentResponse> content(@PathVariable UUID id,
+                                                        Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(ebookService.getContent(id, user.getId()));
+    }
+
+    /** Save edited chapters and re-render the PDF so the download stays in sync. */
+    @PutMapping("/{id}/content")
+    public ResponseEntity<EbookContentResponse> updateContent(
+            @PathVariable UUID id,
+            @Valid @RequestBody EbookContentUpdateRequest request,
+            Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(ebookService.updateContent(id, user.getId(), request));
     }
 
     /** Download the finished PDF. */
