@@ -3,6 +3,7 @@ package com.ebookwriter.SaaS.service.ebook;
 import com.ebookwriter.SaaS.dto.ChapterProgressDTO;
 import com.ebookwriter.SaaS.dto.EbookContentResponse;
 import com.ebookwriter.SaaS.dto.EbookStatusResponse;
+import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.CreditTransactionType;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
@@ -22,8 +23,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -140,18 +144,24 @@ public class EbookService {
     }
 
     /**
-     * Persist the user's edits to chapter titles/bodies, then re-render the PDF
-     * so the download stays in sync with the edited text. Only a COMPLETED book
-     * may be edited — editing one that is still generating would race with the
-     * generation pipeline.
+     * Replace the book's chapters with the editor's authoritative list, then
+     * re-render the PDF so the download stays in sync. This one save covers
+     * every chapter operation:
+     * <ul>
+     *   <li><b>edit</b> — an entry with an existing {@code id} updates that
+     *       chapter's title/body;</li>
+     *   <li><b>add</b> — an entry with a {@code null} id creates a new chapter;</li>
+     *   <li><b>remove</b> — an existing chapter whose id is absent from the list
+     *       is deleted;</li>
+     *   <li><b>reorder</b> — each chapter's position in the list becomes its new
+     *       chapter number.</li>
+     * </ul>
      *
-     * <p>Re-rendering here is deliberately uncapped (no page-budget trim): these
-     * are the user's own edits, not model output, so we deliver exactly what
-     * they wrote and never trim it. Editing is free — no credits are charged or
-     * refunded.
-     *
-     * <p>Incoming chapters are matched to existing ones by chapter number;
-     * unknown numbers are ignored and omitted chapters are left untouched.
+     * <p>Only a COMPLETED book may be edited — editing one that is still
+     * generating would race with the generation pipeline. Re-rendering is
+     * deliberately uncapped (no page-budget trim): these are the user's own
+     * edits, not model output, so we deliver exactly what they wrote. Editing is
+     * free — no credits are charged or refunded.
      */
     @Transactional
     public EbookContentResponse updateContent(UUID ebookId, UUID userId,
@@ -163,28 +173,52 @@ public class EbookService {
             throw new IllegalStateException("Ebook is not ready to edit");
         }
 
-        List<EbookChapter> chapters =
+        List<EbookChapter> existing =
                 chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
-        Map<Integer, EbookChapter> byNumber = chapters.stream()
-                .collect(Collectors.toMap(EbookChapter::getChapterNumber, Function.identity()));
+        Map<UUID, EbookChapter> byId = existing.stream()
+                .collect(Collectors.toMap(EbookChapter::getId, Function.identity()));
 
+        Set<UUID> keptIds = new HashSet<>();
+        List<EbookChapter> ordered = new ArrayList<>();
+
+        int number = 1;
         for (ChapterUpdateRequest edit : request.getChapters()) {
-            EbookChapter chapter = byNumber.get(edit.getChapterNumber());
-            if (chapter == null) {
-                continue; // ignore chapter numbers that don't exist
+            EbookChapter chapter;
+            if (edit.getId() != null) {
+                chapter = byId.get(edit.getId());
+                if (chapter == null) {
+                    throw new IllegalArgumentException("Chapter not found: " + edit.getId());
+                }
+                if (!keptIds.add(chapter.getId())) {
+                    throw new IllegalArgumentException("Duplicate chapter: " + edit.getId());
+                }
+            } else {
+                chapter = EbookChapter.builder()
+                        .ebook(ebook)
+                        .status(ChapterStatus.EDITED)
+                        .build();
             }
-            if (edit.getTitle() != null) {
-                chapter.setTitle(edit.getTitle());
-            }
+            chapter.setChapterNumber(number++);
+            chapter.setTitle(edit.getTitle());
             chapter.setContent(edit.getContent());
+            ordered.add(chapter);
         }
-        chapterRepository.saveAll(chapters);
 
-        // Re-render the PDF from the edited manuscript (uncapped: keep exactly
-        // what the user wrote). renderAndStore re-reads the just-saved chapters.
+        // Delete chapters the user removed (present in the DB, absent from the save).
+        List<EbookChapter> removed = existing.stream()
+                .filter(c -> !keptIds.contains(c.getId()))
+                .toList();
+        if (!removed.isEmpty()) {
+            chapterRepository.deleteAll(removed);
+        }
+
+        List<EbookChapter> saved = chapterRepository.saveAll(ordered);
+
+        // Re-render the PDF from the new manuscript (uncapped: keep exactly what
+        // the user wrote). renderAndStore re-reads the just-saved chapters.
         pdfGenerationService.renderAndStore(ebookId, 0);
 
-        return EbookContentResponse.from(ebook, chapters);
+        return EbookContentResponse.from(ebook, saved);
     }
 
     @Transactional(readOnly = true)

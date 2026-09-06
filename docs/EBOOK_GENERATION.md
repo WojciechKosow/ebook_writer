@@ -76,21 +76,31 @@ Frontend flow: `POST` → get id → poll `GET /api/ebooks/{id}` until
 Once a book is `COMPLETED`, the frontend text editor loads the manuscript with
 `GET .../content` and saves changes with `PUT .../content`. Chapters are stored
 as Markdown, so the editor round-trips Markdown bodies directly. Saving persists
-the edited chapters and re-renders the PDF **uncapped** (no page-budget trim) so
-the download always matches the edited text. Editing is free — no credits are
+the chapters and re-renders the PDF **uncapped** (no page-budget trim) so the
+download always matches the edited text. Editing is free — no credits are
 charged or refunded. A book that is still generating returns `409`.
+
+`GET .../content` returns each chapter with a stable `id`. A `PUT` sends the
+**authoritative, ordered chapter list** — one save covers every chapter
+operation:
+
+- **edit** — an entry with an existing `id` updates that chapter's title/body;
+- **add** — an entry with `id: null` creates a new chapter;
+- **remove** — an existing chapter whose `id` is absent from the list is deleted;
+- **reorder** — each chapter's position in the list becomes its new chapter number.
+
+At least one chapter is required. An `id` that doesn't belong to the book (or a
+duplicated `id`) returns `400`.
 
 ```json
 // PUT /api/ebooks/{id}/content
 {
   "chapters": [
-    { "chapterNumber": 1, "title": "Introduction", "content": "# Introduction\n\nEdited body…" }
+    { "id": "b1f9…", "title": "Introduction", "content": "# Introduction\n\nEdited body…" },
+    { "id": null,    "title": "New Chapter",  "content": "Fresh content…" }
   ]
 }
 ```
-
-Chapters are matched by `chapterNumber`; omitted chapters are left untouched and
-unknown numbers are ignored.
 
 ## PDF rendering
 
