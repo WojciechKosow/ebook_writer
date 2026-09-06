@@ -1,12 +1,16 @@
 package com.ebookwriter.SaaS.service.ebook;
 
 import com.ebookwriter.SaaS.dto.ChapterProgressDTO;
+import com.ebookwriter.SaaS.dto.EbookContentResponse;
 import com.ebookwriter.SaaS.dto.EbookStatusResponse;
 import com.ebookwriter.SaaS.entity.CreditTransactionType;
 import com.ebookwriter.SaaS.entity.Ebook;
+import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.entity.EbookPdf;
 import com.ebookwriter.SaaS.entity.EbookStatus;
 import com.ebookwriter.SaaS.entity.User;
+import com.ebookwriter.SaaS.request.ChapterUpdateRequest;
+import com.ebookwriter.SaaS.request.EbookContentUpdateRequest;
 import com.ebookwriter.SaaS.exceptions.InsufficientCreditsException;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookPdfRepository;
@@ -19,7 +23,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Application-facing entry point for the ebook feature. Owns creation +
@@ -34,6 +41,7 @@ public class EbookService {
     private final EbookChapterRepository chapterRepository;
     private final EbookPdfRepository pdfRepository;
     private final EbookGenerationService generationService;
+    private final PdfGenerationService pdfGenerationService;
     private final CreditService creditService;
     private final CreditProperties creditProperties;
 
@@ -116,6 +124,67 @@ public class EbookService {
                         .map(ChapterProgressDTO::from)
                         .toList();
         return EbookStatusResponse.from(ebook, chapters);
+    }
+
+    /**
+     * Load the full editable manuscript (book metadata + every chapter's
+     * Markdown body) for the text editor. Ownership-scoped.
+     */
+    @Transactional(readOnly = true)
+    public EbookContentResponse getContent(UUID ebookId, UUID userId) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        List<EbookChapter> chapters =
+                chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+        return EbookContentResponse.from(ebook, chapters);
+    }
+
+    /**
+     * Persist the user's edits to chapter titles/bodies, then re-render the PDF
+     * so the download stays in sync with the edited text. Only a COMPLETED book
+     * may be edited — editing one that is still generating would race with the
+     * generation pipeline.
+     *
+     * <p>Re-rendering here is deliberately uncapped (no page-budget trim): these
+     * are the user's own edits, not model output, so we deliver exactly what
+     * they wrote and never trim it. Editing is free — no credits are charged or
+     * refunded.
+     *
+     * <p>Incoming chapters are matched to existing ones by chapter number;
+     * unknown numbers are ignored and omitted chapters are left untouched.
+     */
+    @Transactional
+    public EbookContentResponse updateContent(UUID ebookId, UUID userId,
+                                              EbookContentUpdateRequest request) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+
+        if (ebook.getStatus() != EbookStatus.COMPLETED) {
+            throw new IllegalStateException("Ebook is not ready to edit");
+        }
+
+        List<EbookChapter> chapters =
+                chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+        Map<Integer, EbookChapter> byNumber = chapters.stream()
+                .collect(Collectors.toMap(EbookChapter::getChapterNumber, Function.identity()));
+
+        for (ChapterUpdateRequest edit : request.getChapters()) {
+            EbookChapter chapter = byNumber.get(edit.getChapterNumber());
+            if (chapter == null) {
+                continue; // ignore chapter numbers that don't exist
+            }
+            if (edit.getTitle() != null) {
+                chapter.setTitle(edit.getTitle());
+            }
+            chapter.setContent(edit.getContent());
+        }
+        chapterRepository.saveAll(chapters);
+
+        // Re-render the PDF from the edited manuscript (uncapped: keep exactly
+        // what the user wrote). renderAndStore re-reads the just-saved chapters.
+        pdfGenerationService.renderAndStore(ebookId, 0);
+
+        return EbookContentResponse.from(ebook, chapters);
     }
 
     @Transactional(readOnly = true)
