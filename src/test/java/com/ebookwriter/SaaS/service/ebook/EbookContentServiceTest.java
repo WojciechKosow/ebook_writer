@@ -11,6 +11,7 @@ import com.ebookwriter.SaaS.request.EbookContentUpdateRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -27,9 +28,10 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
- * The editing contract: content round-trips through the DB, saving a COMPLETED
- * book persists edits and re-renders the PDF uncapped, and a book that is still
- * generating cannot be edited.
+ * The editing contract: content round-trips through the DB; a save is the
+ * authoritative chapter list, so it covers editing existing chapters (by id),
+ * adding new ones (null id), removing omitted ones, and reordering by list
+ * position; and a book that is still generating cannot be edited.
  */
 @ExtendWith(MockitoExtension.class)
 class EbookContentServiceTest {
@@ -56,63 +58,142 @@ class EbookContentServiceTest {
                 .build();
     }
 
-    private EbookChapter chapter(int number, String title, String content) {
+    private EbookChapter chapter(UUID id, int number, String title, String content) {
         return EbookChapter.builder()
+                .id(id)
                 .chapterNumber(number)
                 .title(title)
                 .content(content)
                 .build();
     }
 
+    /** saveAll echoes its argument, mirroring JPA returning the saved entities. */
+    private void echoSaveAll() {
+        when(chapterRepository.saveAll(anyList()))
+                .thenAnswer(inv -> inv.getArgument(0));
+    }
+
     @Test
-    void getContentReturnsChaptersWithBodies() {
+    void getContentReturnsChaptersWithIdsAndBodies() {
+        UUID cid = UUID.randomUUID();
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
         when(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId))
-                .thenReturn(List.of(chapter(1, "Intro", "# Hello")));
+                .thenReturn(List.of(chapter(cid, 1, "Intro", "# Hello")));
 
         EbookContentResponse resp = ebookService.getContent(ebookId, userId);
 
         assertTrue(resp.isEditable());
         assertEquals(1, resp.getChapters().size());
+        assertEquals(cid, resp.getChapters().get(0).getId());
         assertEquals("# Hello", resp.getChapters().get(0).getContent());
     }
 
     @Test
-    void updateContentPersistsEditsAndRerenders() {
-        EbookChapter ch1 = chapter(1, "Intro", "old body");
-        EbookChapter ch2 = chapter(2, "Two", "keep me");
+    void editsExistingChapterById() {
+        UUID id1 = UUID.randomUUID();
+        EbookChapter ch1 = chapter(id1, 1, "Intro", "old body");
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
         when(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId))
-                .thenReturn(List.of(ch1, ch2));
+                .thenReturn(new java.util.ArrayList<>(List.of(ch1)));
+        echoSaveAll();
 
         EbookContentUpdateRequest req = new EbookContentUpdateRequest(List.of(
-                new ChapterUpdateRequest(1, "New Title", "new body")));
+                new ChapterUpdateRequest(id1, "New Title", "new body")));
 
         ebookService.updateContent(ebookId, userId, req);
 
-        // Edited chapter mutated in place; the untouched one is left alone.
         assertEquals("new body", ch1.getContent());
         assertEquals("New Title", ch1.getTitle());
-        assertEquals("keep me", ch2.getContent());
-
-        verify(chapterRepository).saveAll(anyList());
+        verify(chapterRepository, never()).deleteAll(anyList());
         // Re-render is uncapped (maxPages = 0) so user edits are never trimmed.
         verify(pdfGenerationService).renderAndStore(eq(ebookId), eq(0));
     }
 
     @Test
-    void updateContentIgnoresUnknownChapterNumbers() {
-        EbookChapter ch1 = chapter(1, "Intro", "body");
+    void addsNewChapterForNullId() {
+        UUID id1 = UUID.randomUUID();
+        EbookChapter ch1 = chapter(id1, 1, "Intro", "body one");
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
         when(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId))
-                .thenReturn(List.of(ch1));
+                .thenReturn(new java.util.ArrayList<>(List.of(ch1)));
+        echoSaveAll();
 
         EbookContentUpdateRequest req = new EbookContentUpdateRequest(List.of(
-                new ChapterUpdateRequest(99, "Ghost", "nope")));
+                new ChapterUpdateRequest(id1, "Intro", "body one"),
+                new ChapterUpdateRequest(null, "Fresh", "brand new")));
 
-        assertDoesNotThrow(() -> ebookService.updateContent(ebookId, userId, req));
-        assertEquals("body", ch1.getContent()); // untouched
-        verify(pdfGenerationService).renderAndStore(eq(ebookId), eq(0));
+        ebookService.updateContent(ebookId, userId, req);
+
+        ArgumentCaptor<List<EbookChapter>> captor = ArgumentCaptor.forClass(List.class);
+        verify(chapterRepository).saveAll(captor.capture());
+        List<EbookChapter> saved = captor.getValue();
+
+        assertEquals(2, saved.size());
+        assertEquals(1, saved.get(0).getChapterNumber());
+        assertEquals(2, saved.get(1).getChapterNumber());
+        assertEquals("Fresh", saved.get(1).getTitle());
+        assertEquals("brand new", saved.get(1).getContent());
+        assertSame(ebook, saved.get(1).getEbook()); // new chapter linked to the book
+    }
+
+    @Test
+    void removesChaptersOmittedFromTheSave() {
+        UUID id1 = UUID.randomUUID();
+        UUID id2 = UUID.randomUUID();
+        EbookChapter ch1 = chapter(id1, 1, "Keep", "keep body");
+        EbookChapter ch2 = chapter(id2, 2, "Drop", "drop body");
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
+        when(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId))
+                .thenReturn(new java.util.ArrayList<>(List.of(ch1, ch2)));
+        echoSaveAll();
+
+        // Only ch1 survives the save.
+        EbookContentUpdateRequest req = new EbookContentUpdateRequest(List.of(
+                new ChapterUpdateRequest(id1, "Keep", "keep body")));
+
+        ebookService.updateContent(ebookId, userId, req);
+
+        ArgumentCaptor<List<EbookChapter>> deleted = ArgumentCaptor.forClass(List.class);
+        verify(chapterRepository).deleteAll(deleted.capture());
+        assertEquals(List.of(ch2), deleted.getValue());
+    }
+
+    @Test
+    void reordersByListPosition() {
+        UUID id1 = UUID.randomUUID();
+        UUID id2 = UUID.randomUUID();
+        EbookChapter ch1 = chapter(id1, 1, "First", "a");
+        EbookChapter ch2 = chapter(id2, 2, "Second", "b");
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
+        when(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId))
+                .thenReturn(new java.util.ArrayList<>(List.of(ch1, ch2)));
+        echoSaveAll();
+
+        // Swap the order.
+        EbookContentUpdateRequest req = new EbookContentUpdateRequest(List.of(
+                new ChapterUpdateRequest(id2, "Second", "b"),
+                new ChapterUpdateRequest(id1, "First", "a")));
+
+        ebookService.updateContent(ebookId, userId, req);
+
+        assertEquals(1, ch2.getChapterNumber());
+        assertEquals(2, ch1.getChapterNumber());
+    }
+
+    @Test
+    void rejectsUnknownChapterId() {
+        UUID id1 = UUID.randomUUID();
+        EbookChapter ch1 = chapter(id1, 1, "Intro", "body");
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
+        when(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId))
+                .thenReturn(new java.util.ArrayList<>(List.of(ch1)));
+
+        EbookContentUpdateRequest req = new EbookContentUpdateRequest(List.of(
+                new ChapterUpdateRequest(UUID.randomUUID(), "Ghost", "nope")));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> ebookService.updateContent(ebookId, userId, req));
+        verify(pdfGenerationService, never()).renderAndStore(any(UUID.class), anyInt());
     }
 
     @Test
@@ -121,7 +202,7 @@ class EbookContentServiceTest {
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
 
         EbookContentUpdateRequest req = new EbookContentUpdateRequest(List.of(
-                new ChapterUpdateRequest(1, "x", "y")));
+                new ChapterUpdateRequest(null, "x", "y")));
 
         assertThrows(IllegalStateException.class,
                 () -> ebookService.updateContent(ebookId, userId, req));
