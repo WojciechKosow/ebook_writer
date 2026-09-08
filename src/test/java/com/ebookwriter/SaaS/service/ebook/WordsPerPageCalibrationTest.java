@@ -54,7 +54,7 @@ class WordsPerPageCalibrationTest {
 
     @Test
     void wordsPerPageConstantMatchesTheActualLayout() throws IOException {
-        PdfGenerationService pdf = new PdfGenerationService(null, null, null, new EbookHtmlBuilder());
+        PdfGenerationService pdf = new PdfGenerationService(null, null, null, new EbookHtmlBuilder(), null, null);
         Ebook ebook = Ebook.builder().topic("Calibration").title("Calibration Book").build();
 
         int totalWords = 2000;
@@ -72,7 +72,7 @@ class WordsPerPageCalibrationTest {
 
     @Test
     void overLengthBookIsTrimmedToItsPageBudget() throws IOException {
-        PdfGenerationService pdf = new PdfGenerationService(null, null, null, new EbookHtmlBuilder());
+        PdfGenerationService pdf = new PdfGenerationService(null, null, null, new EbookHtmlBuilder(), null, null);
         Ebook ebook = Ebook.builder().topic("Big").title("A Very Long Book").build();
 
         // ~6000 words → well over 20 pages, against an 8-page budget.

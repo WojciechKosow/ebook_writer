@@ -3,6 +3,7 @@ package com.ebookwriter.SaaS;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.config.properties.CreditProperties;
 import com.ebookwriter.SaaS.config.properties.PostmarkProperties;
+import com.ebookwriter.SaaS.config.properties.R2Properties;
 import com.ebookwriter.SaaS.config.properties.StripeProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -15,7 +16,8 @@ import org.springframework.scheduling.annotation.EnableAsync;
 		PostmarkProperties.class,
 		AnthropicProperties.class,
 		StripeProperties.class,
-		CreditProperties.class
+		CreditProperties.class,
+		R2Properties.class
 })
 public class SaaSApplication {
 

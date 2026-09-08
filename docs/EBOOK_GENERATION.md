@@ -33,6 +33,10 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
   as each chapter is produced, so a failure keeps completed chapters.
 - `EbookPdf` — rendered PDF bytes in their own table (keyed by ebook id) so
   status polls and listings never load the blob.
+- `EbookImage` — metadata for an image attached to the book (cover or inline).
+  The bytes live in a private Cloudflare R2 bucket under `storageKey`; only the
+  metadata (role, content type, dimensions, size) is in the database. See
+  [Images](#images).
 
 ## Status & progress
 
@@ -53,6 +57,11 @@ to the authenticated user.
 | GET    | `/api/ebooks/{id}/content`    | Load the editable manuscript: all chapters + their Markdown bodies. |
 | PUT    | `/api/ebooks/{id}/content`    | Save edited chapters, then re-render the PDF (`409` until COMPLETED). |
 | GET    | `/api/ebooks/{id}/download`   | Download the finished PDF (`409` until COMPLETED). |
+| POST   | `/api/ebooks/{id}/images`     | Upload an image (multipart `file`, optional `role=COVER\|INLINE`, default INLINE). Returns `201` with the image. |
+| GET    | `/api/ebooks/{id}/images`     | List the book's images. |
+| GET    | `/api/ebooks/{id}/images/{imageId}/raw` | Stream an image's bytes for preview (bucket is private). |
+| PUT    | `/api/ebooks/{id}/images/{imageId}/cover` | Make this image the cover (demotes any current cover). |
+| DELETE | `/api/ebooks/{id}/images/{imageId}` | Delete an image (also removes it from storage). |
 
 ### Request body (`POST /api/ebooks`)
 
@@ -111,6 +120,47 @@ bundled and embedded so Latin-alphabet languages (Polish, Spanish, German, …)
 and code blocks render correctly. Styling lives in
 `src/main/resources/pdf/ebook.css`.
 
+## Images
+
+Authors can attach their own images to a book — a **cover** and any number of
+**inline** chapter images. (AI-generated images are a later phase; this is the
+storage + rendering foundation they will plug into.)
+
+- **Storage.** Image bytes live in a **private** Cloudflare R2 bucket (R2 speaks
+  the S3 API, so we use the AWS SDK v2 pointed at the account endpoint). The
+  database keeps only metadata (`EbookImage`): the object key, role, content
+  type, size, and pixel dimensions. Because the bucket is private, previews are
+  served through the authenticated `.../images/{id}/raw` endpoint rather than a
+  public URL.
+- **Upload.** `POST /api/ebooks/{id}/images` (multipart `file`) with an optional
+  `role`. PNG, JPEG, WebP and GIF are accepted, up to 10 MB each. A book has at
+  most one cover — uploading a new one (or `PUT .../cover`) replaces it.
+- **Cover.** When a cover image is set it is rendered at the top of the cover
+  page, above the title.
+- **Inline images.** Each image has a Markdown token, `ebook-image:<id>`, exposed
+  as `markdownRef` in the API. The author places an image in a chapter by writing
+  standard Markdown against that token:
+
+  ```markdown
+  ![A diagram of the pipeline](ebook-image:6f1c…)
+  ```
+
+  At render time the pipeline rewrites every `ebook-image:<id>` reference to the
+  stored object and **streams the bytes straight from R2 into the PDF** (the same
+  way the bundled fonts are embedded), so the image is embedded in the download
+  and nothing is fetched over a public URL. A reference whose image was deleted is
+  dropped rather than rendered broken.
+- **Staying in sync.** Adding, deleting, or re-assigning the cover on a book that
+  has already finished generating re-renders its PDF (uncapped and free, like a
+  manual edit) so the download always matches the book's current images. For a
+  book still generating, the pipeline simply renders with whatever images exist
+  when it reaches the render step.
+
+> PDF embedding uses PDFBox/ImageIO, which decodes PNG, JPEG and GIF reliably;
+> WebP can be uploaded and previewed but may not embed in the PDF depending on
+> the JDK's ImageIO plugins. Prefer PNG/JPEG for images that must appear in the
+> download.
+
 ## Configuration (environment variables)
 
 | Var | Default | Notes |
@@ -121,6 +171,16 @@ and code blocks render correctly. Styling lives in
 | `ANTHROPIC_MAX_RETRIES` | `2` | Extra retries on top of the SDK's own. |
 | `ANTHROPIC_EDITING_ENABLED` | `true` | Whether to run the Step 3 editorial pass (below). |
 | `ANTHROPIC_EDITING_MODEL` | *(blank)* | Model for the editorial pass; blank = same as `ANTHROPIC_MODEL`. Set a cheaper model to reduce cost. |
+| `R2_ACCOUNT_ID` | *(blank)* | Cloudflare account id; used to derive the R2 endpoint. |
+| `R2_ACCESS_KEY_ID` | *(blank)* | R2 access key id (R2 API token). |
+| `R2_SECRET_ACCESS_KEY` | *(blank)* | R2 secret access key. |
+| `R2_BUCKET` | *(blank)* | Bucket that holds ebook images. |
+| `R2_ENDPOINT` | *(derived)* | Override the S3 endpoint; blank = `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`. |
+
+The app boots without R2 configured (like the Anthropic/Stripe placeholders);
+only image upload and image rendering fail with a clear message until the
+`R2_*` variables are set. Create an R2 bucket and an API token (Object
+Read & Write) in the Cloudflare dashboard, then set the four `R2_*` values.
 
 ### Cost & the editorial pass
 
@@ -173,7 +233,8 @@ count and ate the difference. We now aim for what the user asked, never deliver
 (or generate) past what they reserved, and pay for and charge the same number of
 pages.
 
-## Not in V0.1 (deliberately)
+## Not yet (deliberately)
 
-Illustrations/diagrams, image uploads, EPUB, KDP, marketplace, in-app editor,
-collaboration, multiple AI providers, analytics, teams, payments, credits.
+AI-generated images (OpenAI image generation driven by title/content/prompt —
+the next phase, building on the R2 storage and rendering added here), EPUB, KDP,
+marketplace, collaboration, multiple AI providers, analytics, teams.

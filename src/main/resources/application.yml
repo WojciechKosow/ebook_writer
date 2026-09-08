@@ -82,6 +82,20 @@ anthropic:
   editing-enabled: ${ANTHROPIC_EDITING_ENABLED:true}
   editing-model: ${ANTHROPIC_EDITING_MODEL:}
 
+# Cloudflare R2 (S3-compatible) object storage — ebook images (author uploads
+# now; AI-generated covers/illustrations later). The bucket is PRIVATE: the app
+# uploads with these keys and streams the bytes back into the PDF at render
+# time, and serves previews through the authenticated API. Leave the R2_* vars
+# blank for local dev — the app boots, and only image upload/render fails with a
+# clear message until they are set. The endpoint defaults to
+# https://<account-id>.r2.cloudflarestorage.com.
+r2:
+  account-id: ${R2_ACCOUNT_ID:}
+  access-key-id: ${R2_ACCESS_KEY_ID:}
+  secret-access-key: ${R2_SECRET_ACCESS_KEY:}
+  bucket: ${R2_BUCKET:}
+  endpoint: ${R2_ENDPOINT:}
+
 # Payments (Stripe) + credits. The $ amounts live in Stripe; credit grants here.
 stripe:
   secret-key: ${STRIPE_SECRET_KEY:}

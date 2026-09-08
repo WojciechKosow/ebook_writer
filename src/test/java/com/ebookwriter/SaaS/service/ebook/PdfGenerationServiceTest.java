@@ -17,7 +17,7 @@ class PdfGenerationServiceTest {
     @Test
     void rendersAPdfFromAManuscript() {
         PdfGenerationService service =
-                new PdfGenerationService(null, null, null, new EbookHtmlBuilder());
+                new PdfGenerationService(null, null, null, new EbookHtmlBuilder(), null, null);
 
         Ebook ebook = Ebook.builder()
                 .topic("Building SaaS Applications with Spring Boot")
