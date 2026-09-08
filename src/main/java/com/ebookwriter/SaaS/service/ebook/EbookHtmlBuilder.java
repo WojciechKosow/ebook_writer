@@ -2,6 +2,8 @@ package com.ebookwriter.SaaS.service.ebook;
 
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
+import com.ebookwriter.SaaS.entity.EbookImage;
+import com.ebookwriter.SaaS.entity.EbookImageRole;
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.Extension;
 import org.commonmark.parser.Parser;
@@ -35,9 +37,22 @@ public class EbookHtmlBuilder {
     }
 
     public String build(Ebook ebook, List<EbookChapter> chapters, String css) {
+        return build(ebook, chapters, css, List.of());
+    }
+
+    /**
+     * Assemble the book HTML. Inline images are referenced in chapter Markdown
+     * with an {@code ebook-image:<id>} URL; those references are left as-is here
+     * and rewritten to a streamable storage URL during rendering
+     * ({@link PdfGenerationService}). The cover image, if any, is emitted the
+     * same way so it flows through the same rewrite.
+     */
+    public String build(Ebook ebook, List<EbookChapter> chapters, String css,
+                        List<EbookImage> images) {
 
         String title = orDefault(ebook.getTitle(), ebook.getTopic());
         String subtitle = ebook.getSubtitle();
+        EbookImage cover = coverImage(images);
 
         StringBuilder html = new StringBuilder(64 * 1024);
         html.append("<html><head><meta charset=\"UTF-8\"/><style>")
@@ -45,8 +60,15 @@ public class EbookHtmlBuilder {
                 .append("</style></head><body>");
 
         // Cover
-        html.append("<div class=\"cover\">")
-                .append("<div class=\"book-title\">").append(escape(title)).append("</div>");
+        html.append("<div class=\"cover")
+                .append(cover != null ? " cover--with-image" : "")
+                .append("\">");
+        if (cover != null) {
+            html.append("<img class=\"cover-image\" src=\"")
+                    .append(cover.markdownRef())
+                    .append("\" alt=\"\"/>");
+        }
+        html.append("<div class=\"book-title\">").append(escape(title)).append("</div>");
         if (isNotBlank(subtitle)) {
             html.append("<div class=\"book-subtitle\">").append(escape(subtitle)).append("</div>");
         }
@@ -85,6 +107,15 @@ public class EbookHtmlBuilder {
 
     private String markdownToHtml(String markdown) {
         return markdownRenderer.render(markdownParser.parse(markdown));
+    }
+
+    /** The book's cover image, or null if none is set. */
+    private static EbookImage coverImage(List<EbookImage> images) {
+        if (images == null) return null;
+        return images.stream()
+                .filter(i -> i.getRole() == EbookImageRole.COVER)
+                .findFirst()
+                .orElse(null);
     }
 
     private static String escape(String s) {

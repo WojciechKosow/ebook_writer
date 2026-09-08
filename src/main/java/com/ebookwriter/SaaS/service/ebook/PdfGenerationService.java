@@ -2,10 +2,15 @@ package com.ebookwriter.SaaS.service.ebook;
 
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
+import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.entity.EbookPdf;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
+import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookPdfRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.service.storage.R2StorageService;
+import com.openhtmltopdf.extend.FSStream;
+import com.openhtmltopdf.extend.FSStreamFactory;
 import com.openhtmltopdf.extend.FSSupplier;
 import com.openhtmltopdf.outputdevice.helper.BaseRendererBuilder.FontStyle;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
@@ -15,16 +20,22 @@ import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.helper.W3CDom;
 import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -40,10 +51,16 @@ public class PdfGenerationService {
     private static final String CSS_PATH = "pdf/ebook.css";
     private static final String FONT_DIR = "/fonts/";
 
+    /** URL scheme used inside the render HTML for images streamed from R2. */
+    private static final String R2_PROTOCOL = "r2";
+    private static final String R2_SCHEME = R2_PROTOCOL + ":";
+
     private final EbookRepository ebookRepository;
     private final EbookChapterRepository chapterRepository;
     private final EbookPdfRepository pdfRepository;
     private final EbookHtmlBuilder htmlBuilder;
+    private final EbookImageRepository imageRepository;
+    private final R2StorageService storage;
 
     private volatile String cssCache;
 
@@ -67,8 +84,9 @@ public class PdfGenerationService {
         Ebook ebook = ebookRepository.findById(ebookId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found: " + ebookId));
         List<EbookChapter> chapters = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+        List<EbookImage> images = imageRepository.findByEbookIdOrderByCreatedAtAsc(ebookId);
 
-        byte[] pdf = render(ebook, chapters);
+        byte[] pdf = render(ebook, chapters, images);
         int pageCount = countPages(pdf);
 
         int passes = 0;
@@ -77,7 +95,7 @@ public class PdfGenerationService {
             if (!trimTrailingWords(chapters, overflowWords)) {
                 break; // nothing left to trim
             }
-            pdf = render(ebook, chapters);
+            pdf = render(ebook, chapters, images);
             pageCount = countPages(pdf);
             passes++;
         }
@@ -138,15 +156,31 @@ public class PdfGenerationService {
         }
     }
 
-    /** Build the book HTML and render it to PDF bytes (no persistence). */
+    /** Build the book HTML and render it to PDF bytes (no persistence, no images). */
     public byte[] render(Ebook ebook, List<EbookChapter> chapters) {
-        String html = htmlBuilder.build(ebook, chapters, css());
-        return renderPdf(html);
+        return render(ebook, chapters, List.of());
     }
 
-    private byte[] renderPdf(String html) {
+    /**
+     * Build the book HTML — including the cover and inline images — and render it
+     * to PDF bytes (no persistence). Image references ({@code ebook-image:<id>})
+     * are rewritten to a streamable {@code r2:} URL and the bytes are pulled from
+     * R2 on demand during rendering, so the images are embedded directly in the
+     * PDF (the bucket stays private).
+     */
+    public byte[] render(Ebook ebook, List<EbookChapter> chapters, List<EbookImage> images) {
+        String html = htmlBuilder.build(ebook, chapters, css(), images);
+        Map<String, String> keyByImageId = new LinkedHashMap<>();
+        for (EbookImage image : images) {
+            keyByImageId.put(image.getId().toString(), image.getStorageKey());
+        }
+        return renderPdf(html, keyByImageId);
+    }
+
+    private byte[] renderPdf(String html, Map<String, String> keyByImageId) {
         try {
             Document jsoupDoc = Jsoup.parse(html);
+            rewriteImageReferences(jsoupDoc, keyByImageId);
             jsoupDoc.outputSettings().syntax(Document.OutputSettings.Syntax.xml);
             org.w3c.dom.Document dom = new W3CDom().fromJsoup(jsoupDoc);
 
@@ -154,6 +188,7 @@ public class PdfGenerationService {
             PdfRendererBuilder builder = new PdfRendererBuilder();
             builder.useFastMode();
             registerFonts(builder);
+            builder.useProtocolsStreamImplementation(r2StreamFactory(), R2_PROTOCOL);
             builder.withW3cDocument(dom, "/");
             builder.toStream(os);
             builder.run();
@@ -161,6 +196,51 @@ public class PdfGenerationService {
         } catch (IOException e) {
             throw new RuntimeException("PDF rendering failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Rewrite each {@code <img src="ebook-image:<id>">} to the streamable
+     * {@code r2:<storageKey>} URL. An image whose id no longer resolves (e.g. it
+     * was deleted) is dropped so it doesn't render as a broken reference.
+     */
+    private static void rewriteImageReferences(Document doc, Map<String, String> keyByImageId) {
+        for (Element img : doc.select("img")) {
+            String src = img.attr("src");
+            if (!src.startsWith(EbookImage.REF_SCHEME)) {
+                continue;
+            }
+            String id = src.substring(EbookImage.REF_SCHEME.length());
+            String key = keyByImageId.get(id);
+            if (key != null) {
+                img.attr("src", R2_SCHEME + key);
+            } else {
+                img.remove();
+            }
+        }
+    }
+
+    /**
+     * Supplies image bytes for {@code r2:} URLs by streaming them from the R2
+     * bucket. openhtmltopdf calls this only for images that survived the rewrite
+     * above, so it is never invoked when a book has no images.
+     */
+    private FSStreamFactory r2StreamFactory() {
+        return url -> {
+            String key = url.startsWith(R2_SCHEME) ? url.substring(R2_SCHEME.length()) : url;
+            byte[] bytes = storage.download(key)
+                    .orElseThrow(() -> new RuntimeException("Image not found in storage: " + key));
+            return new FSStream() {
+                @Override
+                public InputStream getStream() {
+                    return new ByteArrayInputStream(bytes);
+                }
+
+                @Override
+                public Reader getReader() {
+                    return new InputStreamReader(new ByteArrayInputStream(bytes), StandardCharsets.UTF_8);
+                }
+            };
+        };
     }
 
     private void registerFonts(PdfRendererBuilder builder) {

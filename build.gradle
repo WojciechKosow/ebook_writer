@@ -19,6 +19,7 @@ repositories {
 
 ext {
 	jjwtVersion = '0.11.5'
+	awsSdkVersion = '2.28.29'
 }
 
 dependencies {
@@ -53,6 +54,13 @@ dependencies {
 
 	// Payments.
 	implementation 'com.stripe:stripe-java:33.1.1'
+
+	// Object storage: Cloudflare R2 via its S3-compatible API (AWS SDK v2).
+	// Ebook images (user uploads, later AI-generated) live in a private R2
+	// bucket; the PDF pipeline streams them back server-side at render time.
+	implementation platform("software.amazon.awssdk:bom:${awsSdkVersion}")
+	implementation 'software.amazon.awssdk:s3'
+	implementation 'software.amazon.awssdk:apache-client'
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'org.springframework.security:spring-security-test'
