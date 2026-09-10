@@ -3,6 +3,7 @@ package com.ebookwriter.SaaS.service.ebook;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.entity.EbookImage;
+import com.ebookwriter.SaaS.entity.EbookImagePlacement;
 import com.ebookwriter.SaaS.entity.EbookImageRole;
 import com.ebookwriter.SaaS.service.storage.R2StorageService;
 import org.junit.jupiter.api.Test;
@@ -49,10 +50,13 @@ class PdfImageRenderingTest {
         UUID coverId = UUID.randomUUID();
         UUID inlineId = UUID.randomUUID();
         EbookImage cover = EbookImage.builder()
-                .id(coverId).ebook(ebook).role(EbookImageRole.COVER)
+                .id(coverId).ebook(ebook)
+                .role(EbookImageRole.COVER).placement(EbookImagePlacement.COVER)
                 .storageKey("ebooks/x/images/" + coverId + ".png").contentType("image/png").build();
         EbookImage inline = EbookImage.builder()
-                .id(inlineId).ebook(ebook).role(EbookImageRole.INLINE)
+                .id(inlineId).ebook(ebook)
+                .role(EbookImageRole.ILLUSTRATION).placement(EbookImagePlacement.CHAPTER)
+                .displayWidthPercent(60)
                 .storageKey("ebooks/x/images/" + inlineId + ".png").contentType("image/png").build();
 
         EbookChapter chapter = EbookChapter.builder()

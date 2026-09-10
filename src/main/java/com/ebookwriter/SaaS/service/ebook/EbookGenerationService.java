@@ -1,5 +1,6 @@
 package com.ebookwriter.SaaS.service.ebook;
 
+import com.ebookwriter.SaaS.entity.ContentSource;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
@@ -35,6 +36,8 @@ public class EbookGenerationService {
     private final EbookRepository ebookRepository;
     private final EbookChapterRepository chapterRepository;
     private final BookPlanningService planningService;
+    private final AssetPlacementService assetPlacementService;
+    private final AssetUsageService assetUsageService;
     private final ChapterGenerationService chapterGenerationService;
     private final BookEditingService editingService;
     private final PdfGenerationService pdfGenerationService;
@@ -48,6 +51,11 @@ public class EbookGenerationService {
             // Step 1 — plan
             updateStatus(ebookId, EbookStatus.PLANNING, 10);
             planningService.plan(ebookId);
+
+            // Step 1.5 — decide how any user-uploaded assets should be used
+            // (cover / specific chapter / unused). No-op when nothing was
+            // uploaded; best-effort so it never fails the book.
+            assetPlacementService.plan(ebookId);
 
             List<EbookChapter> chapters =
                     chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
@@ -72,6 +80,11 @@ public class EbookGenerationService {
             } else {
                 log.info("Editorial pass disabled — skipping for ebook {}", ebookId);
             }
+
+            // Reconcile which offered assets the writer actually placed, so the
+            // asset library shows accurate per-chapter usage (metadata only —
+            // rendering reads the Markdown refs directly).
+            assetUsageService.sync(ebookId, ContentSource.AI);
 
             // Step 4 — render PDF and learn the real page count. The reserved
             // page budget is a hard ceiling: an over-length book is trimmed to

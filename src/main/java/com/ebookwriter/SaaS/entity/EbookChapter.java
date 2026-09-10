@@ -53,4 +53,14 @@ public class EbookChapter {
     @Column(nullable = false)
     @Builder.Default
     private ChapterStatus status = ChapterStatus.PENDING;
+
+    /**
+     * Whether this chapter's current content was produced by the AI pipeline or
+     * edited by the user. Set to {@link ContentSource#USER} when the editor saves
+     * changes, so a future regeneration can preserve manual edits.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @Builder.Default
+    private ContentSource contentSource = ContentSource.AI;
 }

@@ -31,18 +31,25 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
   subtitle, description, writing guidelines), timestamps.
 - `EbookChapter` — per-chapter outline + content + summary + status. Persisted
   as each chapter is produced, so a failure keeps completed chapters.
+  `contentSource` records whether the current text is AI output or a user edit,
+  so a future regeneration can preserve manual work.
 - `EbookPdf` — rendered PDF bytes in their own table (keyed by ebook id) so
   status polls and listings never load the blob.
-- `EbookImage` — metadata for an image attached to the book (cover or inline).
-  The bytes live in a private Cloudflare R2 bucket under `storageKey`; only the
-  metadata (role, content type, dimensions, size) is in the database. See
-  [Images](#images).
+- `EbookImage` — a project **asset** (see [Assets](#assets)). Metadata only —
+  the bytes live in a private Cloudflare R2 bucket under `storageKey`. Carries a
+  `role` (what it is — general/logo/author/product/cover/illustration), a
+  `placement` (where it's used — unused/cover/chapter + the chapter), `placedBy`
+  (AI or user), a `displayWidthPercent` (resize), content type, dimensions, size,
+  and an optional AI `aiDescription`/`tags`. Assets belong to the ebook and
+  persist from before generation through editing.
 
 ## Status & progress
 
+`DRAFT` (created, assets can be uploaded, nothing generated) → *start* →
 `PENDING → PLANNING (10%) → WRITING (20–80%) → EDITING (90%) → RENDERING (95%)
 → COMPLETED (100%)`, or `FAILED` with an error message. WRITING progress is
-spread evenly across the chapters.
+spread evenly across the chapters. Planning is followed by a short asset-
+placement step (10–20%) when the draft has uploaded assets.
 
 ## API
 
@@ -51,17 +58,19 @@ to the authenticated user.
 
 | Method | Path                          | Purpose |
 |--------|-------------------------------|---------|
-| POST   | `/api/ebooks`                 | Submit a brief; returns `202` with the ebook id and initial status. |
+| POST   | `/api/ebooks`                 | Create a **draft** (no credits held, not generating); returns `201` with the ebook id and `status: DRAFT`. Upload assets to it, then start. |
+| POST   | `/api/ebooks/{id}/start`      | Reserve the credit hold and start generating a draft; returns `202`. `409` if already started. |
 | GET    | `/api/ebooks/{id}`            | Poll status/progress + per-chapter progress. |
 | GET    | `/api/ebooks`                 | List the current user's ebooks. |
 | GET    | `/api/ebooks/{id}/content`    | Load the editable manuscript: all chapters + their Markdown bodies. |
 | PUT    | `/api/ebooks/{id}/content`    | Save edited chapters, then re-render the PDF (`409` until COMPLETED). |
 | GET    | `/api/ebooks/{id}/download`   | Download the finished PDF (`409` until COMPLETED). |
-| POST   | `/api/ebooks/{id}/images`     | Upload an image (multipart `file`, optional `role=COVER\|INLINE`, default INLINE). Returns `201` with the image. |
-| GET    | `/api/ebooks/{id}/images`     | List the book's images. |
-| GET    | `/api/ebooks/{id}/images/{imageId}/raw` | Stream an image's bytes for preview (bucket is private). |
-| PUT    | `/api/ebooks/{id}/images/{imageId}/cover` | Make this image the cover (demotes any current cover). |
-| DELETE | `/api/ebooks/{id}/images/{imageId}` | Delete an image (also removes it from storage). |
+| POST   | `/api/ebooks/{id}/images`     | Upload an asset (multipart `file`, optional `role`). Returns `201`. Works on a draft or a finished book. |
+| GET    | `/api/ebooks/{id}/images`     | List the book's assets (role, placement, usage, dimensions). |
+| GET    | `/api/ebooks/{id}/images/{imageId}/raw` | Stream an asset's bytes for preview (bucket is private). |
+| PATCH  | `/api/ebooks/{id}/images/{imageId}` | Update editor metadata: `role` and/or `displayWidthPercent` (resize, 1–100). |
+| PUT    | `/api/ebooks/{id}/images/{imageId}/cover` | Make this asset the cover (demotes any current cover). |
+| DELETE | `/api/ebooks/{id}/images/{imageId}` | Delete an asset (also removes it from storage). |
 
 ### Request body (`POST /api/ebooks`)
 
@@ -77,8 +86,10 @@ to the authenticated user.
 }
 ```
 
-Frontend flow: `POST` → get id → poll `GET /api/ebooks/{id}` until
-`status = COMPLETED` → `GET /api/ebooks/{id}/download`.
+Frontend flow: `POST /api/ebooks` (draft) → optionally upload assets to
+`POST .../images` → `POST .../start` → poll `GET /api/ebooks/{id}` until
+`status = COMPLETED` → open the editor (`GET/PUT .../content` + the images API)
+→ `GET /api/ebooks/{id}/download`.
 
 ### Editing (`GET`/`PUT /api/ebooks/{id}/content`)
 
@@ -120,45 +131,71 @@ bundled and embedded so Latin-alphabet languages (Polish, Spanish, German, …)
 and code blocks render correctly. Styling lives in
 `src/main/resources/pdf/ebook.css`.
 
-## Images
+## Assets
 
-Authors can attach their own images to a book — a **cover** and any number of
-**inline** chapter images. (AI-generated images are a later phase; this is the
-storage + rendering foundation they will plug into.)
+Assets are the project's persistent images. They are uploaded **before**
+generation (so the AI can use them) and remain available **after** it (so the
+editor can add, replace, move, resize and remove them). An asset is never forced
+into the book — irrelevant ones simply stay unused.
 
-- **Storage.** Image bytes live in a **private** Cloudflare R2 bucket (R2 speaks
-  the S3 API, so we use the AWS SDK v2 pointed at the account endpoint). The
-  database keeps only metadata (`EbookImage`): the object key, role, content
-  type, size, and pixel dimensions. Because the bucket is private, previews are
-  served through the authenticated `.../images/{id}/raw` endpoint rather than a
-  public URL.
-- **Upload.** `POST /api/ebooks/{id}/images` (multipart `file`) with an optional
-  `role`. PNG, JPEG, WebP and GIF are accepted, up to 10 MB each. A book has at
-  most one cover — uploading a new one (or `PUT .../cover`) replaces it.
-- **Cover.** When a cover image is set it is rendered at the top of the cover
-  page, above the title.
-- **Inline images.** Each image has a Markdown token, `ebook-image:<id>`, exposed
-  as `markdownRef` in the API. The author places an image in a chapter by writing
-  standard Markdown against that token:
+- **Storage.** Bytes live in a **private** Cloudflare R2 bucket (R2 speaks the S3
+  API, so we use the AWS SDK v2 pointed at the account endpoint). The database
+  keeps only metadata (`EbookImage`). Because the bucket is private, previews are
+  served through the authenticated `.../images/{id}/raw` endpoint (`nosniff`), not
+  a public URL.
+- **Upload + validation.** `POST /api/ebooks/{id}/images` (multipart `file`).
+  PNG, JPEG, WebP, GIF and SVG are accepted, up to 10 MB. The type is decided from
+  the file's **magic bytes**, never the client's declared MIME. Uploads are
+  ownership-scoped to the ebook's owner. Role is not forced at upload —
+  everything starts `GENERAL`/unused.
+- **AI asset usage (Step 1.5).** After planning, `AssetPlacementService` shows the
+  outline and the asset list to the model, which decides per asset: **cover**,
+  a **specific chapter**, or **unused** — plus a role, short description and tags.
+  It prefers a suitable user asset over an empty spot and forces nothing. The
+  cover asset is placed as the cover; chapter-assigned assets are offered to that
+  chapter's writer, which embeds the `ebook-image:<id>` token where it fits (or
+  not). This step is best-effort: if it fails the book is still produced, just
+  without AI placement. (When the generation system can create images, an unfilled
+  spot is where a generated illustration would go — future work.)
+- **Cover.** The asset with `placement = COVER` renders at the top of the cover
+  page. `PUT .../images/{id}/cover` sets it (demoting any previous cover).
+- **Inline placement is the Markdown.** An asset placed in a chapter appears where
+  its `ebook-image:<id>` token (the DTO's `markdownRef`) sits in that chapter's
+  Markdown — the Markdown is the source of truth for in-chapter position. At
+  render time every reference is rewritten and the bytes are **streamed straight
+  from R2 into the PDF** (like the embedded fonts); `displayWidthPercent` is
+  applied as the image width. A reference to a deleted asset is dropped rather
+  than rendered broken.
+- **Usage stays accurate.** After generation and after every editor save,
+  `AssetUsageService` re-derives each asset's chapter placement from the Markdown,
+  attributing the change to AI or user. So the asset library always reflects where
+  images really are, however the manuscript was edited.
 
-  ```markdown
-  ![A diagram of the pipeline](ebook-image:6f1c…)
-  ```
+## The editor (post-generation)
 
-  At render time the pipeline rewrites every `ebook-image:<id>` reference to the
-  stored object and **streams the bytes straight from R2 into the PDF** (the same
-  way the bundled fonts are embedded), so the image is embedded in the download
-  and nothing is fetched over a public URL. A reference whose image was deleted is
-  dropped rather than rendered broken.
-- **Staying in sync.** Adding, deleting, or re-assigning the cover on a book that
-  has already finished generating re-renders its PDF (uncapped and free, like a
-  manual edit) so the download always matches the book's current images. For a
-  book still generating, the pipeline simply renders with whatever images exist
-  when it reaches the render step.
+Once a book is `COMPLETED` it can be edited without regenerating. Text and
+structure use the editing contract above (`GET/PUT .../content`:
+edit/add/remove/reorder chapters, saved as the authoritative list). Image
+operations reuse the assets API:
 
-> PDF embedding uses PDFBox/ImageIO, which decodes PNG, JPEG and GIF reliably;
-> WebP can be uploaded and previewed but may not embed in the PDF depending on
-> the JDK's ImageIO plugins. Prefer PNG/JPEG for images that must appear in the
+- **add / insert** — upload (`POST .../images`) or pick an existing asset, then
+  place its `markdownRef` token in a chapter via a content save.
+- **replace** — swap one asset's token for another's in the Markdown.
+- **move** — move the token (within or across chapters); usage re-syncs.
+- **remove** — delete the token (asset stays in the library) or delete the asset
+  (`DELETE .../images/{id}`).
+- **resize** — `PATCH .../images/{id}` with `displayWidthPercent` (1–100).
+- **cover** — `PUT .../images/{id}/cover`.
+
+Every change is persisted server-side (no purely client-side state) and, on a
+`COMPLETED` book, re-renders the PDF so the download stays in sync. User edits
+set `contentSource = USER` / `placedBy = USER`, marking them intentional so a
+future regeneration can preserve them.
+
+> PDF embedding uses PDFBox/ImageIO, which decodes PNG, JPEG and GIF reliably.
+> WebP and SVG can be uploaded and previewed but may not embed in the PDF
+> (WebP depends on the JDK's ImageIO plugins; SVG-in-PDF needs an extra renderer
+> module not yet added). Prefer PNG/JPEG for images that must appear in the
 > download.
 
 ## Configuration (environment variables)
@@ -201,10 +238,12 @@ Three ways to run it, cheapest to best:
 Pages are money: 1 credit ≈ 1 page, so the page count is a **hard budget**, not
 a soft target.
 
-1. **Reserve a budget up front.** On submit we don't charge the raw requested
-   count — we reserve `min(requestedPages + tolerance, balance)` credits as a
-   hold (`credits.page-budget-tolerance`, default `+20%`). This is the ceiling
-   generation may reach, and it can never exceed what the user can pay.
+1. **Reserve a budget up front.** A draft holds no credits. On **start** we don't
+   charge the raw requested count — we reserve `min(requestedPages + tolerance,
+   balance)` credits as a hold (`credits.page-budget-tolerance`, default `+20%`).
+   This is the ceiling generation may reach, and it can never exceed what the user
+   can pay. If starting can't secure the hold, the ebook stays a `DRAFT` (its
+   uploaded assets are kept) so the user can top up and retry.
 2. **Aim for the requested length, cap at the budget.** Two pages are always
    spent on front matter (cover + table of contents,
    `EbookHtmlBuilder.FRONT_MATTER_PAGES`), so content is sized in *content
@@ -235,6 +274,11 @@ pages.
 
 ## Not yet (deliberately)
 
-AI-generated images (OpenAI image generation driven by title/content/prompt —
-the next phase, building on the R2 storage and rendering added here), EPUB, KDP,
-marketplace, collaboration, multiple AI providers, analytics, teams.
+AI-generated images (generating an illustration/cover for an unfilled spot,
+driven by title/content/prompt — builds directly on the asset storage,
+placement and rendering here), image generation/replacement from inside the
+editor, custom fonts, brand colours, background removal, PDF/DOCX source
+materials, reusable cross-project asset libraries, templates, EPUB, KDP,
+marketplace, collaboration, multiple AI providers, analytics, teams. The data
+model (assets as project resources, `placedBy`/`contentSource` origin tracking)
+is built to accommodate these without a rewrite.

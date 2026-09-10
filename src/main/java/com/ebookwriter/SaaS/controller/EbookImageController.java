@@ -4,7 +4,9 @@ import com.ebookwriter.SaaS.dto.EbookImageDTO;
 import com.ebookwriter.SaaS.entity.EbookImageRole;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.UserRepository;
+import com.ebookwriter.SaaS.request.EbookImageUpdateRequest;
 import com.ebookwriter.SaaS.service.ebook.EbookImageService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -63,10 +65,24 @@ public class EbookImageController {
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(image.contentType()))
                 .cacheControl(CacheControl.maxAge(1, TimeUnit.HOURS).cachePrivate())
+                // The stored bytes are user-supplied (an SVG can carry script);
+                // stop the browser from sniffing/upgrading the declared type.
+                .header("X-Content-Type-Options", "nosniff")
                 .body(image.bytes());
     }
 
-    /** Make this image the book's cover (demotes any current cover to inline). */
+    /** Update editor-adjustable metadata: the asset's role and/or inline display width. */
+    @PatchMapping("/{imageId}")
+    public ResponseEntity<EbookImageDTO> update(@PathVariable UUID ebookId,
+                                                @PathVariable UUID imageId,
+                                                @Valid @RequestBody EbookImageUpdateRequest request,
+                                                Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(imageService.updateMetadata(
+                ebookId, user.getId(), imageId, request.getRole(), request.getDisplayWidthPercent()));
+    }
+
+    /** Make this image the book's cover (demotes any current cover). */
     @PutMapping("/{imageId}/cover")
     public ResponseEntity<EbookImageDTO> setCover(@PathVariable UUID ebookId,
                                                   @PathVariable UUID imageId,

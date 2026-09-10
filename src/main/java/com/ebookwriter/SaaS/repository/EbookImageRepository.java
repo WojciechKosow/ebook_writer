@@ -1,7 +1,7 @@
 package com.ebookwriter.SaaS.repository;
 
 import com.ebookwriter.SaaS.entity.EbookImage;
-import com.ebookwriter.SaaS.entity.EbookImageRole;
+import com.ebookwriter.SaaS.entity.EbookImagePlacement;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -16,7 +16,8 @@ public interface EbookImageRepository extends JpaRepository<EbookImage, UUID> {
 
     Optional<EbookImage> findByIdAndEbookId(UUID id, UUID ebookId);
 
-    Optional<EbookImage> findFirstByEbookIdAndRole(UUID ebookId, EbookImageRole role);
+    List<EbookImage> findByEbookIdAndPlacement(UUID ebookId, EbookImagePlacement placement);
 
-    List<EbookImage> findByEbookIdAndRole(UUID ebookId, EbookImageRole role);
+    /** Assets assigned to a specific chapter (placement is kept in sync with the Markdown). */
+    List<EbookImage> findByChapterId(UUID chapterId);
 }

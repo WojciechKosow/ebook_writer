@@ -39,6 +39,7 @@ class EbookContentServiceTest {
     @Mock EbookRepository ebookRepository;
     @Mock EbookChapterRepository chapterRepository;
     @Mock PdfGenerationService pdfGenerationService;
+    @Mock AssetUsageService assetUsageService;
 
     @InjectMocks EbookService ebookService;
 

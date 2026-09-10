@@ -1,16 +1,29 @@
 package com.ebookwriter.SaaS.entity;
 
 /**
- * What an {@link EbookImage} is used for in the rendered book.
+ * The <em>kind</em> of an ebook asset — what it depicts, independent of whether
+ * or where it is used (that is {@link EbookImagePlacement}). Roles are never
+ * forced on the user at upload (everything starts {@link #GENERAL}); they are
+ * assigned automatically during asset analysis or adjusted later in the editor,
+ * and help the AI decide sensible placements.
  */
 public enum EbookImageRole {
 
-    /** The book's cover image, shown on the cover page. At most one per book. */
+    /** Unclassified / general-purpose image (the default at upload). */
+    GENERAL,
+
+    /** A brand or company logo. */
+    LOGO,
+
+    /** A portrait of the author or a person. */
+    AUTHOR,
+
+    /** A product shot. */
+    PRODUCT,
+
+    /** Suited to the book cover. */
     COVER,
 
-    /**
-     * An image the author places inside a chapter by referencing it in the
-     * chapter Markdown (see {@code EbookImage.markdownRef()}).
-     */
-    INLINE
+    /** A chapter illustration, diagram, chart, or figure. */
+    ILLUSTRATION
 }
