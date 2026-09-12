@@ -3,8 +3,10 @@ package com.ebookwriter.SaaS.service.ebook;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
+import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.prompt.ChapterPrompts;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
+import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +40,7 @@ public class ChapterGenerationService {
     private final AnthropicService anthropicService;
     private final EbookRepository ebookRepository;
     private final EbookChapterRepository chapterRepository;
+    private final EbookImageRepository imageRepository;
 
     @Transactional
     public void generate(UUID ebookId, UUID chapterId) {
@@ -60,7 +63,8 @@ public class ChapterGenerationService {
                 ManuscriptContext.outline(chapters),
                 chapter,
                 ManuscriptContext.previousSummaries(chapters, chapter.getChapterNumber()),
-                targetWords
+                targetWords,
+                availableImages(chapterId)
         );
 
         String raw = anthropicService.complete(system, userPrompt, maxTokens);
@@ -77,4 +81,27 @@ public class ChapterGenerationService {
         log.info("Wrote chapter {}/{} of ebook {} ({} chars)",
                 chapter.getChapterNumber(), chapters.size(), ebookId, content.length());
     }
+
+    /**
+     * The images the placement step assigned to this chapter, formatted as a
+     * short list the writer can draw from (each line gives the exact token and a
+     * description). Empty when nothing is assigned, so the prompt offers no
+     * images and the model adds none.
+     */
+    private String availableImages(UUID chapterId) {
+        List<EbookImage> assigned = imageRepository.findByChapterId(chapterId);
+        if (assigned.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (EbookImage a : assigned) {
+            String desc = (a.getAiDescription() != null && !a.getAiDescription().isBlank())
+                    ? a.getAiDescription().trim()
+                    : (a.getOriginalFilename() != null ? a.getOriginalFilename() : "image");
+            sb.append("  - token: ").append(a.markdownRef())
+                    .append(" | ").append(desc).append("\n");
+        }
+        return sb.toString();
+    }
 }
+

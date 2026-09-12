@@ -28,14 +28,31 @@ public class EbookController {
     private final EbookService ebookService;
     private final UserRepository userRepository;
 
-    /** Submit a new ebook request; generation runs in the background. */
+    /**
+     * Create a new ebook as a draft. No credits are held and generation does not
+     * start yet — the user can now upload assets to it (see the images API) and
+     * then call {@code POST /api/ebooks/{id}/start}.
+     */
     @PostMapping
     public ResponseEntity<EbookStatusResponse> create(@Valid @RequestBody EbookRequest request,
                                                       Authentication authentication) {
         User user = currentUser(authentication);
-        Ebook ebook = ebookService.createAndStart(user, request);
-        return ResponseEntity.status(HttpStatus.ACCEPTED)
+        Ebook ebook = ebookService.createDraft(user, request);
+        return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ebookService.getStatus(ebook.getId(), user.getId()));
+    }
+
+    /**
+     * Start generating a draft: reserve the credit hold and run the pipeline in
+     * the background. Returns {@code 409} if the ebook has already been started.
+     */
+    @PostMapping("/{id}/start")
+    public ResponseEntity<EbookStatusResponse> start(@PathVariable UUID id,
+                                                     Authentication authentication) {
+        User user = currentUser(authentication);
+        ebookService.start(id, user.getId());
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(ebookService.getStatus(id, user.getId()));
     }
 
     /** Poll generation status / progress. */

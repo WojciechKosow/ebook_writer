@@ -4,6 +4,7 @@ import com.ebookwriter.SaaS.dto.ChapterProgressDTO;
 import com.ebookwriter.SaaS.dto.EbookContentResponse;
 import com.ebookwriter.SaaS.dto.EbookStatusResponse;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
+import com.ebookwriter.SaaS.entity.ContentSource;
 import com.ebookwriter.SaaS.entity.CreditTransactionType;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
@@ -46,6 +47,7 @@ public class EbookService {
     private final EbookPdfRepository pdfRepository;
     private final EbookGenerationService generationService;
     private final PdfGenerationService pdfGenerationService;
+    private final AssetUsageService assetUsageService;
     private final CreditService creditService;
     private final CreditProperties creditProperties;
 
@@ -65,17 +67,13 @@ public class EbookService {
      * cover the requested page count; the full hold is refunded automatically if
      * generation later fails.
      */
-    public Ebook createAndStart(User user, EbookRequest request) {
+    /**
+     * Create the ebook as a {@link EbookStatus#DRAFT}: the row exists so the user
+     * can upload assets to it, but no credits are held and nothing is generated
+     * yet. Call {@link #start(UUID, UUID)} to reserve credits and begin.
+     */
+    public Ebook createDraft(User user, EbookRequest request) {
         int requestedPages = Math.max(1, request.getApproxPageCount());
-
-        // Fast pre-check so we don't create a row when the user clearly can't pay
-        // for even the pages they asked for.
-        int balance = creditService.getBalance(user.getId());
-        if (balance < requestedPages) {
-            throw new InsufficientCreditsException(requestedPages, balance);
-        }
-
-        int pageBudget = reservedBudget(requestedPages, balance);
 
         Ebook ebook = Ebook.builder()
                 .user(user)
@@ -86,27 +84,72 @@ public class EbookService {
                 .language(blankToEnglish(request.getLanguage()))
                 .additionalInstructions(request.getAdditionalInstructions())
                 .sourceMaterial(request.getSourceMaterial())
-                .status(EbookStatus.PENDING)
+                .status(EbookStatus.DRAFT)
                 .progress(0)
-                .pageBudget(pageBudget)
-                .creditsCharged(pageBudget)
                 .build();
 
+        return ebookRepository.save(ebook);
+    }
+
+    /**
+     * Reserve the page-budget credit hold and start generating a draft in the
+     * background. Only a {@link EbookStatus#DRAFT} may be started; starting an
+     * already-started book is a {@link IllegalStateException} (→ 409).
+     *
+     * <p>Reservation is unchanged from before the draft split: reserve a page
+     * budget (requested + tolerance, capped by balance) as an up-front hold that
+     * caps generation, then true it up to the real page count on completion. If a
+     * concurrent request drained the balance, the ebook is left as a DRAFT (its
+     * uploaded assets are kept) rather than deleted.
+     */
+    public Ebook start(UUID ebookId, UUID userId) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+
+        if (ebook.getStatus() != EbookStatus.DRAFT) {
+            throw new IllegalStateException("Ebook has already been started");
+        }
+
+        int requestedPages = Math.max(1, ebook.getApproxPageCount());
+
+        // Fast pre-check for a clear "can't pay for even the requested pages".
+        int balance = creditService.getBalance(userId);
+        if (balance < requestedPages) {
+            throw new InsufficientCreditsException(requestedPages, balance);
+        }
+
+        int pageBudget = reservedBudget(requestedPages, balance);
+        ebook.setPageBudget(pageBudget);
+        ebook.setCreditsCharged(pageBudget);
+        ebook.setStatus(EbookStatus.PENDING);
         ebook = ebookRepository.save(ebook);
 
         // Atomic deduct (race-safe). If a concurrent request drained the balance
-        // between the pre-check and here, roll back by removing the row.
+        // between the pre-check and here, revert to a draft so the user can retry.
         try {
-            creditService.spend(user.getId(), pageBudget, CreditTransactionType.GENERATION,
+            creditService.spend(userId, pageBudget, CreditTransactionType.GENERATION,
                     ebook.getId(), "Ebook generation hold (up to " + pageBudget + " pages)");
         } catch (InsufficientCreditsException e) {
-            ebookRepository.delete(ebook);
+            ebook.setStatus(EbookStatus.DRAFT);
+            ebook.setPageBudget(0);
+            ebook.setCreditsCharged(0);
+            ebookRepository.save(ebook);
             throw e;
         }
 
         // Credits committed; safe to hand off to the async worker.
         generationService.generate(ebook.getId());
         return ebook;
+    }
+
+    /**
+     * Convenience one-shot used where assets aren't uploaded first: create the
+     * draft and immediately start it. The HTTP API uses the two-step
+     * create-draft → start flow instead.
+     */
+    public Ebook createAndStart(User user, EbookRequest request) {
+        Ebook draft = createDraft(user, request);
+        return start(draft.getId(), user.getId());
     }
 
     /**
@@ -201,6 +244,9 @@ public class EbookService {
             chapter.setChapterNumber(number++);
             chapter.setTitle(edit.getTitle());
             chapter.setContent(edit.getContent());
+            // These are the user's own edits: mark them so a future regeneration
+            // can preserve them rather than overwrite manual work.
+            chapter.setContentSource(ContentSource.USER);
             ordered.add(chapter);
         }
 
@@ -213,6 +259,11 @@ public class EbookService {
         }
 
         List<EbookChapter> saved = chapterRepository.saveAll(ordered);
+
+        // Reconcile asset usage against the edited Markdown (images moved between
+        // chapters, inserted, or removed) so the library's placement info stays
+        // accurate and attributed to the user.
+        assetUsageService.sync(ebookId, ContentSource.USER);
 
         // Re-render the PDF from the new manuscript (uncapped: keep exactly what
         // the user wrote). renderAndStore re-reads the just-saved chapters.

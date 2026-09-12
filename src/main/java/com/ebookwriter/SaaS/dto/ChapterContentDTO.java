@@ -1,5 +1,6 @@
 package com.ebookwriter.SaaS.dto;
 
+import com.ebookwriter.SaaS.entity.ContentSource;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -23,8 +24,11 @@ public class ChapterContentDTO {
     private String title;
     /** Chapter body in Markdown — what the user edits. */
     private String content;
+    /** Whether this chapter is still AI output or has been edited by the user. */
+    private ContentSource contentSource;
 
     public static ChapterContentDTO from(EbookChapter c) {
-        return new ChapterContentDTO(c.getId(), c.getChapterNumber(), c.getTitle(), c.getContent());
+        return new ChapterContentDTO(c.getId(), c.getChapterNumber(), c.getTitle(),
+                c.getContent(), c.getContentSource());
     }
 }

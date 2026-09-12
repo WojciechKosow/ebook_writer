@@ -170,17 +170,22 @@ public class PdfGenerationService {
      */
     public byte[] render(Ebook ebook, List<EbookChapter> chapters, List<EbookImage> images) {
         String html = htmlBuilder.build(ebook, chapters, css(), images);
-        Map<String, String> keyByImageId = new LinkedHashMap<>();
+        Map<String, ImageRef> refsByImageId = new LinkedHashMap<>();
         for (EbookImage image : images) {
-            keyByImageId.put(image.getId().toString(), image.getStorageKey());
+            refsByImageId.put(image.getId().toString(),
+                    new ImageRef(image.getStorageKey(), image.getDisplayWidthPercent()));
         }
-        return renderPdf(html, keyByImageId);
+        return renderPdf(html, refsByImageId);
     }
 
-    private byte[] renderPdf(String html, Map<String, String> keyByImageId) {
+    /** Resolved reference for an image token: where to stream it and how wide to draw it. */
+    private record ImageRef(String storageKey, Integer displayWidthPercent) {
+    }
+
+    private byte[] renderPdf(String html, Map<String, ImageRef> refsByImageId) {
         try {
             Document jsoupDoc = Jsoup.parse(html);
-            rewriteImageReferences(jsoupDoc, keyByImageId);
+            rewriteImageReferences(jsoupDoc, refsByImageId);
             jsoupDoc.outputSettings().syntax(Document.OutputSettings.Syntax.xml);
             org.w3c.dom.Document dom = new W3CDom().fromJsoup(jsoupDoc);
 
@@ -203,18 +208,26 @@ public class PdfGenerationService {
      * {@code r2:<storageKey>} URL. An image whose id no longer resolves (e.g. it
      * was deleted) is dropped so it doesn't render as a broken reference.
      */
-    private static void rewriteImageReferences(Document doc, Map<String, String> keyByImageId) {
+    private static void rewriteImageReferences(Document doc, Map<String, ImageRef> refsByImageId) {
         for (Element img : doc.select("img")) {
             String src = img.attr("src");
             if (!src.startsWith(EbookImage.REF_SCHEME)) {
                 continue;
             }
             String id = src.substring(EbookImage.REF_SCHEME.length());
-            String key = keyByImageId.get(id);
-            if (key != null) {
-                img.attr("src", R2_SCHEME + key);
-            } else {
-                img.remove();
+            ImageRef ref = refsByImageId.get(id);
+            if (ref == null) {
+                img.remove(); // reference to a deleted/unknown asset — drop it
+                continue;
+            }
+            img.attr("src", R2_SCHEME + ref.storageKey());
+            // Persist the editor's "resize": constrain the width as a percentage
+            // of the text column. Merge with any existing inline style.
+            if (ref.displayWidthPercent() != null) {
+                int pct = Math.max(1, Math.min(100, ref.displayWidthPercent()));
+                String existing = img.attr("style");
+                String width = "width:" + pct + "%";
+                img.attr("style", existing.isBlank() ? width : existing + ";" + width);
             }
         }
     }

@@ -3,7 +3,7 @@ package com.ebookwriter.SaaS.service.ebook;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.entity.EbookImage;
-import com.ebookwriter.SaaS.entity.EbookImageRole;
+import com.ebookwriter.SaaS.entity.EbookImagePlacement;
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.Extension;
 import org.commonmark.parser.Parser;
@@ -109,11 +109,11 @@ public class EbookHtmlBuilder {
         return markdownRenderer.render(markdownParser.parse(markdown));
     }
 
-    /** The book's cover image, or null if none is set. */
+    /** The book's cover image, or null if none is placed as the cover. */
     private static EbookImage coverImage(List<EbookImage> images) {
         if (images == null) return null;
         return images.stream()
-                .filter(i -> i.getRole() == EbookImageRole.COVER)
+                .filter(i -> i.getPlacement() == EbookImagePlacement.COVER)
                 .findFirst()
                 .orElse(null);
     }

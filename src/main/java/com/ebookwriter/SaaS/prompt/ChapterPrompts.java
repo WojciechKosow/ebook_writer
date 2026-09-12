@@ -29,7 +29,12 @@ public final class ChapterPrompts {
                   where they genuinely help readability.
                 - For code, use fenced blocks with a language tag (e.g. ```java) when
                   the topic is technical. Keep code correct and runnable.
-                - Do not include images.
+                - Images: only if you are given "IMAGES AVAILABLE FOR THIS CHAPTER"
+                  below, you MAY place one where it genuinely fits by writing its
+                  exact token on its own line as: ![short caption](ebook-image:<id>)
+                  using the id given. Use an image only if it clearly belongs; it is
+                  fine to use none. Never invent image ids, filenames, or URLs, and
+                  never add an image when none are offered.
 
                 After the chapter body, output the delimiter line exactly:
                 %s
@@ -43,7 +48,12 @@ public final class ChapterPrompts {
                               String fullOutline,
                               EbookChapter chapter,
                               String previousSummaries,
-                              int targetWords) {
+                              int targetWords,
+                              String availableImages) {
+        String imagesSection = (availableImages == null || availableImages.isBlank())
+                ? ""
+                : "\nIMAGES AVAILABLE FOR THIS CHAPTER (use where they fit, or not at all)\n"
+                        + availableImages.strip() + "\n";
         return """
                 BOOK BRIEF
                 Topic: %s
@@ -60,7 +70,7 @@ public final class ChapterPrompts {
 
                 WHAT EARLIER CHAPTERS ALREADY COVERED (do not repeat these; build on them)
                 %s
-
+                %s
                 CHAPTER TO WRITE NOW
                 Chapter %d: %s
                 Scope: %s
@@ -80,6 +90,7 @@ public final class ChapterPrompts {
                 nz(fullOutline),
                 previousSummaries == null || previousSummaries.isBlank()
                         ? "(this is the first chapter)" : previousSummaries.trim(),
+                imagesSection,
                 chapter.getChapterNumber(),
                 nz(chapter.getTitle()),
                 nz(chapter.getDescription()),
