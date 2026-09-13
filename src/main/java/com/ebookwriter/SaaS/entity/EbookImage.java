@@ -44,13 +44,13 @@ public class EbookImage {
      * asset analysis or the editor may refine it.
      */
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(columnDefinition = "varchar(255) default 'GENERAL' not null")
     @Builder.Default
     private EbookImageRole role = EbookImageRole.GENERAL;
 
     /** Where the asset is used in the book. Defaults to unused. */
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(columnDefinition = "varchar(255) default 'UNUSED' not null")
     @Builder.Default
     private EbookImagePlacement placement = EbookImagePlacement.UNUSED;
 

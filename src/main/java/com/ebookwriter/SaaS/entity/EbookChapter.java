@@ -58,9 +58,15 @@ public class EbookChapter {
      * Whether this chapter's current content was produced by the AI pipeline or
      * edited by the user. Set to {@link ContentSource#USER} when the editor saves
      * changes, so a future regeneration can preserve manual edits.
+     *
+     * <p>The column carries a {@code 'AI'} default so that {@code ddl-auto=update}
+     * can add it to an existing, populated {@code ebook_chapters} table: without a
+     * default, adding a NOT NULL column to a table with rows fails and the column
+     * is silently skipped. The default also backfills pre-existing chapters as
+     * AI-authored, which is correct.
      */
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(columnDefinition = "varchar(255) default 'AI' not null")
     @Builder.Default
     private ContentSource contentSource = ContentSource.AI;
 }
