@@ -10,6 +10,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -52,6 +53,8 @@ public class R2StorageService {
                             .contentLength((long) data.length)
                             .build(),
                     RequestBody.fromBytes(data));
+        } catch (NoSuchBucketException e) {
+            throw new StorageException(bucketMissingMessage(), e);
         } catch (S3Exception e) {
             throw new StorageException("Failed to upload object " + key + ": "
                     + e.awsErrorDetails().errorMessage(), e);
@@ -96,6 +99,15 @@ public class R2StorageService {
             throw new StorageException("Image storage is not configured. Set the R2_ACCESS_KEY_ID, "
                     + "R2_SECRET_ACCESS_KEY, R2_BUCKET and R2_ACCOUNT_ID environment variables.");
         }
+    }
+
+    /** Actionable message for the common "bucket doesn't exist" misconfiguration. */
+    private String bucketMissingMessage() {
+        return "Image storage bucket '" + properties.getBucket() + "' was not found at "
+                + properties.resolveEndpoint() + ". Create a bucket with that exact name "
+                + "(lowercase) in Cloudflare R2, or fix R2_BUCKET / R2_ACCOUNT_ID to match an "
+                + "existing bucket. (You can also set R2_AUTO_CREATE_BUCKET=true if the R2 token "
+                + "may create buckets.)";
     }
 
     /** Thrown when an object-storage operation cannot be completed. */
