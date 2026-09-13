@@ -95,6 +95,10 @@ r2:
   secret-access-key: ${R2_SECRET_ACCESS_KEY:}
   bucket: ${R2_BUCKET:}
   endpoint: ${R2_ENDPOINT:}
+  # Create the bucket at startup if missing. Needs an R2 token allowed to create
+  # buckets (Admin Read & Write); with an object-only token, leave this false and
+  # create the bucket in the Cloudflare dashboard.
+  auto-create-bucket: ${R2_AUTO_CREATE_BUCKET:false}
 
 # Payments (Stripe) + credits. The $ amounts live in Stripe; credit grants here.
 stripe:

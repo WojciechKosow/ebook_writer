@@ -39,6 +39,14 @@ public class R2Properties {
      */
     private String endpoint;
 
+    /**
+     * When true, create the configured bucket at startup if it doesn't exist.
+     * Requires an R2 token with bucket-create permission (Admin Read &amp; Write);
+     * an object-scoped token cannot create buckets, so leave this false and
+     * create the bucket in the dashboard. Default false. Set R2_AUTO_CREATE_BUCKET.
+     */
+    private boolean autoCreateBucket = false;
+
     /** True once the credentials + bucket needed to talk to R2 are all present. */
     public boolean isConfigured() {
         return isNotBlank(accessKeyId)

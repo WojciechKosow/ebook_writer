@@ -213,11 +213,20 @@ future regeneration can preserve them.
 | `R2_SECRET_ACCESS_KEY` | *(blank)* | R2 secret access key. |
 | `R2_BUCKET` | *(blank)* | Bucket that holds ebook images. |
 | `R2_ENDPOINT` | *(derived)* | Override the S3 endpoint; blank = `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`. |
+| `R2_AUTO_CREATE_BUCKET` | `false` | Create the bucket at startup if missing. Needs a token allowed to create buckets. |
 
 The app boots without R2 configured (like the Anthropic/Stripe placeholders);
 only image upload and image rendering fail with a clear message until the
 `R2_*` variables are set. Create an R2 bucket and an API token (Object
 Read & Write) in the Cloudflare dashboard, then set the four `R2_*` values.
+
+**The bucket must already exist.** `R2_BUCKET` has to name a bucket that exists
+in the account `R2_ACCOUNT_ID` points to — names are lowercase and case-
+sensitive. If it doesn't, uploads fail with *"The specified bucket does not
+exist."* The app checks this at startup (`R2StartupCheck`) and logs an explicit
+message; set `R2_AUTO_CREATE_BUCKET=true` to have it created on boot (only works
+if the R2 token may create buckets — an object-scoped token cannot, so create it
+in the dashboard instead).
 
 ### Cost & the editorial pass
 
