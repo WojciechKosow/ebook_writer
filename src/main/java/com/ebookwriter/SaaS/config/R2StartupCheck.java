@@ -81,6 +81,35 @@ public class R2StartupCheck implements ApplicationRunner {
                 + "exact name (lowercase) in Cloudflare R2, or set R2_BUCKET / R2_ACCOUNT_ID to "
                 + "match an existing bucket. (Or set R2_AUTO_CREATE_BUCKET=true if the token may "
                 + "create buckets.)");
+        // Diagnostic: show which buckets this token/endpoint can actually see. If
+        // the target bucket exists elsewhere (another account, or a jurisdiction
+        // endpoint like <acct>.eu.r2.cloudflarestorage.com), it won't be listed
+        // here — set R2_ENDPOINT to the exact endpoint the bucket lives behind.
+        logVisibleBuckets();
         log.warn("=================================================================");
+    }
+
+    /** Best-effort list of buckets visible to the configured token, for diagnosis. */
+    private void logVisibleBuckets() {
+        try {
+            var visible = r2Client.listBuckets().buckets().stream()
+                    .map(software.amazon.awssdk.services.s3.model.Bucket::name)
+                    .toList();
+            if (visible.isEmpty()) {
+                log.warn("[R2] This token/endpoint sees no buckets. Likely a jurisdiction endpoint "
+                        + "mismatch (set R2_ENDPOINT to the one your other app uses) or a token in a "
+                        + "different account.");
+            } else {
+                log.warn("[R2] Buckets visible to this token at {}: {}. If your target isn't here, it "
+                        + "lives behind a different endpoint/account — set R2_ENDPOINT accordingly.",
+                        properties.resolveEndpoint(), visible);
+            }
+        } catch (S3Exception e) {
+            // A bucket-scoped token often can't list — that's fine, it's only a hint.
+            log.warn("[R2] Could not list buckets for diagnosis (HTTP {}): the token may be scoped to "
+                    + "specific buckets. Ensure R2_BUCKET is one the token can access.", e.statusCode());
+        } catch (RuntimeException e) {
+            log.warn("[R2] Could not list buckets for diagnosis: {}", e.getMessage());
+        }
     }
 }
