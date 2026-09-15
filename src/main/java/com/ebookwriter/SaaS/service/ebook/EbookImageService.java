@@ -81,14 +81,16 @@ public class EbookImageService {
                     "Image is too large (max " + (MAX_IMAGE_BYTES / (1024 * 1024)) + " MB)");
         }
 
-        UUID imageId = UUID.randomUUID();
-        String key = objectKey(ebookId, imageId, EXTENSIONS.get(contentType));
+        // The R2 object key just needs to be unique — keep it independent of the
+        // entity id, which is DB-generated on insert. (Presetting the @GeneratedValue
+        // id would make Spring Data treat the entity as existing and issue an UPDATE
+        // that matches no row, failing with a stale-state error.)
+        String key = objectKey(ebookId, UUID.randomUUID(), EXTENSIONS.get(contentType));
         storage.upload(key, bytes, contentType);
 
         int[] dimensions = readDimensions(bytes);
 
         EbookImage image = EbookImage.builder()
-                .id(imageId)
                 .ebook(ebook)
                 .storageKey(key)
                 // Do not force a role/placement on upload — everything starts
@@ -108,7 +110,7 @@ public class EbookImageService {
         // becomes visible in the download once it is placed via a content save,
         // set as the cover, etc., each of which re-renders.
         log.info("Uploaded asset {} for ebook {} ({}, {} KB)",
-                imageId, ebookId, contentType, bytes.length / 1024);
+                image.getId(), ebookId, contentType, bytes.length / 1024);
         return EbookImageDTO.from(image);
     }
 
