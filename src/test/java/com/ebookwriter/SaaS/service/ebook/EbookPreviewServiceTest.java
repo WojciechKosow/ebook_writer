@@ -5,6 +5,10 @@ import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.entity.EbookImagePlacement;
 import com.ebookwriter.SaaS.entity.EbookImageRole;
+import com.ebookwriter.SaaS.repository.EbookImageRepository;
+import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.request.ChapterUpdateRequest;
+import com.ebookwriter.SaaS.request.EbookContentUpdateRequest;
 import com.ebookwriter.SaaS.service.storage.R2StorageService;
 import org.junit.jupiter.api.Test;
 
@@ -70,6 +74,41 @@ class EbookPreviewServiceTest {
                 "PDF fonts should be mapped to web fonts");
         // Both images (cover + inline) were pulled from storage.
         verify(storage, org.mockito.Mockito.times(2)).download(anyString());
+    }
+
+    @Test
+    void livePreviewRendersPostedContentWithStoredImages() {
+        EbookRepository ebooks = mock(EbookRepository.class);
+        EbookImageRepository images = mock(EbookImageRepository.class);
+        R2StorageService storage = mock(R2StorageService.class);
+        when(storage.download(anyString())).thenReturn(Optional.of("PNG".getBytes()));
+
+        UUID ebookId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Ebook ebook = Ebook.builder().topic("Live").title("Live Book").build();
+        when(ebooks.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
+
+        UUID imgId = UUID.randomUUID();
+        EbookImage inline = EbookImage.builder()
+                .id(imgId).ebook(ebook)
+                .placement(EbookImagePlacement.CHAPTER).displayWidthPercent(50)
+                .storageKey("k.png").contentType("image/png").build();
+        when(images.findByEbookIdOrderByCreatedAtAsc(ebookId)).thenReturn(List.of(inline));
+
+        EbookPreviewService service =
+                new EbookPreviewService(ebooks, null, images, new EbookHtmlBuilder(), storage);
+
+        // The editor's current, unsaved content — a not-yet-persisted chapter.
+        EbookContentUpdateRequest req = new EbookContentUpdateRequest(List.of(
+                new ChapterUpdateRequest(null, "Draft chapter",
+                        "Fresh unsaved text.\n\n![x](ebook-image:" + imgId + ")")));
+
+        String html = service.renderPreviewFromContent(ebookId, userId, req);
+
+        assertTrue(html.contains("Draft chapter"), "posted title should render");
+        assertTrue(html.contains("Fresh unsaved text."), "posted body should render");
+        assertTrue(html.contains("data:image/png;base64,"), "stored image should inline");
+        assertFalse(html.contains(EbookImage.REF_SCHEME), "image token should be resolved");
     }
 
     @Test

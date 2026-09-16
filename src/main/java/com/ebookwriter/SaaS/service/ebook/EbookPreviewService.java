@@ -6,6 +6,8 @@ import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.request.ChapterUpdateRequest;
+import com.ebookwriter.SaaS.request.EbookContentUpdateRequest;
 import com.ebookwriter.SaaS.service.storage.R2StorageService;
 import lombok.RequiredArgsConstructor;
 import org.jsoup.Jsoup;
@@ -18,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
@@ -95,6 +98,33 @@ public class EbookPreviewService {
                 chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
         List<EbookImage> images =
                 imageRepository.findByEbookIdOrderByCreatedAtAsc(ebookId);
+        return buildPreviewHtml(ebook, chapters, images);
+    }
+
+    /**
+     * Render a <b>live</b> preview from the editor's current (unsaved) content
+     * instead of the stored manuscript, so the reader sees edits as they type
+     * without a save. The posted chapters are rendered as-is (never persisted);
+     * images are still resolved from the book's stored assets, since an inline
+     * image is uploaded before it can be referenced. Ownership-scoped.
+     */
+    @Transactional(readOnly = true)
+    public String renderPreviewFromContent(UUID ebookId, UUID userId,
+                                           EbookContentUpdateRequest request) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        List<EbookImage> images =
+                imageRepository.findByEbookIdOrderByCreatedAtAsc(ebookId);
+
+        List<EbookChapter> chapters = new ArrayList<>();
+        int number = 1;
+        for (ChapterUpdateRequest c : request.getChapters()) {
+            chapters.add(EbookChapter.builder()
+                    .chapterNumber(number++)
+                    .title(c.getTitle())
+                    .content(c.getContent())
+                    .build());
+        }
         return buildPreviewHtml(ebook, chapters, images);
     }
 
