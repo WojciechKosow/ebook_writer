@@ -7,9 +7,11 @@ import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.UserRepository;
 import com.ebookwriter.SaaS.request.EbookContentUpdateRequest;
 import com.ebookwriter.SaaS.request.EbookRequest;
+import com.ebookwriter.SaaS.service.ebook.EbookPreviewService;
 import com.ebookwriter.SaaS.service.ebook.EbookService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -26,6 +28,7 @@ import java.util.UUID;
 public class EbookController {
 
     private final EbookService ebookService;
+    private final EbookPreviewService previewService;
     private final UserRepository userRepository;
 
     /**
@@ -86,6 +89,24 @@ public class EbookController {
             Authentication authentication) {
         User user = currentUser(authentication);
         return ResponseEntity.ok(ebookService.updateContent(id, user.getId(), request));
+    }
+
+    /**
+     * Render a browser-ready HTML preview of the book — the same layout the PDF
+     * uses, with images inlined so it is self-contained. The editor renders this
+     * (in a sandboxed iframe, paginated client-side) to show a faithful "what the
+     * download looks like" view instead of a Word-style approximation.
+     */
+    @GetMapping(value = "/{id}/preview", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> preview(@PathVariable UUID id,
+                                          Authentication authentication) {
+        User user = currentUser(authentication);
+        String html = previewService.renderPreview(id, user.getId());
+        return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_HTML)
+                // Reflects the current manuscript/assets; never cache a stale preview.
+                .cacheControl(CacheControl.noStore())
+                .body(html);
     }
 
     /** Download the finished PDF. */
