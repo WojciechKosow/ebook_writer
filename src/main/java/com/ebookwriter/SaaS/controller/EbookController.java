@@ -109,6 +109,25 @@ public class EbookController {
                 .body(html);
     }
 
+    /**
+     * Render a <b>live</b> preview from the editor's current (unsaved) content.
+     * Same output as {@link #preview}, but built from the posted chapters rather
+     * than the stored manuscript — nothing is persisted — so the editor can show
+     * edits as they happen. Images are resolved from the book's stored assets.
+     */
+    @PostMapping(value = "/{id}/preview",
+            consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> previewDraft(@PathVariable UUID id,
+                                               @Valid @RequestBody EbookContentUpdateRequest request,
+                                               Authentication authentication) {
+        User user = currentUser(authentication);
+        String html = previewService.renderPreviewFromContent(id, user.getId(), request);
+        return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_HTML)
+                .cacheControl(CacheControl.noStore())
+                .body(html);
+    }
+
     /** Download the finished PDF. */
     @GetMapping("/{id}/download")
     public ResponseEntity<byte[]> download(@PathVariable UUID id,
