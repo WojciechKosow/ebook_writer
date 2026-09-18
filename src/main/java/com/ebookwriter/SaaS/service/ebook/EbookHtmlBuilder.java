@@ -59,19 +59,25 @@ public class EbookHtmlBuilder {
                 .append(css)
                 .append("</style></head><body>");
 
-        // Cover
+        // Cover — the first page. When a cover image is placed it fills the whole
+        // page (full-bleed background) with the title/subtitle overlaid on a
+        // legibility scrim; otherwise it's a plain title page. The image is
+        // emitted as an ebook-image: reference so it flows through the same
+        // rewrite (PDF) / inline (preview) as chapter images.
         html.append("<div class=\"cover")
                 .append(cover != null ? " cover--with-image" : "")
                 .append("\">");
         if (cover != null) {
-            html.append("<img class=\"cover-image\" src=\"")
+            html.append("<img class=\"cover-bg\" src=\"")
                     .append(cover.markdownRef())
                     .append("\" alt=\"\"/>");
         }
+        html.append("<div class=\"cover-overlay\">");
         html.append("<div class=\"book-title\">").append(escape(title)).append("</div>");
         if (isNotBlank(subtitle)) {
             html.append("<div class=\"book-subtitle\">").append(escape(subtitle)).append("</div>");
         }
+        html.append("</div>");
         html.append("</div>");
 
         // Table of contents

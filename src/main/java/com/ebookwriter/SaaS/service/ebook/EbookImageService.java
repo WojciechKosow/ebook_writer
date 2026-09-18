@@ -190,6 +190,27 @@ public class EbookImageService {
         return EbookImageDTO.from(target);
     }
 
+    /**
+     * Remove the book's cover: demote any current cover asset back to UNUSED
+     * (the asset itself is kept in the library, just no longer the cover) and
+     * re-render so the download drops the cover image.
+     */
+    @Transactional
+    public void clearCover(UUID ebookId, UUID userId) {
+        Ebook ebook = requireOwnedEbook(ebookId, userId);
+        List<EbookImage> covers =
+                imageRepository.findByEbookIdAndPlacement(ebookId, EbookImagePlacement.COVER);
+        for (EbookImage cover : covers) {
+            cover.setPlacement(EbookImagePlacement.UNUSED);
+            cover.setChapter(null);
+            cover.setPlacedBy(ContentSource.USER);
+            imageRepository.save(cover);
+        }
+        if (!covers.isEmpty()) {
+            reRenderIfCompleted(ebook);
+        }
+    }
+
     @Transactional
     public void delete(UUID ebookId, UUID userId, UUID imageId) {
         Ebook ebook = requireOwnedEbook(ebookId, userId);

@@ -91,6 +91,15 @@ public class EbookImageController {
         return ResponseEntity.ok(imageService.setCover(ebookId, user.getId(), imageId));
     }
 
+    /** Clear the book's cover (keeps the asset, just unsets it as the cover). */
+    @DeleteMapping("/cover")
+    public ResponseEntity<Void> clearCover(@PathVariable UUID ebookId,
+                                           Authentication authentication) {
+        User user = currentUser(authentication);
+        imageService.clearCover(ebookId, user.getId());
+        return ResponseEntity.noContent().build();
+    }
+
     /** Delete an image (also removes its bytes from storage). */
     @DeleteMapping("/{imageId}")
     public ResponseEntity<Void> delete(@PathVariable UUID ebookId,
