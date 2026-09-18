@@ -13,8 +13,10 @@
     }
 }
 
-/* No page number on the cover. */
+/* No page number on the cover, and no page margins so a cover image can bleed
+   to the paper edges. */
 @page cover {
+    margin: 0;
     @bottom-center { content: ""; }
 }
 
@@ -23,6 +25,7 @@ body {
     font-size: 11pt;
     line-height: 1.5;
     color: #1a1a1a;
+    margin: 0;
 }
 
 p {
@@ -96,18 +99,52 @@ th, td {
 th { background: #f2f2f2; font-family: "Ebook Sans"; }
 
 /* ---- Cover ---- */
+/* The cover fills the whole first page. A placed cover image is drawn full-bleed
+   behind the title (object-fit: cover crops without distortion — supported by
+   both openhtmltopdf 1.0.10+ and browsers, so the PDF matches the preview). */
 .cover {
     page: cover;
     page-break-after: always;
+    position: relative;
+    width: 6in;
+    height: 9in;
+    overflow: hidden;
     text-align: center;
-    padding-top: 6cm;
+    background: #f4f2ee;
+}
+.cover-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 6in;
+    height: 9in;
+    object-fit: cover;
+    object-position: center;
+}
+.cover-overlay {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 1.6cm 1.4cm;
+}
+/* Plain (no image) cover: sit the title in the upper third, like a title page. */
+.cover:not(.cover--with-image) .cover-overlay {
+    top: 5.5cm;
+    bottom: auto;
+}
+/* With an image, lay the title over a legibility scrim at the foot of the page. */
+.cover--with-image .cover-overlay {
+    background: rgba(20, 18, 16, 0.55);
+    padding-top: 1.1cm;
+    padding-bottom: 1.6cm;
 }
 .cover .book-title {
     font-family: "Ebook Sans";
     font-size: 30pt;
     font-weight: bold;
     line-height: 1.15;
-    margin-bottom: 0.6em;
+    margin-bottom: 0.4em;
     color: #111;
 }
 .cover .book-subtitle {
@@ -115,16 +152,11 @@ th { background: #f2f2f2; font-family: "Ebook Sans"; }
     font-size: 15pt;
     color: #555;
 }
-/* When a cover image is present, tighten the top padding so the image leads
-   the page and the title sits beneath it. */
-.cover--with-image {
-    padding-top: 1.5cm;
+.cover--with-image .book-title {
+    color: #fff;
 }
-.cover .cover-image {
-    display: block;
-    max-width: 100%;
-    max-height: 13cm;
-    margin: 0 auto 0.8em auto;
+.cover--with-image .book-subtitle {
+    color: rgba(255, 255, 255, 0.92);
 }
 
 /* ---- Inline chapter images ---- */
