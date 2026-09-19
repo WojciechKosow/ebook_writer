@@ -100,6 +100,28 @@ r2:
   # create the bucket in the Cloudflare dashboard.
   auto-create-bucket: ${R2_AUTO_CREATE_BUCKET:false}
 
+# OpenAI — AI-generated ebook images. After the manuscript is written and
+# edited, the Image Planner decides where images add value and the Image
+# Generation service creates them via the OpenAI Image API, storing the bytes in
+# the same private R2 bucket as uploaded assets. Leave OPENAI_API_KEY blank for
+# local dev — the app boots and books are simply produced text-only until a key
+# is set (mirrors the Anthropic/R2 placeholders). Requires R2 to be configured
+# too, since generated images are stored there.
+openai:
+  api-key: ${OPENAI_API_KEY:}
+  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+  # Image model. Must return base64 image data (the default does).
+  image-model: ${OPENAI_IMAGE_MODEL:gpt-image-1}
+  connect-timeout-ms: ${OPENAI_CONNECT_TIMEOUT_MS:10000}
+  read-timeout-ms: ${OPENAI_READ_TIMEOUT_MS:120000}
+  max-retries: ${OPENAI_MAX_RETRIES:2}
+  # Master switch for the whole AI image pipeline (planner + generator).
+  enabled: ${OPENAI_IMAGES_ENABLED:true}
+  # Cost/quality guards — the planner is told to be selective, and these cap it
+  # regardless of what the model returns.
+  max-images-per-book: ${OPENAI_MAX_IMAGES_PER_BOOK:6}
+  max-images-per-chapter: ${OPENAI_MAX_IMAGES_PER_CHAPTER:2}
+
 # Payments (Stripe) + credits. The $ amounts live in Stripe; credit grants here.
 stripe:
   secret-key: ${STRIPE_SECRET_KEY:}
