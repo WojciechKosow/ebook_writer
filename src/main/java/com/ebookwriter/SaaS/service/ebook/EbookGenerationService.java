@@ -1,5 +1,6 @@
 package com.ebookwriter.SaaS.service.ebook;
 
+import com.ebookwriter.SaaS.dto.image.ImagePlan;
 import com.ebookwriter.SaaS.entity.ContentSource;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
@@ -40,6 +41,8 @@ public class EbookGenerationService {
     private final AssetUsageService assetUsageService;
     private final ChapterGenerationService chapterGenerationService;
     private final BookEditingService editingService;
+    private final ImagePlanningService imagePlanningService;
+    private final ImageGenerationService imageGenerationService;
     private final PdfGenerationService pdfGenerationService;
     private final AnthropicProperties anthropicProperties;
     private final CreditService creditService;
@@ -73,7 +76,7 @@ public class EbookGenerationService {
 
             // Step 3 — editorial pass (optional; the most expensive step)
             if (anthropicProperties.isEditingEnabled()) {
-                updateStatus(ebookId, EbookStatus.EDITING, 90);
+                updateStatus(ebookId, EbookStatus.EDITING, 85);
                 for (EbookChapter chapter : chapters) {
                     editingService.edit(ebookId, chapter.getId());
                 }
@@ -81,15 +84,28 @@ public class EbookGenerationService {
                 log.info("Editorial pass disabled — skipping for ebook {}", ebookId);
             }
 
-            // Reconcile which offered assets the writer actually placed, so the
-            // asset library shows accurate per-chapter usage (metadata only —
-            // rendering reads the Markdown refs directly).
+            // Step 3.5 — AI image pipeline. Planner decides what images add value
+            // and where (structured plan); the generator creates them via OpenAI,
+            // stores them in R2, and drops their inline tokens into the chapter
+            // Markdown. Both are best-effort: image failures never fail the book,
+            // and a book with no plan (or with images disabled) passes straight
+            // through to rendering.
+            updateStatus(ebookId, EbookStatus.PLANNING_IMAGES, 88);
+            List<ImagePlan> imagePlan = imagePlanningService.plan(ebookId);
+            if (!imagePlan.isEmpty()) {
+                updateStatus(ebookId, EbookStatus.GENERATING_IMAGES, 90);
+                imageGenerationService.generate(ebookId, imagePlan);
+            }
+
+            // Reconcile which offered assets the writer actually placed (and the
+            // generated images just added), so the asset library shows accurate
+            // per-chapter usage (metadata only — rendering reads the Markdown refs).
             assetUsageService.sync(ebookId, ContentSource.AI);
 
             // Step 4 — render PDF and learn the real page count. The reserved
             // page budget is a hard ceiling: an over-length book is trimmed to
             // fit rather than delivered (and billed) beyond what the user paid.
-            updateStatus(ebookId, EbookStatus.RENDERING, 95);
+            updateStatus(ebookId, EbookStatus.RENDERING, 96);
             int pageBudget = ebookRepository.findById(ebookId).map(Ebook::getPageBudget).orElse(0);
             int actualPages = pdfGenerationService.renderAndStore(ebookId, pageBudget);
 

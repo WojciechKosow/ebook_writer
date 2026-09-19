@@ -8,10 +8,13 @@ editorial pass → HTML → PDF`. Nothing more.
 
 ```
 EbookGenerationService  (async orchestrator, status + progress + error handling)
-  ├─ BookPlanningService      Step 1 — outline as structured JSON
-  ├─ ChapterGenerationService Step 2 — write each chapter sequentially
-  ├─ BookEditingService       Step 3 — editorial pass per chapter
-  └─ PdfGenerationService     Step 4 — assemble HTML, render to PDF
+  ├─ BookPlanningService      Step 1   — outline as structured JSON
+  ├─ AssetPlacementService    Step 1.5 — place any user-uploaded assets
+  ├─ ChapterGenerationService Step 2   — write each chapter sequentially
+  ├─ BookEditingService       Step 3   — editorial pass per chapter
+  ├─ ImagePlanningService     Step 3.5 — plan AI images (structured JSON)
+  ├─ ImageGenerationService   Step 3.6 — generate + store + place them
+  └─ PdfGenerationService     Step 4   — assemble HTML, render to PDF
 ```
 
 - Chapters are generated **sequentially**, each aware of the outline and the
@@ -24,6 +27,10 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
 - All prompts live in `com.ebookwriter.SaaS.prompt` so they are easy to iterate
   on. Global rules (no filler, no AI mention, no fabricated citations,
   consistent terminology, respect audience/length) are in `PromptGuidelines`.
+- After the manuscript is written and edited, the **AI image pipeline** runs
+  (see [AI-generated images](#ai-generated-images)). It is best-effort: with no
+  OpenAI key, images disabled, or an empty plan, the book passes straight
+  through to rendering, and a single image failing never fails the book.
 
 ## Data model
 
@@ -46,10 +53,13 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
 ## Status & progress
 
 `DRAFT` (created, assets can be uploaded, nothing generated) → *start* →
-`PENDING → PLANNING (10%) → WRITING (20–80%) → EDITING (90%) → RENDERING (95%)
-→ COMPLETED (100%)`, or `FAILED` with an error message. WRITING progress is
+`PENDING → PLANNING (10%) → WRITING (20–80%) → EDITING (85%) →
+PLANNING_IMAGES (88%) → GENERATING_IMAGES (90–95%) → RENDERING (96%) →
+COMPLETED (100%)`, or `FAILED` with an error message. WRITING progress is
 spread evenly across the chapters. Planning is followed by a short asset-
-placement step (10–20%) when the draft has uploaded assets.
+placement step (10–20%) when the draft has uploaded assets. The two image
+statuses are skipped straight through when the book has no image plan (images
+disabled, no OpenAI key, or the planner proposed none).
 
 ## API
 
@@ -171,6 +181,67 @@ into the book — irrelevant ones simply stay unused.
   attributing the change to AI or user. So the asset library always reflects where
   images really are, however the manuscript was edited.
 
+## AI-generated images
+
+After the manuscript is written and edited, the pipeline can add AI-generated
+illustrations. This is a separate concern from uploaded **assets**: the content
+AI writes the book, the **image planner** decides what visuals are needed and
+where, the **image generator** creates them, and the existing layout/render path
+places them. No one prompt does all of these.
+
+```
+CONTENT (chapters)
+      ↓
+ImagePlanningService   decides what/where/why/how  → List<ImagePlan>  (validated)
+      ↓
+ImageGenerationService for each plan …
+      ├─ OpenAiImageClient   call the OpenAI Image API → PNG bytes
+      ├─ R2StorageService    store the bytes (private bucket)
+      ├─ EbookImage          persist the generated image (metadata)
+      └─ ImagePlacementService  insert its ebook-image:<id> token in the chapter
+```
+
+- **Planner (`ImagePlanningService`).** Shows the book (title, topic, audience,
+  style, language, chapters + content excerpts) to the content model and asks,
+  as **strict JSON**, which images add value. The rules are conservative:
+  relevance over coverage, no decorative or near-duplicate images, no image just
+  because a chapter exists, anchor each to the section it supports, keep the book
+  visually consistent, respect language/audience. Output is a validated
+  `List<ImagePlan>` — never free-form text. The model's JSON is parsed leniently
+  and every entry is validated (a real chapter, a non-blank prompt); malformed
+  entries are dropped and malformed output yields an empty plan. Counts are
+  capped by `openai.max-images-per-book` / `-per-chapter`, ranked by the plan's
+  `priority`.
+- **`ImagePlan` vs. `GeneratedImage`.** The plan (`dto.image.ImagePlan`) is
+  *what should exist* — id, chapter, anchor heading, type (illustration / diagram
+  / chart / photo), purpose, description, generation prompt, aspect ratio,
+  priority. The generated file is an **`EbookImage`** (bytes in R2), reusing the
+  same asset storage/rendering as uploads. Planning data is never mixed into the
+  file model.
+- **Generator (`ImageGenerationService`).** For each plan it calls the OpenAI
+  Image API through `OpenAiImageClient` (the only class that knows about OpenAI),
+  stores the PNG in R2, records an `EbookImage` (`placedBy = AI`, role
+  `ILLUSTRATION`), and places its inline token. **Failures are isolated per
+  image**: one image failing is logged and skipped; the rest, and the book, still
+  finish.
+- **Placement is semantic, not physical.** The planner names a chapter and an
+  optional section heading; `ImagePlacementService` turns that into an
+  `![alt](ebook-image:<id>)` token in the chapter Markdown (after the heading, or
+  after the chapter's opening block if the heading isn't found). The AI never
+  picks pixel coordinates.
+- **Editor ≈ PDF, for free.** Because the token lives in the chapter Markdown —
+  the single source of truth — a generated image flows through the *same*
+  `EbookHtmlBuilder` used by both the editor preview (`EbookPreviewService`,
+  inlined as `data:` URIs) and the PDF (`PdfGenerationService`, streamed from R2).
+  No separate placement algorithm for the PDF. `AssetUsageService` reconciles
+  usage from the Markdown afterwards, so the asset library shows the generated
+  images like any other.
+
+Provider-specific logic is isolated in `OpenAiImageClient`; the aspect ratio the
+planner chooses (`1:1` / `3:2` / `2:3`) is mapped to a concrete OpenAI size
+there. The image model is configurable (`openai.image-model`); nothing hardcodes
+the key or the model.
+
 ## The editor (post-generation)
 
 Once a book is `COMPLETED` it can be edited without regenerating. Text and
@@ -214,6 +285,15 @@ future regeneration can preserve them.
 | `R2_BUCKET` | *(blank)* | Bucket that holds ebook images. |
 | `R2_ENDPOINT` | *(derived)* | Override the S3 endpoint; blank = `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`. |
 | `R2_AUTO_CREATE_BUCKET` | `false` | Create the bucket at startup if missing. Needs a token allowed to create buckets. |
+| `OPENAI_API_KEY` | *(blank)* | Enables AI image generation. App boots without it; books are produced text-only until it is set. Requires the `R2_*` vars too (generated images are stored in R2). |
+| `OPENAI_IMAGE_MODEL` | `gpt-image-1` | Image model. Must return base64 image data (`b64_json`). |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API base URL (override for a proxy/compatible gateway). |
+| `OPENAI_IMAGES_ENABLED` | `true` | Master switch for the whole image pipeline (planner + generator). |
+| `OPENAI_MAX_IMAGES_PER_BOOK` | `6` | Hard ceiling on generated images per book. |
+| `OPENAI_MAX_IMAGES_PER_CHAPTER` | `2` | Hard ceiling on generated images per chapter. |
+| `OPENAI_READ_TIMEOUT_MS` | `120000` | Per-call read timeout (image generation is slow). |
+| `OPENAI_CONNECT_TIMEOUT_MS` | `10000` | Per-call connect timeout. |
+| `OPENAI_MAX_RETRIES` | `2` | Retries on a failed image call before that one image is given up. |
 
 The app boots without R2 configured (like the Anthropic/Stripe placeholders);
 only image upload and image rendering fail with a clear message until the
@@ -283,11 +363,13 @@ pages.
 
 ## Not yet (deliberately)
 
-AI-generated images (generating an illustration/cover for an unfilled spot,
-driven by title/content/prompt — builds directly on the asset storage,
-placement and rendering here), image generation/replacement from inside the
-editor, custom fonts, brand colours, background removal, PDF/DOCX source
-materials, reusable cross-project asset libraries, templates, EPUB, KDP,
-marketplace, collaboration, multiple AI providers, analytics, teams. The data
-model (assets as project resources, `placedBy`/`contentSource` origin tracking)
-is built to accommodate these without a rewrite.
+AI image generation/replacement from **inside the editor** (on-demand, not the
+generation-time pipeline that now exists), AI-generated **covers**, custom
+fonts, brand colours, background removal, PDF/DOCX source materials, reusable
+cross-project asset libraries, templates, EPUB, KDP, marketplace, collaboration,
+multiple AI providers, analytics, teams. The data model (assets as project
+resources, `placedBy`/`contentSource` origin tracking) is built to accommodate
+these without a rewrite.
+
+> AI-generated **inline** images at generation time are now implemented — see
+> [AI-generated images](#ai-generated-images).
