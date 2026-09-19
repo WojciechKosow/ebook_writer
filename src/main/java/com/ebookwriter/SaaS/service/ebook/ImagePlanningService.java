@@ -45,7 +45,10 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ImagePlanningService {
 
-    private static final long PLAN_MAX_TOKENS = 3000L;
+    // Generous ceiling: adaptive thinking shares this budget with the JSON
+    // output, so a tight cap truncates the plan mid-array. The model stops once
+    // the plan is done, so a high ceiling costs nothing on a short plan.
+    private static final long PLAN_MAX_TOKENS = 8000L;
 
     // Own Jackson 2 mapper (Spring Boot 4 registers a Jackson 3 bean by default),
     // matching the lenient parse in BookPlanningService/AssetPlacementService.
@@ -169,13 +172,91 @@ public class ImagePlanningService {
     private RawPlan parse(String raw) {
         int start = raw.indexOf('{');
         int end = raw.lastIndexOf('}');
-        if (start < 0 || end < start) {
-            throw new RuntimeException("Model did not return a JSON object for the image plan");
+        if (start >= 0 && end > start) {
+            try {
+                return OBJECT_MAPPER.readValue(raw.substring(start, end + 1), RawPlan.class);
+            } catch (Exception strict) {
+                // The response may have been truncated (max tokens hit) mid-array,
+                // so the whole-object parse fails. Salvage the image objects that
+                // did arrive intact rather than losing the entire plan.
+                List<RawImage> salvaged = salvageImages(raw);
+                if (!salvaged.isEmpty()) {
+                    log.warn("Image plan JSON was malformed/truncated; salvaged {} complete image object(s)",
+                            salvaged.size());
+                    return new RawPlan(salvaged);
+                }
+                throw new RuntimeException("Failed to parse image plan JSON: " + strict.getMessage(), strict);
+            }
         }
+        throw new RuntimeException("Model did not return a JSON object for the image plan");
+    }
+
+    /**
+     * Recover the complete {@code {...}} objects from the {@code "images"} array of
+     * a malformed or truncated plan by scanning for balanced braces (respecting
+     * JSON strings) and parsing each object on its own, skipping an incomplete
+     * trailing one. Package-private and static so it is unit-testable.
+     */
+    static List<RawImage> salvageImages(String raw) {
+        List<RawImage> out = new ArrayList<>();
+        if (raw == null) {
+            return out;
+        }
+        int imagesKey = raw.indexOf("\"images\"");
+        int arrayStart = raw.indexOf('[', imagesKey < 0 ? 0 : imagesKey);
+        if (arrayStart < 0) {
+            return out;
+        }
+
+        int depth = 0;
+        int objStart = -1;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = arrayStart + 1; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            switch (c) {
+                case '"' -> inString = true;
+                case '{' -> {
+                    if (depth == 0) {
+                        objStart = i;
+                    }
+                    depth++;
+                }
+                case '}' -> {
+                    if (depth > 0) {
+                        depth--;
+                        if (depth == 0 && objStart >= 0) {
+                            tryParseImage(raw.substring(objStart, i + 1), out);
+                            objStart = -1;
+                        }
+                    }
+                }
+                case ']' -> {
+                    if (depth == 0) {
+                        return out; // end of the images array
+                    }
+                }
+                default -> { /* ignore */ }
+            }
+        }
+        return out;
+    }
+
+    private static void tryParseImage(String objectJson, List<RawImage> out) {
         try {
-            return OBJECT_MAPPER.readValue(raw.substring(start, end + 1), RawPlan.class);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to parse image plan JSON: " + e.getMessage(), e);
+            out.add(OBJECT_MAPPER.readValue(objectJson, RawImage.class));
+        } catch (Exception ignore) {
+            // Skip an object that still can't be parsed; the rest are usable.
         }
     }
 
