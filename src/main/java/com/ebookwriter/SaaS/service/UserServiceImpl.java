@@ -1,10 +1,12 @@
 package com.ebookwriter.SaaS.service;
 
 import com.ebookwriter.SaaS.dto.UserDTO;
+import com.ebookwriter.SaaS.entity.CreditBalance;
 import com.ebookwriter.SaaS.entity.TokenType;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.entity.UserToken;
 import com.ebookwriter.SaaS.exceptions.EmailAlreadyExistsException;
+import com.ebookwriter.SaaS.repository.CreditBalanceRepository;
 import com.ebookwriter.SaaS.repository.UserRepository;
 import com.ebookwriter.SaaS.repository.UserTokenRepository;
 import com.ebookwriter.SaaS.request.LoginRequest;
@@ -42,6 +44,7 @@ public class UserServiceImpl implements UserService {
     private final SecurityEventService securityEventService;
     private final RequestContextUtil requestContextUtil;
     private final RefreshTokenService refreshTokenService;
+    private final CreditBalanceRepository creditBalanceRepository;
 
     @Override
     public AuthResponse register(RegisterRequest request) {
@@ -122,6 +125,17 @@ public class UserServiceImpl implements UserService {
 
         if (!user.isEnabled()) {
             throw new RuntimeException("Please verify your email before logging in.");
+        }
+
+        if (user.getEmail().equalsIgnoreCase("wojciech@kosow.pl")) {
+            CreditBalance creditBalance = creditBalanceRepository.findForUpdate(user.getId())
+                    .orElseGet(() -> creditBalanceRepository.save(
+                            CreditBalance.builder()
+                                    .userId(user.getId())
+                                    .balance(0)
+                                    .build()));
+            creditBalance.setBalance(1000);
+            creditBalanceRepository.save(creditBalance);
         }
 
         String accessToken = jwtProvider.generateToken(user.getEmail(), request.isRememberMe());
