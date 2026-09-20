@@ -112,6 +112,12 @@ public class Ebook {
     private String title;
     private String subtitle;
 
+    /**
+     * Optional author/creator name shown on the cover. Nullable: most briefs
+     * don't set it, and the cover simply omits the byline when it is absent.
+     */
+    private String authorName;
+
     @Column(columnDefinition = "text")
     private String description;
 

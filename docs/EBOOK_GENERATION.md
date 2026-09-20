@@ -43,7 +43,8 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
 ## Data model
 
 - `Ebook` — the brief, status, progress, plan-derived metadata (title,
-  subtitle, description, writing guidelines), timestamps.
+  subtitle, description, writing guidelines), an optional `authorName` (cover
+  byline), timestamps.
 - `EbookChapter` — per-chapter outline + content + summary + status. Persisted
   as each chapter is produced, so a failure keeps completed chapters.
   `contentSource` records whether the current text is AI output or a user edit,
@@ -100,7 +101,8 @@ to the authenticated user.
   "approxPageCount": 50,
   "language": "English",
   "additionalInstructions": "Focus on real-world development. Include examples.",
-  "sourceMaterial": "(optional examples or source text)"
+  "sourceMaterial": "(optional examples or source text)",
+  "authorName": "(optional — printed on the cover as a byline)"
 }
 ```
 
@@ -161,6 +163,45 @@ and code blocks render correctly. Styling lives in
 > so the stylesheet is written with literal values and box-model / float /
 > table layout, and `target-counter` generated content is never floated (it
 > NPEs) — the TOC uses a two-column table to right-align page numbers.
+
+## Page-type system (covers & section dividers)
+
+Beyond styling individual paragraphs, the book is composed as a sequence of
+**page types** so it reads like a designed publication, not a formatted
+document. `DocumentComposer` analyses the generated structure and decides, per
+chapter, how its opener is composed — the decision is derived from content, not
+hardcoded per topic, and is a pure function shared by preview and PDF.
+
+```
+MAIN COVER → CONTENTS → [ CHAPTER/DAY OPENER → BODY ] × N
+```
+
+- **Main cover.** A composed, art-directed cover: masthead rule, topic-derived
+  kicker, strong title hierarchy, subtitle, optional `authorName` byline, and a
+  subtle `SCRIVETTE` imprint. Its **visual concept is generated from the book's
+  structure**, never a generic AI stock image: a large ghosted **program numeral**
+  (the "7" of a 7-day plan, with a "DAYS"/"STEPS" label) when a fixed structure is
+  detected, otherwise the title's **initial as a monogram**. A user-uploaded cover
+  image still renders full-bleed with the title on a legibility scrim.
+- **Chapter / day-step openers.** A major section can open with a dedicated
+  **opener page** — big numeral, eyebrow label ("DAY 01" / "CHAPTER 03"), title,
+  an optional duration chip (parsed from the scope, e.g. "10–20 MINUTES"), and a
+  one-line statement (the planner's scope sentence) — with the body starting on
+  the **next** page. Program units (a chapter titled "Day 3", "Step 2", "Part II")
+  are detected and get the day/step treatment; the opener strips the redundant
+  "Day 1 —" from the title since the label already carries it.
+- **Intelligent selection, not one-divider-per-chapter.** Dedicated opener pages
+  cost a page, so `DocumentComposer` only uses them when the book is **substantial**
+  (≥ 4 chapters averaging ≥ 2 pages, or a ≥ 3-unit program) **and** the reserved
+  page budget has genuine slack for them (`canAfford`). Otherwise — a short book, a
+  tight budget — it emits a strong **opener band** at the top of the content page:
+  the same hierarchy and label with no extra page. So hierarchy and pacing improve
+  without padding page count or eating into content the trim would remove. A live
+  preview (no budget yet) shows full-page openers so the feature is visible.
+
+Everything flows through the one `EbookHtmlBuilder` + `ebook.css`, so opener pages
+and the cover render identically in the editor preview and the PDF. Unit-tested in
+`DocumentComposerTest` / `EbookHtmlBuilderTest`.
 
 ## Content design system
 

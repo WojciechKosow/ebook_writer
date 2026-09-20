@@ -602,3 +602,160 @@ th {
     border: 1.5px solid #6b6b6b;
     border-radius: 2px;
 }
+
+/* ===========================================================================
+   Cover visual concept (typographic cover only)
+   An art-directed element derived from the book's structure — a large program
+   numeral for a multi-day/step book, otherwise the title's initial as a ghosted
+   monogram. Set low and quiet so the title hierarchy stays dominant.
+   =========================================================================== */
+.cover-visual {
+    position: absolute;
+    right: 1.5cm;
+    bottom: 2.6cm;
+    text-align: right;
+}
+.cover-numeral {
+    font-family: "Ebook Sans";
+    font-size: 150pt;
+    font-weight: bold;
+    line-height: 0.8;
+    letter-spacing: -0.03em;
+    color: #e4dfd3;
+}
+.cover-numeral-label {
+    font-family: "Ebook Sans";
+    font-size: 11pt;
+    font-weight: bold;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: #b8b0a0;
+    margin-top: 0.2cm;
+    margin-right: 0.1cm;
+}
+.cover-monogram {
+    font-family: "Ebook Serif";
+    font-size: 150pt;
+    line-height: 0.8;
+    color: #e7e2d6;
+}
+.cover-byline {
+    font-family: "Ebook Sans";
+    font-size: 10.5pt;
+    letter-spacing: 0.04em;
+    color: #6f6a5c;
+    margin-top: 0.8cm;
+}
+.cover--with-image .cover-byline { color: rgba(255, 255, 255, 0.85); }
+
+/* Subtle publisher imprint at the foot of the cover. */
+.cover-imprint {
+    position: absolute;
+    left: 1.7cm;
+    bottom: 1.4cm;
+    font-family: "Ebook Sans";
+    font-size: 8pt;
+    font-weight: bold;
+    letter-spacing: 0.32em;
+    color: #b8b0a0;
+}
+.cover--with-image .cover-imprint {
+    left: 1.5cm;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* ===========================================================================
+   Full-page openers (chapter / day-step dividers)
+   A dedicated page that separates a major section from the previous one. The
+   composer (DocumentComposer) only emits these when the book is substantial and
+   the page budget affords the extra page — short books use the band opener below.
+   =========================================================================== */
+@page opener {
+    @bottom-center { content: ""; }
+}
+.opener {
+    page: opener;
+    page-break-before: always;
+    page-break-after: always;
+    padding-top: 4.2cm;
+}
+.opener-numeral {
+    font-family: "Ebook Sans";
+    font-size: 82pt;
+    font-weight: bold;
+    line-height: 0.9;
+    letter-spacing: -0.03em;
+    color: #e4dfd3;
+    margin-bottom: 0.4cm;
+}
+.opener-label {
+    font-family: "Ebook Sans";
+    font-size: 10pt;
+    font-weight: bold;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    color: #8a8377;
+    margin-bottom: 0.5em;
+}
+.opener-title {
+    font-family: "Ebook Sans";
+    font-size: 30pt;
+    font-weight: bold;
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    color: #14110d;
+    margin: 0 0 0.7cm 0;
+    max-width: 12cm;
+}
+.opener-meta {
+    display: inline-block;
+    white-space: nowrap;
+    font-family: "Ebook Sans";
+    font-size: 8.5pt;
+    font-weight: bold;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #6b6b6b;
+    border: 1px solid #d3ccbd;
+    border-radius: 999px;
+    padding: 0.25em 0.9em;
+    margin-bottom: 0.7cm;
+}
+.opener--unit .opener-meta {
+    color: #1f6b4f;
+    border-color: #bcd8c9;
+}
+.opener-statement {
+    font-family: "Ebook Serif";
+    font-style: italic;
+    font-size: 13.5pt;
+    line-height: 1.5;
+    color: #55503f;
+    max-width: 11cm;
+}
+.opener-statement:before {
+    content: "";
+    display: block;
+    width: 1.4cm;
+    border-top: 2px solid #1a1a1a;
+    margin-bottom: 0.6cm;
+}
+/* The body that follows an opener page starts a fresh page but adds no divider
+   of its own (the opener was the divider). */
+.chapter-continued { }
+
+/* A unit's band opener (compact books) carries the same day/step meta chip. */
+.chapter-meta {
+    display: inline-block;
+    white-space: nowrap;
+    font-family: "Ebook Sans";
+    font-size: 8pt;
+    font-weight: bold;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #1f6b4f;
+    border: 1px solid #bcd8c9;
+    border-radius: 999px;
+    padding: 0.2em 0.8em;
+    margin: 0.1em 0 0.6em 0;
+}

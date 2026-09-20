@@ -6,7 +6,10 @@ import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.entity.EbookImagePlacement;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * Assembles the final book HTML: an editorial cover, a real table of contents
@@ -51,18 +54,21 @@ public class EbookHtmlBuilder {
     public String build(Ebook ebook, List<EbookChapter> chapters, String css,
                         List<EbookImage> images) {
 
-        String title = orDefault(ebook.getTitle(), ebook.getTopic());
-        String subtitle = ebook.getSubtitle();
         EbookImage cover = coverImage(images);
+        List<DocumentComposer.ChapterLayout> layouts = DocumentComposer.compose(ebook, chapters);
+        Map<Integer, DocumentComposer.ChapterLayout> layoutByNumber = new HashMap<>();
+        for (DocumentComposer.ChapterLayout l : layouts) {
+            layoutByNumber.put(l.chapterNumber(), l);
+        }
 
         StringBuilder html = new StringBuilder(64 * 1024);
         html.append("<html><head><meta charset=\"UTF-8\"/><style>")
                 .append(css)
                 .append("</style></head><body>");
 
-        appendCover(html, title, subtitle, ebook.getTopic(), cover);
+        appendCover(html, ebook, cover);
         appendTableOfContents(html, chapters);
-        appendChapters(html, chapters);
+        appendChapters(html, chapters, layoutByNumber);
 
         html.append("</body></html>");
         return html.toString();
@@ -79,8 +85,11 @@ public class EbookHtmlBuilder {
      * {@code ebook-image:} reference so it flows through the same rewrite (PDF) /
      * inline (preview) as chapter images.
      */
-    private void appendCover(StringBuilder html, String title, String subtitle,
-                             String topic, EbookImage cover) {
+    private void appendCover(StringBuilder html, Ebook ebook, EbookImage cover) {
+        String title = orDefault(ebook.getTitle(), ebook.getTopic());
+        String subtitle = ebook.getSubtitle();
+        String author = ebook.getAuthorName();
+
         html.append("<div class=\"cover")
                 .append(cover != null ? " cover--with-image" : " cover--typographic")
                 .append("\">");
@@ -88,15 +97,61 @@ public class EbookHtmlBuilder {
             html.append("<img class=\"cover-bg\" src=\"")
                     .append(cover.markdownRef())
                     .append("\" alt=\"\"/>");
+        } else {
+            // An art-directed visual concept derived from the book's structure —
+            // a large program numeral for a multi-day/step book, otherwise the
+            // title's initial as a ghosted monogram. Deterministic, on-brand, and
+            // never a generic AI stock image.
+            appendCoverVisual(html, ebook);
         }
         html.append("<div class=\"cover-overlay\">");
-        html.append("<div class=\"cover-eyebrow\">").append(escape(eyebrow(topic))).append("</div>");
+        html.append("<div class=\"cover-eyebrow\">").append(escape(eyebrow(ebook.getTopic()))).append("</div>");
         html.append("<div class=\"book-title\">").append(escape(title)).append("</div>");
         if (isNotBlank(subtitle)) {
             html.append("<div class=\"book-subtitle\">").append(escape(subtitle)).append("</div>");
         }
+        if (isNotBlank(author)) {
+            html.append("<div class=\"cover-byline\">by ").append(escape(author.strip())).append("</div>");
+        }
         html.append("</div>");
+        // Subtle publisher imprint — small, letter-spaced, at the foot.
+        html.append("<div class=\"cover-imprint\">SCRIVETTE</div>");
         html.append("</div>");
+    }
+
+    /** The typographic cover's visual concept (large numeral or monogram). */
+    private void appendCoverVisual(StringBuilder html, Ebook ebook) {
+        Optional<StructureRequirement> structure = StructureRequirement.detect(ebook);
+        if (structure.isPresent()) {
+            StructureRequirement s = structure.get();
+            html.append("<div class=\"cover-visual cover-visual--numeral\">")
+                    .append("<div class=\"cover-numeral\">").append(s.count()).append("</div>")
+                    .append("<div class=\"cover-numeral-label\">")
+                    .append(escape(s.unit().toUpperCase(java.util.Locale.ROOT)))
+                    .append(s.count() == 1 ? "" : "S").append("</div>")
+                    .append("</div>");
+        } else {
+            String monogram = monogram(orDefault(ebook.getTitle(), ebook.getTopic()));
+            if (!monogram.isBlank()) {
+                html.append("<div class=\"cover-visual cover-visual--monogram\">")
+                        .append("<div class=\"cover-monogram\">").append(escape(monogram)).append("</div>")
+                        .append("</div>");
+            }
+        }
+    }
+
+    /** The first letter of the book's title, uppercased — its cover monogram. */
+    private static String monogram(String title) {
+        if (title == null) {
+            return "";
+        }
+        for (int i = 0; i < title.length(); i++) {
+            char c = title.charAt(i);
+            if (Character.isLetterOrDigit(c)) {
+                return String.valueOf(Character.toUpperCase(c));
+            }
+        }
+        return "";
     }
 
     /**
@@ -180,32 +235,98 @@ public class EbookHtmlBuilder {
 
     // ---- Chapters -----------------------------------------------------------
 
-    private void appendChapters(StringBuilder html, List<EbookChapter> chapters) {
-        int displayNum = 1;
+    private void appendChapters(StringBuilder html, List<EbookChapter> chapters,
+                                Map<Integer, DocumentComposer.ChapterLayout> layouts) {
+        int displayNum = 0;
         for (EbookChapter c : chapters) {
             if (isBlank(c.getContent())) {
                 continue;
             }
-            String anchor = "chapter-" + c.getChapterNumber();
-            html.append("<div class=\"chapter\" id=\"").append(anchor).append("\">")
-                    .append("<div class=\"chapter-opener\">")
-                    .append("<div class=\"chapter-num\">Chapter ").append(displayNum++).append("</div>")
-                    .append("<h1 class=\"chapter-title\">")
-                    .append(escape(orDefault(c.getTitle(), ""))).append("</h1>");
-            if (isNotBlank(c.getDescription())) {
-                html.append("<div class=\"chapter-intro\">")
-                        .append(escape(c.getDescription().strip()))
-                        .append("</div>");
+            displayNum++;
+            DocumentComposer.ChapterLayout layout = layouts.get(c.getChapterNumber());
+            if (layout != null && layout.style() == DocumentComposer.OpenerStyle.FULL_PAGE) {
+                appendFullPageOpener(html, c, layout);
+            } else {
+                appendBandChapter(html, c, layout, displayNum);
             }
-            html.append("<div class=\"chapter-rule\"></div>")
-                    .append("</div>")
-                    .append("<div class=\"chapter-body\">")
-                    .append(contentRenderer.toHtml(c.getContent()))
-                    .append("</div></div>");
         }
     }
 
+    /**
+     * A dedicated opener page (label, big numeral, title, statement), followed by
+     * the chapter body on the next page. The TOC anchor lives on the opener so the
+     * contents page points at the divider — the reader's entry to the section.
+     */
+    private void appendFullPageOpener(StringBuilder html, EbookChapter c,
+                                      DocumentComposer.ChapterLayout layout) {
+        String anchor = "chapter-" + c.getChapterNumber();
+        html.append("<div class=\"opener")
+                .append(layout.unit() ? " opener--unit" : " opener--chapter")
+                .append("\" id=\"").append(anchor).append("\">")
+                .append("<div class=\"opener-numeral\">").append(escape(layout.numeral())).append("</div>")
+                .append("<div class=\"opener-label\">").append(escape(layout.label())).append("</div>")
+                .append("<h1 class=\"opener-title\">")
+                .append(escape(displayTitle(c.getTitle(), layout.unit()))).append("</h1>");
+        if (layout.meta() != null) {
+            html.append("<div class=\"opener-meta\">").append(escape(layout.meta())).append("</div>");
+        }
+        if (layout.statement() != null) {
+            html.append("<div class=\"opener-statement\">").append(escape(layout.statement())).append("</div>");
+        }
+        html.append("</div>");
+        // Body begins on the page after the opener (no page-break-before of its own).
+        html.append("<div class=\"chapter-continued\">")
+                .append("<div class=\"chapter-body\">")
+                .append(contentRenderer.toHtml(c.getContent()))
+                .append("</div></div>");
+    }
+
+    /** A strong opener band at the top of the content page (the compact default). */
+    private void appendBandChapter(StringBuilder html, EbookChapter c,
+                                   DocumentComposer.ChapterLayout layout, int displayNum) {
+        String anchor = "chapter-" + c.getChapterNumber();
+        boolean unit = layout != null && layout.unit();
+        String label = layout != null ? layout.label() : "Chapter " + displayNum;
+        html.append("<div class=\"chapter")
+                .append(unit ? " chapter--unit" : "")
+                .append("\" id=\"").append(anchor).append("\">")
+                .append("<div class=\"chapter-opener\">")
+                .append("<div class=\"chapter-num\">").append(escape(label)).append("</div>")
+                .append("<h1 class=\"chapter-title\">")
+                .append(escape(displayTitle(c.getTitle(), unit))).append("</h1>");
+        if (layout != null && layout.meta() != null) {
+            html.append("<div class=\"chapter-meta\">").append(escape(layout.meta())).append("</div>");
+        }
+        if (isNotBlank(c.getDescription())) {
+            html.append("<div class=\"chapter-intro\">")
+                    .append(escape(c.getDescription().strip()))
+                    .append("</div>");
+        }
+        html.append("<div class=\"chapter-rule\"></div>")
+                .append("</div>")
+                .append("<div class=\"chapter-body\">")
+                .append(contentRenderer.toHtml(c.getContent()))
+                .append("</div></div>");
+    }
+
     // ---- Helpers ------------------------------------------------------------
+
+    /**
+     * The title as shown on an opener. For a program-unit chapter the opener's
+     * label already says "DAY 01", so a leading "Day 1 —" in the title is stripped
+     * to avoid the redundancy; if stripping would empty the title, the original is
+     * kept. Non-unit titles are returned unchanged.
+     */
+    static String displayTitle(String title, boolean unit) {
+        String t = orDefault(title, "");
+        if (!unit || t.isBlank()) {
+            return t;
+        }
+        String stripped = t.replaceFirst(
+                "(?i)^\\s*(?:the\\s+)?(?:day|week|month|step|part|stage|phase|module|lesson|session)"
+                        + "\\s+(?:\\d{1,3}|[ivxlcdm]{1,7})\\s*[-–—:.)]*\\s*", "").strip();
+        return stripped.isBlank() ? t : stripped;
+    }
 
     /** The book's cover image, or null if none is placed as the cover. */
     private static EbookImage coverImage(List<EbookImage> images) {
