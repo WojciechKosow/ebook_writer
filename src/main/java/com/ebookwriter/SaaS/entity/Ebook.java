@@ -96,8 +96,15 @@ public class Ebook {
      * (charge the actual pages, refund the unused reservation). Makes the final
      * billing idempotent: a retried or duplicated settlement is a no-op, so
      * credits are never charged twice for the same ebook.
+     *
+     * <p>{@code columnDefinition} carries a DB-level {@code default false} so that
+     * adding this column to a table that already has ebook rows (schema auto-update
+     * in production) back-fills the existing rows instead of failing the NOT NULL
+     * constraint. Already-completed ebooks are thus treated as not-yet-reconciled,
+     * which is harmless: they never re-enter the billing pipeline.
      */
     @Builder.Default
+    @Column(nullable = false, columnDefinition = "boolean not null default false")
     private boolean creditsReconciled = false;
 
     // ---- Plan-derived metadata ----------------------------------------------
