@@ -22,7 +22,12 @@ public class EbookRequest {
 
     private String style;
 
-    /** Desired approximate length, in pages. Used as a soft target. */
+    /**
+     * The <b>target length</b>, in pages — the expected size of the ebook, not a
+     * guaranteed final page count. The AI can't hit an exact number, so the book
+     * may finish a little shorter or longer. Credits are charged on the real
+     * final page count (1 credit = 1 final page), not on this target.
+     */
     @Min(1)
     @Max(500)
     private int approxPageCount;

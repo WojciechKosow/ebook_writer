@@ -103,14 +103,18 @@ public class EbookGenerationService {
             assetUsageService.sync(ebookId, ContentSource.AI);
 
             // Step 4 — render PDF and learn the real page count. The reserved
-            // page budget is a hard ceiling: an over-length book is trimmed to
-            // fit rather than delivered (and billed) beyond what the user paid.
+            // ceiling (target + allowed overdraft, capped so the balance can't
+            // fall below -maxOverdraft) is a hard limit: a runaway book is trimmed
+            // at a paragraph boundary to fit rather than driving the balance past
+            // the overdraft floor. A natural ending a little over target renders
+            // in full — the ceiling only bites the genuine overshoot.
             updateStatus(ebookId, EbookStatus.RENDERING, 96);
             int pageBudget = ebookRepository.findById(ebookId).map(Ebook::getPageBudget).orElse(0);
             int actualPages = pdfGenerationService.renderAndStore(ebookId, pageBudget);
 
-            // Step 5 — true up the up-front hold to what was actually produced:
-            // charge for real pages, refund the unused reservation.
+            // Step 5 — true up the up-front hold to the real page count: charge for
+            // exactly the pages rendered (1 credit = 1 final page) and refund the
+            // unused reservation. Idempotent, so a retry never charges twice.
             reconcileCredits(ebookId, actualPages);
 
             updateStatus(ebookId, EbookStatus.COMPLETED, 100);
@@ -124,12 +128,21 @@ public class EbookGenerationService {
 
     /**
      * True up the reserved hold to the real page count. The final charge is the
-     * actual number of pages, clamped to {@code [1, pageBudget]} — we never
-     * charge more than the user reserved, and never nothing for a produced book.
-     * Any unused reservation is refunded. Idempotent enough for the happy path:
-     * it runs once, right after a successful render.
+     * actual number of pages rendered (1 credit = 1 final page), clamped to
+     * {@code [1, pageBudget]} — the ceiling was reserved so this never charges
+     * past {@code -maxOverdraft}, and a produced book always costs at least one
+     * credit. Any unused reservation is refunded.
+     *
+     * <p><b>Idempotent.</b> The true-up is claimed atomically via
+     * {@link EbookRepository#markReconciled}; a second attempt (a retried worker,
+     * a re-run generation) is a no-op, so credits are never charged twice for the
+     * same ebook.
      */
     private void reconcileCredits(UUID ebookId, int actualPages) {
+        if (ebookRepository.markReconciled(ebookId) == 0) {
+            log.info("Ebook {} already reconciled — skipping duplicate billing", ebookId);
+            return;
+        }
         ebookRepository.findById(ebookId).ifPresent(ebook -> {
             int budget = ebook.getPageBudget();
             int finalCharge = reconciledCharge(actualPages, budget);
@@ -150,9 +163,12 @@ public class EbookGenerationService {
     }
 
     /**
-     * The credits a finished book is billed: the real page count, but never more
-     * than the reserved budget (the user only authorised that much) and never
-     * less than 1 (a produced book always costs at least one credit).
+     * The credits a finished book is billed: the real page count (1 credit =
+     * 1 final page), never more than the reserved ceiling (which was sized so the
+     * balance cannot fall below {@code -maxOverdraft}) and never less than 1
+     * (a produced book always costs at least one credit). Because the ceiling is
+     * {@code target + overdraft}, this charges the true length even when it
+     * exceeds the requested target.
      */
     static int reconciledCharge(int actualPages, int budget) {
         return Math.max(1, Math.min(actualPages, budget));
@@ -179,8 +195,14 @@ public class EbookGenerationService {
                 ebook.setStatus(EbookStatus.FAILED);
                 ebook.setErrorMessage(truncate(e.getMessage()));
 
-                // Refund the credits charged for a generation that didn't finish.
-                if (ebook.getCreditsCharged() > 0 && !ebook.isCreditsRefunded()) {
+                // Refund the full up-front hold for a generation that didn't
+                // finish: no final PDF means no real pages to bill, so the user
+                // pays nothing. Skip once billing has already been reconciled (a
+                // rendered, billed book) or already refunded, so we never refund
+                // twice.
+                if (ebook.getCreditsCharged() > 0
+                        && !ebook.isCreditsRefunded()
+                        && !ebook.isCreditsReconciled()) {
                     ebookRepository.findUserIdById(ebookId).ifPresent(userId -> {
                         creditService.refundGeneration(userId, ebook.getCreditsCharged(), ebookId);
                         ebook.setCreditsRefunded(true);

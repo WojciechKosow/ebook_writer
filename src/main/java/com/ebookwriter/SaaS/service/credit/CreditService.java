@@ -72,6 +72,65 @@ public class CreditService {
         log.info("Spent {} credits for user {} ({}), balance now {}", amount, userId, type, wallet.getBalance());
     }
 
+    /**
+     * The smallest balance a user may have and still <em>start</em> a generation.
+     * Overdraft is a tolerance for a book that finishes slightly longer than
+     * expected — not a way to generate with an empty (or negative) wallet — so a
+     * user must hold at least one credit to begin.
+     */
+    static final int MIN_BALANCE_TO_START = 1;
+
+    /**
+     * Reserve the up-front credit hold for a generation, with overdraft.
+     *
+     * <p>The requested page count is only a <b>target</b>: the model can't
+     * guarantee an exact length, and 1 credit = 1 <em>final</em> page, so the real
+     * cost is only known once the PDF is rendered. We therefore reserve a
+     * <b>ceiling</b> — the most pages this book may render and the most credits it
+     * may cost — computed as {@code min(targetPages, balance) + maxOverdraft}:
+     * <ul>
+     *   <li>it lets the book run up to {@code maxOverdraft} pages past what the
+     *       user can strictly afford (the allowed overdraft), so a natural ending
+     *       a little over target is honoured rather than cut short;</li>
+     *   <li>it is target-bounded, so a large balance is not drained by one book
+     *       (a user can still run several generations at once);</li>
+     *   <li>and it can never drive the balance below {@code -maxOverdraft}: since
+     *       the reserved amount never exceeds {@code balance + maxOverdraft}, the
+     *       post-hold balance is always {@code >= -maxOverdraft}.</li>
+     * </ul>
+     *
+     * <p>Race-safe: the wallet is taken under the same pessimistic lock as
+     * {@link #spend}, so two concurrent starts serialise and the second sees the
+     * balance the first already drew down. The unused part of the hold is returned
+     * by {@link #refundUnusedHold} once the real page count is known.
+     *
+     * @return the reserved page ceiling (also the credits held)
+     * @throws InsufficientCreditsException if the balance is below {@link #MIN_BALANCE_TO_START}
+     */
+    @Transactional
+    public int reserveGenerationHold(UUID userId, UUID ebookId, int targetPages) {
+        int target = Math.max(1, targetPages);
+        int maxOverdraft = Math.max(0, creditProperties.getMaxOverdraft());
+        CreditBalance wallet = lockOrCreateWallet(userId);
+        int balance = wallet.getBalance();
+
+        if (balance < MIN_BALANCE_TO_START) {
+            throw new InsufficientCreditsException(MIN_BALANCE_TO_START, balance);
+        }
+
+        // Ceiling = min(target, balance) + overdraft. Guarantees balance - hold >=
+        // -maxOverdraft, so the floor is never breached however long the book runs.
+        int hold = Math.min(target, balance) + maxOverdraft;
+        wallet.setBalance(balance - hold);
+        balanceRepository.save(wallet);
+        writeLedger(userId, CreditTransactionType.GENERATION, -hold, wallet.getBalance(), ebookId, null, null,
+                "Ebook generation hold (target " + target + " pages, ceiling " + hold
+                        + ", overdraft " + maxOverdraft + ")");
+        log.info("Reserved generation hold of {} credits for user {} (target {}, balance {} -> {})",
+                hold, userId, target, balance, wallet.getBalance());
+        return hold;
+    }
+
     /** Grant credits (subscription, purchase, refund, signup bonus). */
     @Transactional
     public void grant(UUID userId, int amount, CreditTransactionType type,

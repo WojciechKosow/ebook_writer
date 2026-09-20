@@ -43,14 +43,16 @@ public class BookPlanningService {
         Ebook ebook = ebookRepository.findById(ebookId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found: " + ebookId));
 
-        // The reserved page budget is a hard ceiling: the model's plan may not
-        // sum to more pages than this, or we'd generate (and pay for) more than
-        // the user authorised. Fall back to the requested count for legacy rows.
+        // The reserved ceiling (target + allowed overdraft, capped so the balance
+        // can't fall below -maxOverdraft) is a hard maximum: the plan may not sum
+        // to more pages than this, so a generation can't run away past the
+        // overdraft floor. Fall back to the requested count for legacy rows.
         int pageBudget = ebook.getPageBudget() > 0 ? ebook.getPageBudget()
                 : Math.max(1, ebook.getApproxPageCount());
 
-        // Aim for the length the user actually asked for; the reserved budget is
-        // only a ceiling for the headroom. The cover and table of contents cost
+        // Aim for the length the user actually asked for (the target); the reserved
+        // ceiling is only the upper bound for overshoot. The cover and table of
+        // contents cost
         // pages too, so both are expressed in content pages (minus front matter).
         int requestedPages = Math.max(1, ebook.getApproxPageCount());
         int frontMatter = EbookHtmlBuilder.FRONT_MATTER_PAGES;
