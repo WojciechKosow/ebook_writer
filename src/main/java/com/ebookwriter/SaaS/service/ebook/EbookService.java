@@ -84,6 +84,7 @@ public class EbookService {
                 .language(blankToEnglish(request.getLanguage()))
                 .additionalInstructions(request.getAdditionalInstructions())
                 .sourceMaterial(request.getSourceMaterial())
+                .authorName(request.getAuthorName())
                 .status(EbookStatus.DRAFT)
                 .progress(0)
                 .build();

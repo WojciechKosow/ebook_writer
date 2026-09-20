@@ -34,4 +34,7 @@ public class EbookRequest {
 
     /** Optional examples or source material to ground the book. */
     private String sourceMaterial;
+
+    /** Optional author/creator name to print on the cover. */
+    private String authorName;
 }
