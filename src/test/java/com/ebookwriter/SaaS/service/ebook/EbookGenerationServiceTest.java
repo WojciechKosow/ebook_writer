@@ -5,30 +5,39 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * The money rule for reconciling a finished book: bill the real page count, but
- * never above the reserved budget and never below one credit.
+ * The money rule for reconciling a finished book: bill the real final page count
+ * (1 credit = 1 final page), never above the reserved ceiling (which was sized so
+ * the balance can't fall below -maxOverdraft) and never below one credit.
  */
 class EbookGenerationServiceTest {
 
     @Test
-    void chargesActualPagesWhenUnderBudget() {
-        // Reserved 60 (e.g. asked 50, +20% headroom), book came in at 42 pages.
-        assertEquals(42, EbookGenerationService.reconciledCharge(42, 60));
+    void chargesActualPagesWhenUnderTheCeiling() {
+        // Target 15, ceiling 25 (target + overdraft): a 13-page book costs 13.
+        assertEquals(13, EbookGenerationService.reconciledCharge(13, 25));
     }
 
     @Test
-    void neverChargesMoreThanTheReservedBudget() {
-        // Even if the model overshot the clamp, the user only authorised 60.
-        assertEquals(60, EbookGenerationService.reconciledCharge(75, 60));
+    void chargesTheRealLengthEvenWhenItExceedsTheTarget() {
+        // Target 15 but the book naturally ran to 20 pages; the user pays for 20,
+        // not the target — 1 credit = 1 final page.
+        assertEquals(20, EbookGenerationService.reconciledCharge(20, 25));
     }
 
     @Test
-    void chargesExactlyBudgetWhenPagesEqualBudget() {
-        assertEquals(60, EbookGenerationService.reconciledCharge(60, 60));
+    void neverChargesMoreThanTheReservedCeiling() {
+        // A runaway is trimmed to the ceiling before it can breach the overdraft
+        // floor, so it is billed at the ceiling (e.g. 25), never the raw overshoot.
+        assertEquals(25, EbookGenerationService.reconciledCharge(30, 25));
+    }
+
+    @Test
+    void chargesExactlyTheCeilingWhenPagesEqualIt() {
+        assertEquals(25, EbookGenerationService.reconciledCharge(25, 25));
     }
 
     @Test
     void aProducedBookAlwaysCostsAtLeastOneCredit() {
-        assertEquals(1, EbookGenerationService.reconciledCharge(0, 60));
+        assertEquals(1, EbookGenerationService.reconciledCharge(0, 25));
     }
 }

@@ -381,51 +381,74 @@ Three ways to run it, cheapest to best:
 
 ## Page-count handling & billing
 
-Pages are money: 1 credit ≈ 1 page, so the page count is a **hard budget**, not
-a soft target.
+**1 credit = 1 final generated page.** The AI cannot guarantee an exact page
+count — ask for 15 and the finished book might be 13, 17, or 22 — so the
+requested count is only a **target length**, never the price. The real cost is
+read back from the rendered PDF, and the user pays for the pages they actually
+got. We never tell the user "15 pages = 15 credits", because we can't promise
+exactly 15 pages.
 
-1. **Reserve a budget up front.** A draft holds no credits. On **start** we don't
-   charge the raw requested count — we reserve `min(requestedPages + tolerance,
-   balance)` credits as a hold (`credits.page-budget-tolerance`, default `+20%`).
-   This is the ceiling generation may reach, and it can never exceed what the user
-   can pay. If starting can't secure the hold, the ebook stays a `DRAFT` (its
-   uploaded assets are kept) so the user can top up and retry.
-2. **Aim for the requested length, cap at the budget.** Two pages are always
-   spent on front matter (cover + table of contents,
-   `EbookHtmlBuilder.FRONT_MATTER_PAGES`), so content is sized in *content
-   pages* = pages − front matter. The planner is told to **aim for** the
-   requested length and that the reserved budget is a **hard maximum**;
-   `BookPlanningService` enforces the ceiling regardless, scaling chapter
-   `approxPages` down (and dropping extra chapters) so their sum can't exceed it.
+To make the real length payable without a runaway bill, the balance may go a
+little negative: a small **overdraft**, capped centrally at
+`credits.max-overdraft` (`CREDITS_MAX_OVERDRAFT`, default **10**). The lowest a
+balance can ever reach from generation is `-10`.
+
+1. **Reserve an overdraft-aware ceiling up front.** A draft holds no credits. On
+   **start** (`CreditService.reserveGenerationHold`) we don't charge the target —
+   we reserve `min(targetPages, balance) + maxOverdraft` credits as a hold. This
+   ceiling (a) lets a book run up to `maxOverdraft` pages past what the user can
+   strictly afford, honouring a natural ending a little over target; (b) is
+   target-bounded, so a large balance isn't drained by one book; and (c) can never
+   drive the balance below `-maxOverdraft` (`balance − hold ≥ −maxOverdraft`). The
+   only precondition to start is holding **at least one credit** — we no longer
+   reject just because the balance is below the requested target. The DRAFT →
+   PENDING transition is claimed atomically (`EbookRepository.claimForStart`) so a
+   double-click / retry / refresh can never reserve two holds.
+2. **Aim for the target, cap at the ceiling.** Two pages are always spent on front
+   matter (cover + table of contents, `EbookHtmlBuilder.FRONT_MATTER_PAGES`), so
+   content is sized in *content pages* = pages − front matter. The planner is told
+   to **aim for** the target length; `BookPlanningService` enforces the reserved
+   ceiling as a hard maximum, scaling chapter `approxPages` down (and dropping
+   extra chapters) so their sum can't exceed it.
 3. **Size words to the real layout.** Chapter word targets use
    `WORDS_PER_PAGE ≈ 200` — the number of words that actually fit on a page in
    the 6×9" layout, measured against the real PDF pipeline
-   (`WordsPerPageCalibrationTest`). The previous `450` estimate was ~2× too high
-   and made every book render 2–3× over its requested length.
-4. **Hard-cap the delivered book.** After rendering, the true page count is read
-   from the PDF (`PDDocument.getNumberOfPages()`). If it still exceeds the budget
-   (the model overshot), trailing content is trimmed and the book re-rendered — a
-   cheap, API-free loop — until it fits; trimmed chapters are persisted so the
-   stored manuscript matches the PDF.
-5. **Bill the real page count.** The hold is trued up: the user is charged for
-   exactly the pages produced (clamped to `[1, budget]`) and the unused
-   reservation is refunded as a `GENERATION_ADJUSTMENT` ledger entry.
-   `Ebook.actualPageCount` records the result.
+   (`WordsPerPageCalibrationTest`). This keeps the natural length close to the
+   target so the overshoot the ceiling has to trim is small.
+4. **Stop a runaway at the ceiling.** After rendering, the true page count is read
+   from the PDF (`PDDocument.getNumberOfPages()`). A natural ending above the
+   target renders in full. Only if the book exceeds the reserved ceiling (a genuine
+   runaway that would breach the overdraft floor) is trailing content trimmed — at
+   a **paragraph boundary**, never mid-sentence — and the book re-rendered, a
+   cheap API-free loop, until it fits; trimmed chapters are persisted so the stored
+   manuscript matches the PDF.
+5. **Bill the real page count, idempotently.** The hold is trued up
+   (`EbookGenerationService.reconcileCredits`): the user is charged for exactly the
+   pages rendered (clamped to `[1, ceiling]`) and the unused reservation is refunded
+   as a `GENERATION_ADJUSTMENT` ledger entry, leaving the balance at
+   `balanceAtStart − actualPages`. `Ebook.actualPageCount` records the result. The
+   true-up is claimed atomically (`EbookRepository.markReconciled`), so a retried
+   worker or re-run generation is a no-op — credits are never charged twice for the
+   same ebook. A generation that **fails before a PDF exists** refunds the whole
+   hold (no real pages ⇒ no charge), guarded by `creditsRefunded` /
+   `creditsReconciled` so a refund never stacks with the true-up.
 
-Together these close the gap where a book overran its requested length — a
-5-page request rendering ~18–30 pages — while we billed only the requested
-count and ate the difference. We now aim for what the user asked, never deliver
-(or generate) past what they reserved, and pay for and charge the same number of
-pages.
+**Worked examples** (`maxOverdraft = 10`):
 
-> **Structure vs. the hard trim.** The trim removes trailing content to fit the
-> budget, so a promised structure must be *planned* to fit — that is why
-> `StructureRequirement` steers the outline and word sizing up front (step 2/3),
-> rather than relying on the trim to be structure-aware. With a right-sized plan
-> the trim rarely fires; when it does it only shaves a few trailing paragraphs.
-> A book whose promised structure genuinely cannot fit the reserved budget is
-> surfaced as a planning warning (raise the page budget) rather than silently
-> delivered half-finished.
+| Balance | Target | Final pages | Charged | Balance after |
+|--------:|-------:|------------:|--------:|--------------:|
+| 100 | 15 | 13 | 13 | 87 |
+| 100 | 15 | 15 | 15 | 85 |
+| 15 | 15 | 20 | 20 | −5 |
+| 15 | 15 | 25 | 25 | −10 |
+| 15 | 15 | (would be 30) | 25 | −10 *(trimmed to the ceiling)* |
+
+> **Structure vs. the trim.** The trim removes trailing content to fit the
+> ceiling, so a promised structure must be *planned* to fit — that is why
+> `StructureRequirement` steers the outline and word sizing up front (step 2/3).
+> With a right-sized plan the trim rarely fires; when it does it only shaves a few
+> trailing paragraphs. A book whose promised structure genuinely cannot fit is
+> surfaced as a planning warning rather than silently delivered half-finished.
 
 ## Not yet (deliberately)
 

@@ -81,6 +81,69 @@ class CreditServiceTest {
     }
 
     @Test
+    void reserveGenerationHoldReservesTargetPlusOverdraftAndMayGoNegative() {
+        UUID user = UUID.randomUUID();
+        UUID ebook = UUID.randomUUID();
+        creditService.grant(user, 15, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");
+
+        // Target 15 with a balance of 15: ceiling = min(15,15) + 10 overdraft = 25.
+        int hold = creditService.reserveGenerationHold(user, ebook, 15);
+
+        assertEquals(25, hold);
+        assertEquals(-10, creditService.getBalance(user), "hold drives the balance down to exactly -maxOverdraft");
+
+        CreditTransaction tx = creditService.recentTransactions(user).get(0);
+        assertEquals(CreditTransactionType.GENERATION, tx.getType());
+        assertEquals(-25, tx.getAmount());
+        assertEquals(-10, tx.getBalanceAfter());
+    }
+
+    @Test
+    void reserveGenerationHoldIsTargetBoundedSoALargeBalanceIsNotDrained() {
+        UUID user = UUID.randomUUID();
+        creditService.grant(user, 100, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");
+
+        // A 15-page target never reserves more than target + overdraft, so a rich
+        // wallet keeps plenty for other generations.
+        int hold = creditService.reserveGenerationHold(user, UUID.randomUUID(), 15);
+
+        assertEquals(25, hold);
+        assertEquals(75, creditService.getBalance(user));
+    }
+
+    @Test
+    void reserveGenerationHoldNeverDrivesBelowMaxOverdraft() {
+        UUID user = UUID.randomUUID();
+        creditService.grant(user, 5, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");
+
+        // Balance 5, target 15: ceiling = min(15,5) + 10 = 15, so the floor (-10)
+        // is respected even though the target is far above the balance.
+        int hold = creditService.reserveGenerationHold(user, UUID.randomUUID(), 15);
+
+        assertEquals(15, hold);
+        assertEquals(-10, creditService.getBalance(user));
+    }
+
+    @Test
+    void reserveGenerationHoldRequiresAtLeastOneCreditToStart() {
+        UUID user = UUID.randomUUID();
+
+        // A brand-new wallet (balance 0) cannot start a generation — overdraft is a
+        // tolerance for overshoot, not a way to generate for free.
+        InsufficientCreditsException ex = assertThrows(
+                InsufficientCreditsException.class,
+                () -> creditService.reserveGenerationHold(user, UUID.randomUUID(), 15));
+        assertEquals(1, ex.getRequired());
+        assertEquals(0, creditService.getBalance(user), "a rejected reservation changes nothing");
+
+        // A second generation while already overdrawn is likewise refused.
+        creditService.grant(user, 15, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");
+        creditService.reserveGenerationHold(user, UUID.randomUUID(), 15); // -> -10
+        assertThrows(InsufficientCreditsException.class,
+                () -> creditService.reserveGenerationHold(user, UUID.randomUUID(), 15));
+    }
+
+    @Test
     void spendingMoreThanBalanceIsRejectedAndChangesNothing() {
         UUID user = UUID.randomUUID();
         creditService.grant(user, 20, CreditTransactionType.CREDIT_PURCHASE, null, null, "buy");

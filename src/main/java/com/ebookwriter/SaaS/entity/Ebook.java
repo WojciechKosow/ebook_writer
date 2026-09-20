@@ -69,23 +69,36 @@ public class Ebook {
     /**
      * Credits the user ultimately pays for this generation. Starts equal to the
      * reserved {@link #pageBudget} (the up-front hold) and is trued up to the
-     * real rendered page count once generation finishes.
+     * real rendered page count once generation finishes — because 1 credit =
+     * 1 <em>final</em> page, this is the actual page count, not the target.
      */
     private int creditsCharged;
 
     /**
-     * Page ceiling reserved for this generation (1 credit = 1 page): the most
-     * pages we will produce and the most credits we may charge. Generation is
-     * capped to this so we never spend on more pages than the user authorised.
+     * The generation ceiling reserved as the up-front hold: the most pages this
+     * book may render and the most credits it may cost. Computed as
+     * {@code min(targetPages, balance) + maxOverdraft}, so it lets the book run a
+     * little past the target (the allowed overdraft) while guaranteeing the
+     * balance can never drop below {@code -maxOverdraft}. NOT the target — the
+     * user's requested {@link #approxPageCount} is only the expected length.
      */
     private int pageBudget;
 
-    /** Real number of pages in the rendered PDF; set once rendering completes. */
+    /** Real number of pages in the rendered PDF; set once rendering completes. This is what the user is billed. */
     private int actualPageCount;
 
     /** True once those credits have been refunded (after a failure). */
     @Builder.Default
     private boolean creditsRefunded = false;
+
+    /**
+     * True once the up-front hold has been trued up to the real page count
+     * (charge the actual pages, refund the unused reservation). Makes the final
+     * billing idempotent: a retried or duplicated settlement is a no-op, so
+     * credits are never charged twice for the same ebook.
+     */
+    @Builder.Default
+    private boolean creditsReconciled = false;
 
     // ---- Plan-derived metadata ----------------------------------------------
 

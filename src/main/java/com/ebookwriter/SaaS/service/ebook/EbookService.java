@@ -5,7 +5,6 @@ import com.ebookwriter.SaaS.dto.EbookContentResponse;
 import com.ebookwriter.SaaS.dto.EbookStatusResponse;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.ContentSource;
-import com.ebookwriter.SaaS.entity.CreditTransactionType;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.entity.EbookPdf;
@@ -17,7 +16,6 @@ import com.ebookwriter.SaaS.exceptions.InsufficientCreditsException;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookPdfRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
-import com.ebookwriter.SaaS.config.properties.CreditProperties;
 import com.ebookwriter.SaaS.request.EbookRequest;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import lombok.RequiredArgsConstructor;
@@ -49,24 +47,7 @@ public class EbookService {
     private final PdfGenerationService pdfGenerationService;
     private final AssetUsageService assetUsageService;
     private final CreditService creditService;
-    private final CreditProperties creditProperties;
 
-    /**
-     * Reserve credits and start generating in the background. 1 credit per page.
-     *
-     * <p>We do <em>not</em> charge the raw requested count and hope the model
-     * matches it. Instead we reserve a <b>page budget</b> — the requested count
-     * plus a configurable tolerance, capped by what the user can actually pay —
-     * as an up-front hold. That hold is the ceiling generation may reach, so we
-     * never produce (and pay the model for) more pages than the user authorised.
-     * Once the PDF is rendered the real page count is known and the hold is
-     * trued up: the user is charged for exactly the pages produced and the
-     * unused reservation is refunded (see {@link EbookGenerationService}).
-     *
-     * <p>Throws {@link InsufficientCreditsException} (→ 402) if the balance can't
-     * cover the requested page count; the full hold is refunded automatically if
-     * generation later fails.
-     */
     /**
      * Create the ebook as a {@link EbookStatus#DRAFT}: the row exists so the user
      * can upload assets to it, but no credits are held and nothing is generated
@@ -92,15 +73,26 @@ public class EbookService {
     }
 
     /**
-     * Reserve the page-budget credit hold and start generating a draft in the
+     * Reserve the generation credit hold and start generating a draft in the
      * background. Only a {@link EbookStatus#DRAFT} may be started; starting an
      * already-started book is a {@link IllegalStateException} (→ 409).
      *
-     * <p>Reservation is unchanged from before the draft split: reserve a page
-     * budget (requested + tolerance, capped by balance) as an up-front hold that
-     * caps generation, then true it up to the real page count on completion. If a
-     * concurrent request drained the balance, the ebook is left as a DRAFT (its
-     * uploaded assets are kept) rather than deleted.
+     * <p>Billing is <b>final-page-count based</b>: 1 credit = 1 rendered page, and
+     * the user's requested count is only a <em>target</em>, never a guaranteed
+     * final size. So we reserve a ceiling — {@code min(target, balance) +
+     * maxOverdraft} — as an up-front hold (see
+     * {@link CreditService#reserveGenerationHold}). That ceiling both caps how
+     * many pages may be rendered and guarantees the balance can never fall below
+     * {@code -maxOverdraft}, while still allowing the small overdraft that lets a
+     * book finish a little past its target. Once the PDF is rendered the hold is
+     * trued up to the real page count (see {@link EbookGenerationService}).
+     *
+     * <p>The DRAFT → PENDING transition is claimed atomically, so concurrent or
+     * duplicated start requests (double click, retry, refresh) can never both
+     * reserve a hold. Throws {@link InsufficientCreditsException} (→ 402) only when
+     * the balance is too low to start at all (below one credit); if a concurrent
+     * request left too little, the ebook is returned to a DRAFT (its uploaded
+     * assets are kept) so the user can top up and retry.
      */
     public Ebook start(UUID ebookId, UUID userId) {
         Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
@@ -110,32 +102,34 @@ public class EbookService {
             throw new IllegalStateException("Ebook has already been started");
         }
 
-        int requestedPages = Math.max(1, ebook.getApproxPageCount());
-
-        // Fast pre-check for a clear "can't pay for even the requested pages".
-        int balance = creditService.getBalance(userId);
-        if (balance < requestedPages) {
-            throw new InsufficientCreditsException(requestedPages, balance);
+        // Atomic claim: exactly one caller wins DRAFT -> PENDING, so a retried or
+        // duplicated start can never reserve a second hold for the same book.
+        int claimed = ebookRepository.claimForStart(ebookId, EbookStatus.DRAFT, EbookStatus.PENDING);
+        if (claimed == 0) {
+            throw new IllegalStateException("Ebook has already been started");
         }
-
-        int pageBudget = reservedBudget(requestedPages, balance);
-        ebook.setPageBudget(pageBudget);
-        ebook.setCreditsCharged(pageBudget);
         ebook.setStatus(EbookStatus.PENDING);
-        ebook = ebookRepository.save(ebook);
 
-        // Atomic deduct (race-safe). If a concurrent request drained the balance
-        // between the pre-check and here, revert to a draft so the user can retry.
+        int targetPages = Math.max(1, ebook.getApproxPageCount());
+
+        // Reserve the overdraft-aware hold under the wallet lock. This is the only
+        // balance check: the requested count is a target, not a cost, so we no
+        // longer reject just because the balance is below it.
+        int pageBudget;
         try {
-            creditService.spend(userId, pageBudget, CreditTransactionType.GENERATION,
-                    ebook.getId(), "Ebook generation hold (up to " + pageBudget + " pages)");
+            pageBudget = creditService.reserveGenerationHold(userId, ebookId, targetPages);
         } catch (InsufficientCreditsException e) {
+            // Release the claim so the user can top up and retry (assets kept).
             ebook.setStatus(EbookStatus.DRAFT);
             ebook.setPageBudget(0);
             ebook.setCreditsCharged(0);
             ebookRepository.save(ebook);
             throw e;
         }
+
+        ebook.setPageBudget(pageBudget);
+        ebook.setCreditsCharged(pageBudget);
+        ebook = ebookRepository.save(ebook);
 
         // Credits committed; safe to hand off to the async worker.
         generationService.generate(ebook.getId());
@@ -150,16 +144,6 @@ public class EbookService {
     public Ebook createAndStart(User user, EbookRequest request) {
         Ebook draft = createDraft(user, request);
         return start(draft.getId(), user.getId());
-    }
-
-    /**
-     * The page ceiling to reserve: requested pages plus tolerance head-room,
-     * never more than the user can pay and never below the requested count.
-     */
-    private int reservedBudget(int requestedPages, int balance) {
-        double tolerance = Math.max(0.0, creditProperties.getPageBudgetTolerance());
-        int withHeadroom = requestedPages + (int) Math.ceil(requestedPages * tolerance);
-        return Math.min(Math.max(withHeadroom, requestedPages), balance);
     }
 
     @Transactional(readOnly = true)
