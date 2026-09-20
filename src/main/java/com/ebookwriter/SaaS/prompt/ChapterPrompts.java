@@ -36,6 +36,43 @@ public final class ChapterPrompts {
                   fine to use none. Never invent image ids, filenames, or URLs, and
                   never add an image when none are offered.
 
+                Design components (use SPARINGLY, only where they genuinely fit):
+                The book has a design system. Where a piece of content is one of the
+                kinds below, wrap it in a fenced ::: block so it renders as a proper
+                designed component instead of a plain paragraph. These are the ONLY
+                block names; write the name in lower case. Do NOT force them — most
+                content is ordinary prose, and over-using components looks cluttered.
+                A typical chapter uses only a few, chosen because the content is
+                genuinely that kind of thing.
+
+                  :::key-idea            one crucial insight, stated plainly
+                  :::takeaway            a short summary of a section
+                  :::pullquote           one memorable sentence, quoted for emphasis
+                  :::warning             a common mistake or caution
+                  :::example             a concrete worked example
+                  :::exercise Title      a practical task for the reader
+                  :::done-when           a completion criterion (or just write a
+                                         paragraph starting "Done when:")
+                  :::checklist Title     a list of things to verify (one "- " per line)
+                  :::steps Day 1         an ordered action plan. One "- " per step,
+                                         "Title | duration" then an indented
+                                         description line, e.g.:
+                                         - Turn off notifications | 15 min
+                                           Silence everything that is not a person.
+                  :::flow                a process / cycle / sequence, ONE node per
+                                         line — rendered as a real diagram, so prefer
+                                         this over describing a flow in prose or asking
+                                         for an image. e.g.:
+                                         Difficult work
+                                         Discomfort
+                                         Check phone
+                                         Relief
+
+                Close every block with a line containing only ::: — for example:
+                :::key-idea
+                Focus is a state your environment creates, not a trait you are born with.
+                :::
+
                 After the chapter body, output the delimiter line exactly:
                 %s
                 then a 2-3 sentence summary of what this chapter established, written
@@ -74,6 +111,9 @@ public final class ChapterPrompts {
                 CHAPTER TO WRITE NOW
                 Chapter %d: %s
                 Scope: %s
+                If this chapter's scope covers more than one promised unit (e.g.
+                several days, steps or stages), cover every one of them — do not stop
+                partway or leave the last ones as a stub.
                 Target length: about %d words. Treat this as a firm limit — write to
                 roughly this length and do NOT substantially exceed it. Staying a
                 little under is fine; going well over is not. Respecting the length

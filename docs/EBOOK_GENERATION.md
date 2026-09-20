@@ -17,6 +17,14 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
   └─ PdfGenerationService     Step 4   — assemble HTML, render to PDF
 ```
 
+- **Structural completeness.** When the brief promises a fixed structure — a
+  "7-day plan", a "10-step guide", a "30-day challenge", "5 principles" —
+  `StructureRequirement` detects it from the title/topic/instructions and the
+  planning prompt insists the outline cover **every** unit (all seven days), never
+  a partial subset. `BookPlanningService` logs a loud warning if the clamped plan
+  can't hold them, and the chapter writer is told to finish every unit in its
+  scope. This closes the "The 7-Day Focus Reset stops at Day 3" class of bug at
+  its source (planning) rather than compensating downstream.
 - Chapters are generated **sequentially**, each aware of the outline and the
   summaries of earlier chapters, so content builds forward without repeating.
 - The editorial pass reviews each chapter against the whole book (outline +
@@ -134,12 +142,61 @@ duplicated `id`) returns `400`.
 
 ## PDF rendering
 
-Markdown chapters → HTML (commonmark) → normalised XHTML (jsoup) → PDF
-(openhtmltopdf). A 6×9" book layout with cover, table of contents, page
-numbers, and clean chapter separation. Liberation fonts (Serif/Sans/Mono) are
+Markdown chapters → **editorial HTML** (`EbookContentRenderer`, see
+[Content design system](#content-design-system)) → book scaffolding
+(`EbookHtmlBuilder`: cover, table of contents, chapter openers) → normalised
+XHTML (jsoup) → PDF (openhtmltopdf). A 6×9" book layout with a composed cover, a
+real table of contents (dotted leaders + **actual** page numbers via CSS
+`target-counter`, not estimates), intentional chapter-opening pages, subtle
+folios, and a semantic component system. Liberation fonts (Serif/Sans/Mono) are
 bundled and embedded so Latin-alphabet languages (Polish, Spanish, German, …)
 and code blocks render correctly. Styling lives in
 `src/main/resources/pdf/ebook.css`.
+
+> **One layout model.** The exact same `EbookHtmlBuilder` + `ebook.css` produce
+> both the PDF (`PdfGenerationService`) and the editor preview
+> (`EbookPreviewService`), so the preview matches the download 1:1. There is no
+> second layout implementation to keep in sync. Constraint: openhtmltopdf
+> (Flying Saucer) supports neither CSS custom properties (`var()`) nor flexbox,
+> so the stylesheet is written with literal values and box-model / float /
+> table layout, and `target-counter` generated content is never floated (it
+> NPEs) — the TOC uses a two-column table to right-align page numbers.
+
+## Content design system
+
+The step that moves the output from "AI text in a PDF" toward "a designed book".
+On top of ordinary Markdown, chapter bodies may contain lightweight
+**directive blocks** that `EbookContentRenderer` turns into distinct, reusable,
+styled components — the same in the preview and the PDF:
+
+```
+:::key-idea        one crucial insight            :::warning     a caution / mistake
+:::takeaway        a section summary              :::example     a worked example
+:::pullquote       a large editorial quotation    :::exercise T  a reader task
+:::done-when       a completion criterion         :::checklist T a verify list
+:::steps Day 1     a numbered action plan (01, 02, …) with title | duration + description
+:::flow            a process / cycle diagram, one node per line
+```
+
+- **Diagrams are drawn, not imaged.** `:::flow` (process/cycle/sequence) and
+  `:::steps` (action plan) are rendered with our own typography — crisp text,
+  on-brand, no AI spelling mistakes, editable, accessible. The image planner is
+  explicitly told **not** to propose image-model diagrams/charts for anything
+  that is boxes-and-arrows or labelled steps; those belong to these components.
+- **Auto-detection.** A plain paragraph beginning `Done when:` is promoted to the
+  `done-when` component automatically (capturing the whole paragraph), so even
+  content that doesn't use the directive syntax still gets the treatment.
+- **Safe by construction.** The transform is pure (Markdown in, HTML out), unknown
+  block names degrade to a generic note, malformed/unclosed blocks never throw
+  (they fall back to plain Markdown), and inline image tokens pass through
+  untouched. Unit-tested in `EbookContentRendererTest`.
+- **The writer emits them sparingly.** `ChapterPrompts` teaches the model the
+  block syntax and — importantly — to use it only where content genuinely is that
+  kind of thing. Most content stays ordinary prose; over-use looks cluttered.
+
+Component styling has a consistent visual weight per type (`ebook.css`,
+`.cmp--*`), and every component sets `page-break-inside: avoid` so it is never
+split awkwardly across a page.
 
 ## Assets
 
@@ -360,6 +417,15 @@ Together these close the gap where a book overran its requested length — a
 count and ate the difference. We now aim for what the user asked, never deliver
 (or generate) past what they reserved, and pay for and charge the same number of
 pages.
+
+> **Structure vs. the hard trim.** The trim removes trailing content to fit the
+> budget, so a promised structure must be *planned* to fit — that is why
+> `StructureRequirement` steers the outline and word sizing up front (step 2/3),
+> rather than relying on the trim to be structure-aware. With a right-sized plan
+> the trim rarely fires; when it does it only shaves a few trailing paragraphs.
+> A book whose promised structure genuinely cannot fit the reserved budget is
+> surfaced as a planning warning (raise the page budget) rather than silently
+> delivered half-finished.
 
 ## Not yet (deliberately)
 

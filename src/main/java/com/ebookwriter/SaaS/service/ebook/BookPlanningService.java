@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -56,8 +57,17 @@ public class BookPlanningService {
         int contentTarget = Math.max(1, requestedPages - frontMatter);
         int contentCeiling = Math.max(contentTarget, pageBudget - frontMatter);
 
+        // A fixed structure promised in the brief ("7-day plan", "10-step guide")
+        // must be delivered in full; tell the planner so and check it afterwards.
+        Optional<StructureRequirement> structure = StructureRequirement.detect(ebook);
+        String structureHint = structure
+                .map(s -> "This book promises a " + s.describe() + " structure. Every one of "
+                        + "the " + s.count() + " " + s.unit() + "s must be covered in the plan; "
+                        + "do not stop partway.")
+                .orElse("");
+
         String system = PlanningPrompts.system(ebook.getLanguage());
-        String user = PlanningPrompts.user(ebook, contentTarget, contentCeiling);
+        String user = PlanningPrompts.user(ebook, contentTarget, contentCeiling, structureHint);
 
         String raw = anthropicService.complete(system, user, PLAN_MAX_TOKENS);
         BookPlan plan = parsePlan(raw);
@@ -90,6 +100,18 @@ public class BookPlanningService {
                 ebookId, ebook.getTitle(), ebook.getChapters().size(),
                 ebook.getChapters().stream().mapToInt(EbookChapter::getApproxPages).sum(),
                 contentTarget, contentCeiling, pageBudget);
+
+        // Structural completeness check: a promised fixed structure (N days/steps)
+        // needs enough room to actually deliver every unit. This never fails the
+        // book, but a shortfall is a strong signal the finished book may stop
+        // partway, so it is logged loudly for observability.
+        structure.ifPresent(req -> {
+            if (ebook.getChapters().size() < req.count()) {
+                log.warn("Ebook {} promises a {} structure but the plan has only {} chapters; "
+                                + "the finished book may not cover every {}. Consider a larger page budget.",
+                        ebookId, req.describe(), ebook.getChapters().size(), req.unit());
+            }
+        });
     }
 
     /**
