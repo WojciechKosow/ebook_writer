@@ -105,6 +105,15 @@ public class Ebook {
     @Column(columnDefinition = "text")
     private String writingGuidelines;
 
+    /**
+     * The cover composition variant (how the AI visual and the typography are
+     * arranged). Chosen during generation; editable afterwards. Null renders the
+     * safe typographic cover, so the column is nullable and needs no default for
+     * {@code ddl-auto=update} to add it to an existing table.
+     */
+    @Enumerated(EnumType.STRING)
+    private com.ebookwriter.SaaS.dto.cover.CoverLayout coverLayout;
+
     /** Raw plan JSON kept for debugging / potential reprocessing. */
     @Column(columnDefinition = "text")
     private String planJson;

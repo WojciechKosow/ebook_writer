@@ -1,5 +1,5 @@
 /* ===========================================================================
-   Scrivette ebook stylesheet — a single editorial design system shared by the
+   Scrivetta ebook stylesheet — a single editorial design system shared by the
    PDF export (openhtmltopdf) and the in-editor preview (browser). Font families
    are registered in code (PdfGenerationService) from the bundled Liberation
    fonts; the preview maps them to metric-compatible web fonts.
@@ -159,95 +159,119 @@ th {
     width: 6in;
     height: 9in;
     overflow: hidden;
-}
-
-/* --- Typographic cover (no image): a composed title page --- */
-.cover--typographic {
     background: #f4f2ec;
 }
-.cover--typographic .cover-overlay {
-    position: absolute;
-    top: 3.4cm;
-    left: 1.7cm;
-    right: 1.7cm;
-    text-align: left;
-}
-.cover--typographic .cover-eyebrow {
+
+/* --- Shared cover typography (real, editable text — never baked into the image).
+   Dark on paper by default; the --light variant inverts it over an image scrim. */
+.cover-eyebrow {
     font-family: "Ebook Sans";
     font-size: 9.5pt;
-    letter-spacing: 0.24em;
+    letter-spacing: 0.22em;
     text-transform: uppercase;
     color: #8a8377;
-    margin-bottom: 1.1cm;
+    margin-bottom: 0.7cm;
 }
-/* A thin rule sits above the eyebrow as a masthead line. */
-.cover--typographic .cover-eyebrow:before {
+.cover-eyebrow:before {
     content: "";
     display: block;
     width: 1.4cm;
     border-top: 2px solid #1a1a1a;
     margin-bottom: 0.5cm;
 }
-.cover--typographic .book-title {
+.book-title {
     font-family: "Ebook Sans";
-    font-size: 34pt;
+    font-size: 32pt;
     font-weight: bold;
     line-height: 1.08;
     letter-spacing: -0.015em;
     color: #14110d;
     margin-bottom: 0.5cm;
 }
-.cover--typographic .book-subtitle {
+.book-subtitle {
     font-family: "Ebook Serif";
     font-style: italic;
     font-size: 14pt;
     line-height: 1.35;
     color: #55503f;
-    max-width: 9.5cm;
+    max-width: 10cm;
 }
+.cover-overlay--light .cover-eyebrow { color: rgba(255, 255, 255, 0.9); }
+.cover-overlay--light .cover-eyebrow:before { border-top-color: rgba(255, 255, 255, 0.85); }
+.cover-overlay--light .book-title { color: #ffffff; }
+.cover-overlay--light .book-subtitle { color: rgba(255, 255, 255, 0.92); }
 
-/* --- Full-bleed image cover: title over a legibility scrim --- */
-.cover--with-image { background: #14110d; }
+/* --- TYPOGRAPHIC: composed title page, no image --- */
+.cover--typographic .cover-overlay {
+    position: absolute;
+    top: 3.4cm; left: 1.7cm; right: 1.7cm;
+    text-align: left;
+}
+.cover--typographic .cover-eyebrow { margin-bottom: 1.1cm; }
+.cover--typographic .book-title { font-size: 34pt; }
+
+/* --- IMAGE_LED: full-bleed visual + title over a legibility scrim --- */
+.cover--image-led { background: #14110d; }
 .cover-bg {
     position: absolute;
     top: 0; left: 0;
-    width: 6in;
-    height: 9in;
+    width: 6in; height: 9in;
     object-fit: cover;
     object-position: center;
 }
-.cover--with-image .cover-overlay {
+.cover-overlay--scrim {
     position: absolute;
     left: 0; right: 0; bottom: 0;
-    padding: 1.4cm 1.5cm 1.7cm;
+    padding: 1.5cm 1.5cm 1.7cm;
     background: rgba(15, 13, 10, 0.58);
     text-align: left;
 }
-.cover--with-image .cover-eyebrow {
-    font-family: "Ebook Sans";
-    font-size: 9pt;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.82);
-    margin-bottom: 0.5cm;
+.cover-overlay--scrim .book-title { font-size: 30pt; }
+
+/* --- EDITORIAL: visual in the upper field, title on paper in the lower third --- */
+.cover--editorial .cover-art--editorial {
+    position: absolute;
+    top: 0; left: 0;
+    width: 6in; height: 4.9in;
+    object-fit: cover;
+    object-position: center;
 }
-.cover--with-image .book-title {
-    font-family: "Ebook Sans";
-    font-size: 30pt;
-    font-weight: bold;
-    line-height: 1.1;
-    letter-spacing: -0.015em;
-    color: #ffffff;
-    margin-bottom: 0.3cm;
+.cover--editorial .cover-overlay--lower {
+    position: absolute;
+    left: 1.7cm; right: 1.7cm; top: 5.5in;
+    text-align: left;
 }
-.cover--with-image .book-subtitle {
-    font-family: "Ebook Serif";
-    font-style: italic;
-    font-size: 13pt;
-    line-height: 1.35;
-    color: rgba(255, 255, 255, 0.92);
+.cover--editorial .cover-eyebrow { margin-bottom: 0.6cm; }
+
+/* --- SPLIT: visual top region, typography on a distinct panel below --- */
+.cover--split .cover-art--split {
+    position: absolute;
+    top: 0; left: 0;
+    width: 6in; height: 5in;
+    object-fit: cover;
+    object-position: center;
 }
-.cover--with-image .cover-rule { display: none; }
+.cover--split .cover-panel {
+    position: absolute;
+    left: 0; right: 0; top: 5in; bottom: 0;
+    background: #f4f2ec;
+    padding: 1.3cm 1.7cm;
+    text-align: left;
+}
+
+/* --- MINIMAL: strong typography up top, a small framed visual below --- */
+.cover--minimal .cover-overlay--upper {
+    position: absolute;
+    top: 3cm; left: 1.7cm; right: 1.7cm;
+    text-align: left;
+}
+.cover--minimal .cover-art--minimal {
+    position: absolute;
+    right: 1.7cm; bottom: 2.2cm;
+    width: 7.4cm; height: 5cm;
+    object-fit: cover;
+    object-position: center;
+}
 
 /* ===========================================================================
    Table of contents
@@ -646,12 +670,14 @@ th {
     color: #6f6a5c;
     margin-top: 0.8cm;
 }
-.cover--with-image .cover-byline { color: rgba(255, 255, 255, 0.85); }
+.cover-overlay--light .cover-byline { color: rgba(255, 255, 255, 0.85); }
 
-/* Subtle publisher imprint at the foot of the cover. */
+/* Subtle publisher imprint at the foot of the cover. Right-aligned by default so
+   it clears the left-aligned title/byline; MINIMAL keeps it left because its
+   visual sits bottom-right. */
 .cover-imprint {
     position: absolute;
-    left: 1.7cm;
+    right: 1.7cm;
     bottom: 1.4cm;
     font-family: "Ebook Sans";
     font-size: 8pt;
@@ -659,9 +685,13 @@ th {
     letter-spacing: 0.32em;
     color: #b8b0a0;
 }
-.cover--with-image .cover-imprint {
-    left: 1.5cm;
-    color: rgba(255, 255, 255, 0.7);
+.cover--minimal .cover-imprint {
+    left: 1.7cm;
+    right: auto;
+}
+/* On a full-bleed image the foot sits over the dark scrim — lighten the imprint. */
+.cover--image-led .cover-imprint {
+    color: rgba(255, 255, 255, 0.72);
 }
 
 /* ===========================================================================

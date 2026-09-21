@@ -14,6 +14,7 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
   ├─ BookEditingService       Step 3   — editorial pass per chapter
   ├─ ImagePlanningService     Step 3.5 — plan AI images (structured JSON)
   ├─ ImageGenerationService   Step 3.6 — generate + store + place them
+  ├─ CoverGenerationService   Step 3.7 — plan + generate the editable cover visual
   └─ PdfGenerationService     Step 4   — assemble HTML, render to PDF
 ```
 
@@ -44,7 +45,7 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
 
 - `Ebook` — the brief, status, progress, plan-derived metadata (title,
   subtitle, description, writing guidelines), an optional `authorName` (cover
-  byline), timestamps.
+  byline), the chosen `coverLayout`, timestamps.
 - `EbookChapter` — per-chapter outline + content + summary + status. Persisted
   as each chapter is produced, so a failure keeps completed chapters.
   `contentSource` records whether the current text is AI output or a user edit,
@@ -89,6 +90,7 @@ to the authenticated user.
 | GET    | `/api/ebooks/{id}/images/{imageId}/raw` | Stream an asset's bytes for preview (bucket is private). |
 | PATCH  | `/api/ebooks/{id}/images/{imageId}` | Update editor metadata: `role` and/or `displayWidthPercent` (resize, 1–100). |
 | PUT    | `/api/ebooks/{id}/images/{imageId}/cover` | Make this asset the cover (demotes any current cover). |
+| POST   | `/api/ebooks/{id}/images/cover/regenerate` | Regenerate the AI cover visual, keeping title/subtitle/layout. |
 | DELETE | `/api/ebooks/{id}/images/{imageId}` | Delete an asset (also removes it from storage). |
 
 ### Request body (`POST /api/ebooks`)
@@ -176,13 +178,14 @@ hardcoded per topic, and is a pure function shared by preview and PDF.
 MAIN COVER → CONTENTS → [ CHAPTER/DAY OPENER → BODY ] × N
 ```
 
-- **Main cover.** A composed, art-directed cover: masthead rule, topic-derived
-  kicker, strong title hierarchy, subtitle, optional `authorName` byline, and a
-  subtle `SCRIVETTE` imprint. Its **visual concept is generated from the book's
-  structure**, never a generic AI stock image: a large ghosted **program numeral**
-  (the "7" of a 7-day plan, with a "DAYS"/"STEPS" label) when a fixed structure is
-  detected, otherwise the title's **initial as a monogram**. A user-uploaded cover
-  image still renders full-bleed with the title on a legibility scrim.
+- **Main cover.** A composed, art-directed cover whose elements stay **separate
+  and editable** — the AI-generated (text-free) visual is an image asset, and the
+  title, subtitle, `authorName` byline and `SCRIVETTA` imprint are real typography
+  rendered by Scrivetta (never baked into the image). See
+  [AI editable cover](#ai-editable-cover). When no visual is present the cover
+  falls back to a composed **typographic** cover with a topic kicker and a
+  structural motif (a large program numeral like "7 DAYS", or the title's
+  monogram).
 - **Chapter / day-step openers.** A major section can open with a dedicated
   **opener page** — big numeral, eyebrow label ("DAY 01" / "CHAPTER 03"), title,
   an optional duration chip (parsed from the scope, e.g. "10–20 MINUTES"), and a
@@ -202,6 +205,62 @@ MAIN COVER → CONTENTS → [ CHAPTER/DAY OPENER → BODY ] × N
 Everything flows through the one `EbookHtmlBuilder` + `ebook.css`, so opener pages
 and the cover render identically in the editor preview and the PDF. Unit-tested in
 `DocumentComposerTest` / `EbookHtmlBuilderTest`.
+
+## AI editable cover
+
+The cover is **not** a flattened AI image. The AI generates only the *visual*;
+Scrivetta composes the editable publication around it:
+
+```
+CoverPlanningService  (art director: analyse book → layout + text-free prompt)
+        ↓
+CoverGenerationService  (OpenAiImageClient → R2 → EbookImage, placement=COVER)
+        ↓
+EbookHtmlBuilder + ebook.css  (compose: image asset + real title/subtitle text)
+        ↓
+editor preview  ==  PDF output
+```
+
+- **The visual is text-free.** `CoverPlanningService` asks the content model, as an
+  art director, to analyse the book (title, subtitle, topic, audience, tone,
+  chapter concepts) and return strict JSON: a chosen **layout** and a concrete
+  **image prompt** for the visual only. `CoverPrompts.IMAGE_CONSTRAINTS` is always
+  appended in code, so the request forbids any text, letters, numbers, logos,
+  watermarks, UI or mockups — a hard guarantee even if the model forgets. The
+  title/subtitle/author are **never** sent to the image model; Scrivetta renders
+  them as real, editable text on top.
+- **The prompt is topic-aware and safe-area-aware.** It is generated from the
+  actual book (no generic "make a nice image"), and the chosen layout tells the
+  model which region to leave as clean negative space for the title. A
+  deterministic, topic-derived fallback prompt is used when the art-director model
+  is unavailable, so a cover can always be composed.
+- **Cover layout system (`CoverLayout`).** Five internal composition variants —
+  `EDITORIAL` (large visual above, title below on paper), `IMAGE_LED` (full-bleed
+  visual, title over a scrim), `SPLIT` (visual + text in distinct regions),
+  `MINIMAL` (small framed visual, strong type), `TYPOGRAPHIC` (no image). The
+  planner picks one per book; the architecture supports many compositions without
+  hardcoding a single cover.
+- **Separate, editable elements.** The visual is a normal `EbookImage`
+  (`placement=COVER`, `placedBy=AI`) — so the whole existing asset API already
+  gives the editor **replace** (`POST …/images` + `PUT …/images/{id}/cover`),
+  **upload**, **resize/reposition** (`PATCH …/images/{id}`) and **remove**
+  (`DELETE …/images/{id}`) for free, with no duplicate infrastructure. The
+  title/subtitle are edited through the normal content model.
+- **Regenerate.** `POST /api/ebooks/{id}/images/cover/regenerate` re-generates just
+  the visual — keeping the title, subtitle, layout and the rest of the book — and
+  replaces the previous AI cover (a user-uploaded cover is demoted, not deleted).
+  On a `COMPLETED` book it re-renders the PDF so the download matches.
+- **Validation / never-broken.** A visual layout with no image downgrades to the
+  safe `TYPOGRAPHIC` cover at render time (`EbookHtmlBuilder.resolveLayout`), so a
+  missing or failed visual yields a clean composed cover, never a broken one.
+  Generation is best-effort in the pipeline (no OpenAI key / a failure ⇒
+  typographic cover, book still ships); the editor-triggered regenerate surfaces a
+  clear error instead, since the user explicitly asked for a visual.
+- **Same model, editor and PDF.** The cover is an ordinary first page of the shared
+  `EbookHtmlBuilder` + `ebook.css` layout — no PDF-only cover hack — so the editor
+  preview and the exported PDF show the identical composition. Unit-tested in
+  `CoverPlanningServiceTest` / `EbookHtmlBuilderTest`; no new env vars (it reuses
+  the `OPENAI_*` image pipeline and `R2_*` storage).
 
 ## Content design system
 
