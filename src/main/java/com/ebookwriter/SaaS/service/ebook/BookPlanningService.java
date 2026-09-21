@@ -6,6 +6,7 @@ import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.prompt.PlanningPrompts;
+import com.ebookwriter.SaaS.config.properties.CreditProperties;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -36,6 +37,7 @@ public class BookPlanningService {
 
     private final AnthropicService anthropicService;
     private final EbookRepository ebookRepository;
+    private final CreditProperties creditProperties;
 
     @Transactional
     public void plan(UUID ebookId) {
@@ -50,14 +52,17 @@ public class BookPlanningService {
         int pageBudget = ebook.getPageBudget() > 0 ? ebook.getPageBudget()
                 : Math.max(1, ebook.getApproxPageCount());
 
-        // Aim for the length the user actually asked for (the target); the reserved
-        // ceiling is only the upper bound for overshoot. The cover and table of
-        // contents cost
-        // pages too, so both are expressed in content pages (minus front matter).
-        int requestedPages = Math.max(1, ebook.getApproxPageCount());
+        // Orientational range for a standard ebook (system-defined, not chosen by
+        // the user); the reserved ceiling is only the upper bound for overshoot. The
+        // cover and table of contents cost pages too, so all three are expressed in
+        // content pages (minus front matter).
         int frontMatter = EbookHtmlBuilder.FRONT_MATTER_PAGES;
-        int contentTarget = Math.max(1, requestedPages - frontMatter);
-        int contentCeiling = Math.max(contentTarget, pageBudget - frontMatter);
+        int targetHighPages = Math.max(1, creditProperties.getStandardTargetPages());
+        int targetLowPages = Math.min(targetHighPages,
+                Math.max(1, creditProperties.getStandardTargetMinPages()));
+        int contentTargetLow = Math.max(1, targetLowPages - frontMatter);
+        int contentTargetHigh = Math.max(contentTargetLow, targetHighPages - frontMatter);
+        int contentCeiling = Math.max(contentTargetHigh, pageBudget - frontMatter);
 
         // A fixed structure promised in the brief ("7-day plan", "10-step guide")
         // must be delivered in full; tell the planner so and check it afterwards.
@@ -69,7 +74,8 @@ public class BookPlanningService {
                 .orElse("");
 
         String system = PlanningPrompts.system(ebook.getLanguage());
-        String user = PlanningPrompts.user(ebook, contentTarget, contentCeiling, structureHint);
+        String user = PlanningPrompts.user(ebook, contentTargetLow, contentTargetHigh,
+                contentCeiling, structureHint);
 
         String raw = anthropicService.complete(system, user, PLAN_MAX_TOKENS);
         BookPlan plan = parsePlan(raw);
@@ -98,10 +104,10 @@ public class BookPlanningService {
         }
 
         ebookRepository.save(ebook);
-        log.info("Planned ebook {} — '{}' with {} chapters, {} content pages (target {}, ceiling {}, budget {})",
+        log.info("Planned ebook {} — '{}' with {} chapters, {} content pages (target {}-{}, ceiling {}, budget {})",
                 ebookId, ebook.getTitle(), ebook.getChapters().size(),
                 ebook.getChapters().stream().mapToInt(EbookChapter::getApproxPages).sum(),
-                contentTarget, contentCeiling, pageBudget);
+                contentTargetLow, contentTargetHigh, contentCeiling, pageBudget);
 
         // Structural completeness check: a promised fixed structure (N days/steps)
         // needs enough room to actually deliver every unit. This never fails the

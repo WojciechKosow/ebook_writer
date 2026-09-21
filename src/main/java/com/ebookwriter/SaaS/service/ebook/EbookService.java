@@ -17,6 +17,8 @@ import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookPdfRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.request.EbookRequest;
+import com.ebookwriter.SaaS.config.properties.CreditProperties;
+import com.ebookwriter.SaaS.dto.GenerationBudgetResponse;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -47,21 +49,27 @@ public class EbookService {
     private final PdfGenerationService pdfGenerationService;
     private final AssetUsageService assetUsageService;
     private final CreditService creditService;
+    private final CreditProperties creditProperties;
 
     /**
      * Create the ebook as a {@link EbookStatus#DRAFT}: the row exists so the user
      * can upload assets to it, but no credits are held and nothing is generated
      * yet. Call {@link #start(UUID, UUID)} to reserve credits and begin.
+     *
+     * <p>The user does not choose a page count. Scrivetta decides how much content
+     * a complete ebook needs; we seed the row with the system standard target
+     * (~{@code standardTargetPages}) purely as the length the planner aims for and
+     * a fallback for legacy code paths — it is not something the user ordered.
      */
     public Ebook createDraft(User user, EbookRequest request) {
-        int requestedPages = Math.max(1, request.getApproxPageCount());
+        int standardTarget = Math.max(1, creditProperties.getStandardTargetPages());
 
         Ebook ebook = Ebook.builder()
                 .user(user)
                 .topic(request.getTopic())
                 .targetAudience(request.getTargetAudience())
                 .style(request.getStyle())
-                .approxPageCount(requestedPages)
+                .approxPageCount(standardTarget)
                 .language(blankToEnglish(request.getLanguage()))
                 .additionalInstructions(request.getAdditionalInstructions())
                 .sourceMaterial(request.getSourceMaterial())
@@ -79,21 +87,26 @@ public class EbookService {
      * already-started book is a {@link IllegalStateException} (→ 409).
      *
      * <p>Billing is <b>final-page-count based</b>: 1 credit = 1 rendered page, and
-     * the user's requested count is only a <em>target</em>, never a guaranteed
-     * final size. So we reserve a ceiling — {@code min(target, balance) +
-     * maxOverdraft} — as an up-front hold (see
-     * {@link CreditService#reserveGenerationHold}). That ceiling both caps how
-     * many pages may be rendered and guarantees the balance can never fall below
+     * the length is a <em>result</em> of generation, never a size the user ordered.
+     * Credits are the generation <b>budget</b>: a user must hold at least the
+     * standard {@code minGenerationBudget} (e.g. 30 credits) to begin — this is the
+     * smallest budget Scrivetta needs to produce a complete standard ebook, not a
+     * promise of that many pages. We reserve a ceiling — {@code min(target,
+     * balance) + maxOverdraft} — as an up-front hold (see
+     * {@link CreditService#reserveGenerationHold}). That ceiling both caps how many
+     * pages may be rendered and guarantees the balance can never fall below
      * {@code -maxOverdraft}, while still allowing the small overdraft that lets a
-     * book finish a little past its target. Once the PDF is rendered the hold is
-     * trued up to the real page count (see {@link EbookGenerationService}).
+     * book wind down to a natural ending. Once the PDF is rendered the hold is
+     * trued up to the real page count and the unused credits are returned (see
+     * {@link EbookGenerationService}), so a book that naturally finishes early
+     * leaves the rest of the budget on the account.
      *
      * <p>The DRAFT → PENDING transition is claimed atomically, so concurrent or
      * duplicated start requests (double click, retry, refresh) can never both
-     * reserve a hold. Throws {@link InsufficientCreditsException} (→ 402) only when
-     * the balance is too low to start at all (below one credit); if a concurrent
-     * request left too little, the ebook is returned to a DRAFT (its uploaded
-     * assets are kept) so the user can top up and retry.
+     * reserve a hold. Throws {@link InsufficientCreditsException} (→ 402) when the
+     * balance is below the standard generation budget; if a concurrent request left
+     * too little, the ebook is returned to a DRAFT (its uploaded assets are kept)
+     * so the user can top up and retry.
      */
     public Ebook start(UUID ebookId, UUID userId) {
         Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
@@ -101,6 +114,16 @@ public class EbookService {
 
         if (ebook.getStatus() != EbookStatus.DRAFT) {
             throw new IllegalStateException("Ebook has already been started");
+        }
+
+        int minBudget = Math.max(1, creditProperties.getMinGenerationBudget());
+
+        // Friendly early gate before we mutate any state: a user below the standard
+        // generation budget cannot start. The authoritative, race-safe check is in
+        // reserveGenerationHold below (same wallet lock as the reservation).
+        int balance = creditService.getBalance(userId);
+        if (balance < minBudget) {
+            throw new InsufficientCreditsException(minBudget, balance);
         }
 
         // Atomic claim: exactly one caller wins DRAFT -> PENDING, so a retried or
@@ -111,14 +134,16 @@ public class EbookService {
         }
         ebook.setStatus(EbookStatus.PENDING);
 
-        int targetPages = Math.max(1, ebook.getApproxPageCount());
+        // System-defined standard target: the length the planner aims for. It is
+        // fixed regardless of how many credits the user holds — a larger balance
+        // never produces a longer book.
+        int targetPages = Math.max(1, creditProperties.getStandardTargetPages());
 
-        // Reserve the overdraft-aware hold under the wallet lock. This is the only
-        // balance check: the requested count is a target, not a cost, so we no
-        // longer reject just because the balance is below it.
+        // Reserve the overdraft-aware hold under the wallet lock, gated on the
+        // standard generation budget.
         int pageBudget;
         try {
-            pageBudget = creditService.reserveGenerationHold(userId, ebookId, targetPages);
+            pageBudget = creditService.reserveGenerationHold(userId, ebookId, targetPages, minBudget);
         } catch (InsufficientCreditsException e) {
             // Release the claim so the user can top up and retry (assets kept).
             ebook.setStatus(EbookStatus.DRAFT);
@@ -145,6 +170,23 @@ public class EbookService {
     public Ebook createAndStart(User user, EbookRequest request) {
         Ebook draft = createDraft(user, request);
         return start(draft.getId(), user.getId());
+    }
+
+    /**
+     * Describe the generation budget for the creation UI: how many credits are
+     * needed to start, the orientational page range for a standard ebook, the
+     * user's current balance, and whether they can generate now. The frontend uses
+     * this to show "Estimated usage ~20–30 credits", "Your balance: N credits" and
+     * either "Enough credits to generate this ebook" or "You need at least N
+     * credits" — communicating a budget, never a guaranteed page count.
+     */
+    @Transactional(readOnly = true)
+    public GenerationBudgetResponse getGenerationBudget(UUID userId) {
+        int balance = creditService.getBalance(userId);
+        int minCredits = Math.max(1, creditProperties.getMinGenerationBudget());
+        int low = Math.max(1, creditProperties.getStandardTargetMinPages());
+        int high = Math.max(low, creditProperties.getStandardTargetPages());
+        return new GenerationBudgetResponse(minCredits, low, high, balance, balance >= minCredits);
     }
 
     @Transactional(readOnly = true)

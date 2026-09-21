@@ -144,6 +144,47 @@ class CreditServiceTest {
     }
 
     @Test
+    void reserveGenerationHoldEnforcesTheStandardMinimumBudget() {
+        UUID user = UUID.randomUUID();
+        creditService.grant(user, 20, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");
+
+        // Standard generation needs a 30-credit budget: 20 is not enough, and the
+        // rejected reservation must leave the balance untouched.
+        InsufficientCreditsException ex = assertThrows(
+                InsufficientCreditsException.class,
+                () -> creditService.reserveGenerationHold(user, UUID.randomUUID(), 30, 30));
+        assertEquals(30, ex.getRequired());
+        assertEquals(20, ex.getAvailable());
+        assertEquals(20, creditService.getBalance(user), "a rejected reservation changes nothing");
+    }
+
+    @Test
+    void reserveGenerationHoldAllowsExactlyTheMinimumBudget() {
+        UUID user = UUID.randomUUID();
+        UUID ebook = UUID.randomUUID();
+        creditService.grant(user, 30, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");
+
+        // Exactly the minimum budget may start: ceiling = min(30,30) + 10 overdraft.
+        int hold = creditService.reserveGenerationHold(user, ebook, 30, 30);
+
+        assertEquals(40, hold);
+        assertEquals(-10, creditService.getBalance(user), "the hold is a ceiling; it is trued up after render");
+    }
+
+    @Test
+    void reserveGenerationHoldWithMinimumBudgetIsTargetBoundedForALargeBalance() {
+        UUID user = UUID.randomUUID();
+        creditService.grant(user, 100, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");
+
+        // A large balance is not drained: the standard target (30) caps the hold, so
+        // more credits never buy a longer book — the rest stays on the account.
+        int hold = creditService.reserveGenerationHold(user, UUID.randomUUID(), 30, 30);
+
+        assertEquals(40, hold);
+        assertEquals(60, creditService.getBalance(user));
+    }
+
+    @Test
     void spendingMoreThanBalanceIsRejectedAndChangesNothing() {
         UUID user = UUID.randomUUID();
         creditService.grant(user, 20, CreditTransactionType.CREDIT_PURCHASE, null, null, "buy");

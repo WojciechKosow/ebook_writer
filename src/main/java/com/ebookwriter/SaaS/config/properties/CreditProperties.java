@@ -36,4 +36,34 @@ public class CreditProperties {
      * long the model runs (a runaway 100–200 page book is trimmed to fit).
      */
     private int maxOverdraft = 10;
+
+    /**
+     * The minimum credit balance required to <b>start</b> a standard ebook
+     * generation. Credits are the generation <em>budget</em>, not a promise of an
+     * exact page count: this is the smallest budget Scrivetta needs to produce a
+     * complete, worthwhile standard ebook. A user below this cannot begin (the UI
+     * shows "you need at least N credits"); a user at or above it can, and only
+     * ever pays for the pages actually rendered (unused credits stay on the
+     * account). It is deliberately <em>not</em> "N credits = N pages".
+     */
+    private int minGenerationBudget = 30;
+
+    /**
+     * The lower end of the orientational page range for a standard ebook — used
+     * only to describe the expected result to the user ("estimated usage ~20–30
+     * credits"). It is guidance, never a floor the model must reach: a simpler
+     * topic may naturally finish shorter.
+     */
+    private int standardTargetMinPages = 20;
+
+    /**
+     * The upper end of the orientational page range for a standard ebook, and the
+     * length the planner aims for. It sizes the up-front hold and the plan ceiling
+     * so a book naturally finishes around here and winds down to a real conclusion
+     * rather than being cut off. It is an orientation, not a guarantee: a richer
+     * topic may run a little past it (up to the overdraft ceiling), a simpler one
+     * ends sooner. A larger balance does NOT produce a longer book — the target is
+     * fixed here regardless of how many credits the user holds.
+     */
+    private int standardTargetPages = 30;
 }

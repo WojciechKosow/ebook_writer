@@ -86,11 +86,30 @@ public final class ChapterPrompts {
                               EbookChapter chapter,
                               String previousSummaries,
                               int targetWords,
-                              String availableImages) {
+                              String availableImages,
+                              int totalChapters) {
         String imagesSection = (availableImages == null || availableImages.isBlank())
                 ? ""
                 : "\nIMAGES AVAILABLE FOR THIS CHAPTER (use where they fit, or not at all)\n"
                         + availableImages.strip() + "\n";
+        boolean isFinalChapter = totalChapters > 0 && chapter.getChapterNumber() >= totalChapters;
+        String positionSection = isFinalChapter
+                ? """
+
+                        POSITION IN THE BOOK
+                        This is the FINAL chapter (chapter %d of %d) — the book ends here.
+                        Bring the book to a natural, satisfying close: tie together the key
+                        ideas the earlier chapters established and leave the reader with a
+                        clear sense of completion. Do NOT open large new topics or promise
+                        further chapters. If a short recap of the main takeaways fits the
+                        book's style, include it, then end the book.
+                        """.formatted(chapter.getChapterNumber(), totalChapters)
+                : """
+
+                        POSITION IN THE BOOK
+                        This is chapter %d of %d. Cover this chapter's scope fully, but do
+                        not try to conclude the whole book — later chapters continue it.
+                        """.formatted(chapter.getChapterNumber(), Math.max(totalChapters, chapter.getChapterNumber()));
         return """
                 BOOK BRIEF
                 Topic: %s
@@ -107,7 +126,7 @@ public final class ChapterPrompts {
 
                 WHAT EARLIER CHAPTERS ALREADY COVERED (do not repeat these; build on them)
                 %s
-                %s
+                %s%s
                 CHAPTER TO WRITE NOW
                 Chapter %d: %s
                 Scope: %s
@@ -117,7 +136,7 @@ public final class ChapterPrompts {
                 Target length: about %d words. Treat this as a firm limit — write to
                 roughly this length and do NOT substantially exceed it. Staying a
                 little under is fine; going well over is not. Respecting the length
-                keeps the finished book within the reader's page budget.
+                keeps the finished book within its generation budget.
 
                 Write this chapter now.
                 """.formatted(
@@ -131,6 +150,7 @@ public final class ChapterPrompts {
                 previousSummaries == null || previousSummaries.isBlank()
                         ? "(this is the first chapter)" : previousSummaries.trim(),
                 imagesSection,
+                positionSection,
                 chapter.getChapterNumber(),
                 nz(chapter.getTitle()),
                 nz(chapter.getDescription()),

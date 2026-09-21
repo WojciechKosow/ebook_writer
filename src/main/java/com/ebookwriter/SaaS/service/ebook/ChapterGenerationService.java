@@ -64,7 +64,8 @@ public class ChapterGenerationService {
                 chapter,
                 ManuscriptContext.previousSummaries(chapters, chapter.getChapterNumber()),
                 targetWords,
-                availableImages(chapterId)
+                availableImages(chapterId),
+                chapters.size()
         );
 
         String raw = anthropicService.complete(system, userPrompt, maxTokens);

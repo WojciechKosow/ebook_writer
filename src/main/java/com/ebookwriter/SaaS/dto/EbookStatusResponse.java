@@ -30,16 +30,10 @@ public class EbookStatusResponse {
     private boolean downloadReady;
 
     /**
-     * The <b>target</b> length the user asked for, in pages. This is only the
-     * expected length, not a guaranteed final size — the model can't hit an exact
-     * page count, so the real cost comes from {@link #actualPageCount}.
-     */
-    private int targetPageCount;
-
-    /**
      * The <b>final</b> number of pages in the rendered PDF, set once generation
-     * completes (0 while still generating). This is what the user is billed:
-     * 1 credit = 1 final page.
+     * completes (0 while still generating). Scrivetta decides the length from the
+     * topic; this is the real result, not something the user ordered. It is also
+     * what the user is billed: 1 credit = 1 final page.
      */
     private int actualPageCount;
 
@@ -64,7 +58,6 @@ public class EbookStatusResponse {
                 .description(ebook.getDescription())
                 .errorMessage(ebook.getErrorMessage())
                 .downloadReady(ebook.getStatus() == EbookStatus.COMPLETED)
-                .targetPageCount(ebook.getApproxPageCount())
                 .actualPageCount(ebook.getActualPageCount())
                 .creditsCharged(ebook.getCreditsCharged())
                 .chapters(chapters)

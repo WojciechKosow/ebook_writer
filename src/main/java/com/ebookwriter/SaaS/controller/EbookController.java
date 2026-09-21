@@ -2,6 +2,7 @@ package com.ebookwriter.SaaS.controller;
 
 import com.ebookwriter.SaaS.dto.EbookContentResponse;
 import com.ebookwriter.SaaS.dto.EbookStatusResponse;
+import com.ebookwriter.SaaS.dto.GenerationBudgetResponse;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.UserRepository;
@@ -71,6 +72,18 @@ public class EbookController {
     public ResponseEntity<List<EbookStatusResponse>> list(Authentication authentication) {
         User user = currentUser(authentication);
         return ResponseEntity.ok(ebookService.list(user.getId()));
+    }
+
+    /**
+     * Describe the generation budget for the creation form: minimum credits to
+     * start, the orientational page range, the current balance and whether the
+     * user can generate now. Lets the UI show "Estimated usage ~20–30 credits",
+     * the balance, and an enough/not-enough message — a budget, not a page order.
+     */
+    @GetMapping("/generation-budget")
+    public ResponseEntity<GenerationBudgetResponse> generationBudget(Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(ebookService.getGenerationBudget(user.getId()));
     }
 
     /** Load the full editable manuscript (all chapters + Markdown bodies). */
