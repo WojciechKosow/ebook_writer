@@ -4,6 +4,7 @@ import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.entity.EbookImagePlacement;
+import com.ebookwriter.SaaS.dto.cover.CoverLayout;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -77,45 +78,91 @@ public class EbookHtmlBuilder {
     // ---- Cover --------------------------------------------------------------
 
     /**
-     * The cover — the first page. With a placed cover image it fills the whole
-     * page (full-bleed background) with the title/subtitle overlaid on a
-     * legibility scrim. Without one it is a composed typographic cover: an eyebrow
-     * rule, a strong title, the subtitle, and a foot rule — deliberately minimal
-     * and editorial rather than a bare centred title. The image is emitted as an
-     * {@code ebook-image:} reference so it flows through the same rewrite (PDF) /
-     * inline (preview) as chapter images.
+     * The cover — the first page — composed as <b>separate, editable elements</b>:
+     * the AI-generated (text-free) visual as an image asset, and the title,
+     * subtitle, byline and imprint as real typography rendered here (never baked
+     * into the image). The arrangement follows the book's {@link CoverLayout}; each
+     * layout puts the typography in a defined safe area. The visual is emitted as
+     * an {@code ebook-image:} reference so it flows through the same rewrite (PDF) /
+     * inline (preview) as any other image.
+     *
+     * <p>Validation/fallback is built in: {@link #resolveLayout} downgrades any
+     * visual layout to {@link CoverLayout#TYPOGRAPHIC} when no cover image is
+     * present, so a missing or failed visual yields a clean composed cover rather
+     * than a broken one.
      */
     private void appendCover(StringBuilder html, Ebook ebook, EbookImage cover) {
-        String title = orDefault(ebook.getTitle(), ebook.getTopic());
-        String subtitle = ebook.getSubtitle();
-        String author = ebook.getAuthorName();
+        CoverLayout layout = resolveLayout(ebook.getCoverLayout(), cover != null);
+        String css = layout.name().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
 
-        html.append("<div class=\"cover")
-                .append(cover != null ? " cover--with-image" : " cover--typographic")
-                .append("\">");
-        if (cover != null) {
-            html.append("<img class=\"cover-bg\" src=\"")
-                    .append(cover.markdownRef())
-                    .append("\" alt=\"\"/>");
-        } else {
-            // An art-directed visual concept derived from the book's structure —
-            // a large program numeral for a multi-day/step book, otherwise the
-            // title's initial as a ghosted monogram. Deterministic, on-brand, and
-            // never a generic AI stock image.
-            appendCoverVisual(html, ebook);
+        html.append("<div class=\"cover cover--").append(css).append("\">");
+
+        switch (layout) {
+            case TYPOGRAPHIC -> {
+                appendCoverVisual(html, ebook); // structural numeral/monogram motif
+                appendCoverText(html, ebook, "cover-overlay", false);
+            }
+            case IMAGE_LED -> {
+                appendCoverImage(html, cover, "cover-bg");
+                appendCoverText(html, ebook, "cover-overlay cover-overlay--scrim", true);
+            }
+            case EDITORIAL -> {
+                appendCoverImage(html, cover, "cover-art cover-art--editorial");
+                appendCoverText(html, ebook, "cover-overlay cover-overlay--lower", false);
+            }
+            case SPLIT -> {
+                appendCoverImage(html, cover, "cover-art cover-art--split");
+                appendCoverText(html, ebook, "cover-overlay cover-panel", false);
+            }
+            case MINIMAL -> {
+                appendCoverText(html, ebook, "cover-overlay cover-overlay--upper", false);
+                appendCoverImage(html, cover, "cover-art cover-art--minimal");
+            }
         }
-        html.append("<div class=\"cover-overlay\">");
+
+        // Subtle publisher imprint — small, letter-spaced, at the foot.
+        html.append("<div class=\"cover-imprint\">SCRIVETTA</div>");
+        html.append("</div>");
+    }
+
+    /**
+     * The effective cover layout for rendering. A visual layout needs an image; if
+     * none is present the cover falls back to the safe typographic composition, so
+     * a missing/failed visual never produces a broken cover. When an image exists
+     * but no layout was chosen (e.g. a user upload), it is shown image-led.
+     */
+    static CoverLayout resolveLayout(CoverLayout stored, boolean hasImage) {
+        if (!hasImage) {
+            return CoverLayout.TYPOGRAPHIC;
+        }
+        if (stored == null || !stored.requiresVisual()) {
+            return CoverLayout.IMAGE_LED;
+        }
+        return stored;
+    }
+
+    /** Emit the cover visual as an image element (empty when there is no cover). */
+    private void appendCoverImage(StringBuilder html, EbookImage cover, String cssClass) {
+        if (cover == null) {
+            return;
+        }
+        html.append("<img class=\"").append(cssClass).append("\" src=\"")
+                .append(cover.markdownRef()).append("\" alt=\"\"/>");
+    }
+
+    /** The cover's typographic block — real, editable text. {@code light} inverts colours for a scrim. */
+    private void appendCoverText(StringBuilder html, Ebook ebook, String overlayClass, boolean light) {
+        String title = orDefault(ebook.getTitle(), ebook.getTopic());
+        html.append("<div class=\"").append(overlayClass)
+                .append(light ? " cover-overlay--light" : "").append("\">");
         html.append("<div class=\"cover-eyebrow\">").append(escape(eyebrow(ebook.getTopic()))).append("</div>");
         html.append("<div class=\"book-title\">").append(escape(title)).append("</div>");
-        if (isNotBlank(subtitle)) {
-            html.append("<div class=\"book-subtitle\">").append(escape(subtitle)).append("</div>");
+        if (isNotBlank(ebook.getSubtitle())) {
+            html.append("<div class=\"book-subtitle\">").append(escape(ebook.getSubtitle())).append("</div>");
         }
-        if (isNotBlank(author)) {
-            html.append("<div class=\"cover-byline\">by ").append(escape(author.strip())).append("</div>");
+        if (isNotBlank(ebook.getAuthorName())) {
+            html.append("<div class=\"cover-byline\">by ").append(escape(ebook.getAuthorName().strip())).append("</div>");
         }
-        html.append("</div>");
-        // Subtle publisher imprint — small, letter-spaced, at the foot.
-        html.append("<div class=\"cover-imprint\">SCRIVETTE</div>");
         html.append("</div>");
     }
 

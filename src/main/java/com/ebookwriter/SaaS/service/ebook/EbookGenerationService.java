@@ -43,6 +43,7 @@ public class EbookGenerationService {
     private final BookEditingService editingService;
     private final ImagePlanningService imagePlanningService;
     private final ImageGenerationService imageGenerationService;
+    private final CoverGenerationService coverGenerationService;
     private final PdfGenerationService pdfGenerationService;
     private final AnthropicProperties anthropicProperties;
     private final CreditService creditService;
@@ -96,6 +97,12 @@ public class EbookGenerationService {
                 updateStatus(ebookId, EbookStatus.GENERATING_IMAGES, 90);
                 imageGenerationService.generate(ebookId, imagePlan);
             }
+
+            // Cover: the AI generates a text-free visual and Scrivetta composes the
+            // editable cover (title/subtitle stay real text). Best-effort — a
+            // failure leaves the safe typographic cover and never fails the book.
+            updateStatus(ebookId, EbookStatus.GENERATING_IMAGES, 94);
+            coverGenerationService.generateForBook(ebookId);
 
             // Reconcile which offered assets the writer actually placed (and the
             // generated images just added), so the asset library shows accurate
