@@ -57,13 +57,26 @@ public class CreditProperties {
     private int standardTargetMinPages = 20;
 
     /**
-     * The upper end of the orientational page range for a standard ebook, and the
-     * length the planner aims for. It sizes the up-front hold and the plan ceiling
-     * so a book naturally finishes around here and winds down to a real conclusion
-     * rather than being cut off. It is an orientation, not a guarantee: a richer
-     * topic may run a little past it (up to the overdraft ceiling), a simpler one
-     * ends sooner. A larger balance does NOT produce a longer book — the target is
-     * fixed here regardless of how many credits the user holds.
+     * The upper end of the orientational page range for a standard ebook. Used
+     * only to describe the expected result ("usually 20–30 pages") — it is NOT a
+     * cap on length. The real length follows the topic: a richer brief (more
+     * chapters, a broader scope) produces a longer book, and the only hard limit
+     * is the user's own credit budget (see {@link #maxGenerationBudget}). A simpler
+     * topic ends sooner.
      */
     private int standardTargetPages = 30;
+
+    /**
+     * The absolute ceiling, in pages, for a single generation — a safety bound so
+     * one book can never reserve or render an unbounded amount, however large the
+     * user's balance. The real per-book ceiling is
+     * {@code min(balance, maxGenerationBudget) + maxOverdraft}: the book may run as
+     * long as the topic needs, limited only by what the user can afford (plus the
+     * small overdraft), and is trued up to the real page count afterwards so unused
+     * credits are refunded. This is deliberately generous — it exists to stop a
+     * runaway, not to cut a legitimately long book short. A user with enough
+     * credits gets the whole book; the book only winds down to a natural ending
+     * when it approaches the user's actual budget.
+     */
+    private int maxGenerationBudget = 250;
 }

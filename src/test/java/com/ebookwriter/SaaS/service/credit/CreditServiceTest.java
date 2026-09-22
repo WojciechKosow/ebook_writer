@@ -172,6 +172,21 @@ class CreditServiceTest {
     }
 
     @Test
+    void reserveGenerationHoldCeilingScalesWithTheBalanceUnderAHighCap() {
+        UUID user = UUID.randomUUID();
+        UUID ebook = UUID.randomUUID();
+        creditService.grant(user, 50, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");
+
+        // The ebook flow passes the high safety cap (e.g. 250) as the target, so the
+        // ceiling becomes the user's own budget: min(250, 50) + 10 = 60. This is why
+        // a user with more credits gets a longer book instead of being cut at 40.
+        int hold = creditService.reserveGenerationHold(user, ebook, 250, 30);
+
+        assertEquals(60, hold);
+        assertEquals(-10, creditService.getBalance(user));
+    }
+
+    @Test
     void reserveGenerationHoldWithMinimumBudgetIsTargetBoundedForALargeBalance() {
         UUID user = UUID.randomUUID();
         creditService.grant(user, 100, CreditTransactionType.CREDIT_PURCHASE, null, UUID.randomUUID(), "buy");

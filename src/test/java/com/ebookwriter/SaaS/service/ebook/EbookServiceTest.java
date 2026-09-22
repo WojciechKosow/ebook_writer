@@ -34,8 +34,10 @@ import static org.mockito.Mockito.*;
  *   <li>a standard generation needs at least {@code minGenerationBudget} credits
  *       (30): below that {@link EbookService#start} is refused before any state is
  *       mutated or any credits held;</li>
- *   <li>at or above the minimum, the standard target (never the balance) drives
- *       the reservation, so a larger balance does not buy a longer book;</li>
+ *   <li>at or above the minimum, the reservation is sized against the absolute
+ *       safety cap ({@code maxGenerationBudget}) so the ceiling becomes the user's
+ *       own budget — a user with more credits can get a longer book, and nothing
+ *       is capped at an arbitrary page count;</li>
  *   <li>the budget-info endpoint reports the minimum, the orientational range, the
  *       balance and whether the user can generate.</li>
  * </ul>
@@ -104,40 +106,43 @@ class EbookServiceTest {
     }
 
     @Test
-    void startAtExactlyTheMinimumBudgetReservesAgainstTheStandardTargetAndBegins() {
+    void startAtExactlyTheMinimumBudgetReservesAgainstTheBudgetCapAndBegins() {
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(draft()));
         when(creditService.getBalance(userId)).thenReturn(30); // exactly the minimum
         when(ebookRepository.claimForStart(ebookId, EbookStatus.DRAFT, EbookStatus.PENDING)).thenReturn(1);
         when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
+        // With balance 30 the CreditService clamps min(balance, cap)+overdraft = 40.
         when(creditService.reserveGenerationHold(eq(userId), eq(ebookId),
-                eq(creditProperties.getStandardTargetPages()),
+                eq(creditProperties.getMaxGenerationBudget()),
                 eq(creditProperties.getMinGenerationBudget()))).thenReturn(40);
 
         Ebook started = ebookService.start(ebookId, userId);
 
         assertEquals(EbookStatus.PENDING, started.getStatus());
         assertEquals(40, started.getPageBudget());
-        // The reservation uses the fixed standard target, gated on the minimum budget.
+        // The reservation is sized against the safety cap, gated on the minimum budget.
         verify(creditService).reserveGenerationHold(userId, ebookId,
-                creditProperties.getStandardTargetPages(), creditProperties.getMinGenerationBudget());
+                creditProperties.getMaxGenerationBudget(), creditProperties.getMinGenerationBudget());
         verify(generationService).generate(ebookId);
     }
 
     @Test
-    void startWithAmpleBalanceStillReservesOnlyTheStandardTarget() {
+    void startWithAmpleBalanceGetsABudgetSizedCeilingNotAFixedCap() {
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(draft()));
         when(creditService.getBalance(userId)).thenReturn(100); // plenty
         when(ebookRepository.claimForStart(ebookId, EbookStatus.DRAFT, EbookStatus.PENDING)).thenReturn(1);
         when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
+        // CreditService would clamp to min(100, cap)+overdraft = 110 for this balance.
         when(creditService.reserveGenerationHold(eq(userId), eq(ebookId), anyInt(), anyInt()))
-                .thenReturn(40);
+                .thenReturn(110);
 
-        ebookService.start(ebookId, userId);
+        Ebook started = ebookService.start(ebookId, userId);
 
-        // A larger balance does not buy a longer book: the target passed to the
-        // reservation is the fixed standard target, never the balance.
+        // The ceiling scales with the user's credits: the reservation target is the
+        // safety cap, so the whole balance is available for a longer book.
+        assertEquals(110, started.getPageBudget());
         verify(creditService).reserveGenerationHold(userId, ebookId,
-                creditProperties.getStandardTargetPages(), creditProperties.getMinGenerationBudget());
+                creditProperties.getMaxGenerationBudget(), creditProperties.getMinGenerationBudget());
     }
 
     @Test

@@ -147,8 +147,13 @@ credits:
   # the generation budget, NOT a promise of an exact page count — this is simply
   # the smallest budget Scrivetta needs to produce a complete standard ebook.
   min-generation-budget: ${CREDITS_MIN_GENERATION_BUDGET:30}
-  # Orientational page range for a standard ebook (used to describe the expected
-  # result and to size the plan). The book's real length is decided by the topic;
-  # a larger balance does NOT make a longer book.
+  # Orientational page range for a standard ebook (used only to describe the
+  # expected result — "usually 20-30 pages"). It is NOT a cap: the real length
+  # follows the topic, limited only by the user's credit budget below.
   standard-target-min-pages: ${CREDITS_STANDARD_TARGET_MIN_PAGES:20}
   standard-target-pages: ${CREDITS_STANDARD_TARGET_PAGES:30}
+  # Absolute per-generation page ceiling (safety bound only). The real per-book
+  # ceiling is min(balance, this) + max-overdraft, so a user with enough credits
+  # gets the whole book and it only winds down near their actual budget. Raise it
+  # if you want to allow even longer books; it just bounds a single runaway.
+  max-generation-budget: ${CREDITS_MAX_GENERATION_BUDGET:250}
