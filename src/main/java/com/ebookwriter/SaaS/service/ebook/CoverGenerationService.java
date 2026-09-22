@@ -4,6 +4,7 @@ import com.ebookwriter.SaaS.config.properties.OpenAiProperties;
 import com.ebookwriter.SaaS.dto.EbookImageDTO;
 import com.ebookwriter.SaaS.dto.cover.CoverLayout;
 import com.ebookwriter.SaaS.dto.cover.CoverPlan;
+import com.ebookwriter.SaaS.dto.image.AspectRatio;
 import com.ebookwriter.SaaS.entity.ContentSource;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
@@ -145,7 +146,15 @@ public class CoverGenerationService {
         // The hard no-text/no-logo constraints are always appended in code, so the
         // asset can never carry baked-in typography even if the plan forgot.
         String prompt = plan.imagePrompt().strip() + CoverPrompts.IMAGE_CONSTRAINTS;
-        OpenAiImageClient.GeneratedImage generated = imageClient.generate(prompt, plan.aspectRatio());
+        // Generate at the aspect ratio of the layout's image region (not a
+        // free-form model choice), so the visual fills its region with no
+        // distortion and only incidental cropping — the image is prepared for the
+        // composition. Fall back to the plan's ratio only if the layout somehow has
+        // no region ratio (it always does for a visual layout).
+        AspectRatio ratio = plan.layout() != null && plan.layout().imageAspectRatio() != null
+                ? plan.layout().imageAspectRatio()
+                : plan.aspectRatio();
+        OpenAiImageClient.GeneratedImage generated = imageClient.generate(prompt, ratio);
         byte[] bytes = generated.bytes();
 
         String key = "ebooks/" + ebook.getId() + "/images/" + UUID.randomUUID() + ".png";

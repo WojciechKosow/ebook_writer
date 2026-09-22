@@ -15,7 +15,8 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
   ├─ ImagePlanningService     Step 3.5 — plan AI images (structured JSON)
   ├─ ImageGenerationService   Step 3.6 — generate + store + place them
   ├─ CoverGenerationService   Step 3.7 — plan + generate the editable cover visual
-  └─ PdfGenerationService     Step 4   — assemble HTML, render to PDF
+  ├─ PdfGenerationService     Step 4   — assemble HTML, render to PDF
+  └─ EbookValidationService   Step 4.5 — final quality gate before COMPLETED
 ```
 
 - **Structural completeness.** When the brief promises a fixed structure — a
@@ -65,7 +66,9 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
 `DRAFT` (created, assets can be uploaded, nothing generated) → *start* →
 `PENDING → PLANNING (10%) → WRITING (20–80%) → EDITING (85%) →
 PLANNING_IMAGES (88%) → GENERATING_IMAGES (90–95%) → RENDERING (96%) →
-COMPLETED (100%)`, or `FAILED` with an error message. WRITING progress is
+COMPLETED (100%)`, or `FAILED` with an error message. Before `COMPLETED`, a final
+validation gate (`EbookValidationService`) can move a genuinely broken render to
+`FAILED` (and refund the hold) rather than publishing it. WRITING progress is
 spread evenly across the chapters. Planning is followed by a short asset-
 placement step (10–20%) when the draft has uploaded assets. The two image
 statuses are skipped straight through when the book has no image plan (images
@@ -240,6 +243,17 @@ editor preview  ==  PDF output
   `MINIMAL` (small framed visual, strong type), `TYPOGRAPHIC` (no image). The
   planner picks one per book; the architecture supports many compositions without
   hardcoding a single cover.
+- **Layout-aware image shape (no stretching, minimal crop).** Each visual layout
+  fixes the **aspect ratio of its image region** (`CoverLayout.imageAspectRatio()`):
+  `IMAGE_LED` is full-bleed portrait (2:3), the partial-region layouts are
+  landscape (3:2). `CoverGenerationService` generates the visual **at that exact
+  ratio** — the image is prepared *for* the composition rather than generated as a
+  generic square and squashed to fit — and the matching CSS regions in `ebook.css`
+  are sized to the same ratio, so `object-fit: cover` crops nothing meaningful and
+  the image can never be distorted (it holds even in a renderer that ignores
+  `object-fit`). The art-director prompt describes the target shape per layout; the
+  model no longer picks pixel dimensions. The generated PNG is stored and embedded
+  in the PDF **without any resize or recompression**, preserving quality.
 - **Separate, editable elements.** The visual is a normal `EbookImage`
   (`placement=COVER`, `placedBy=AI`) — so the whole existing asset API already
   gives the editor **replace** (`POST …/images` + `PUT …/images/{id}/cover`),
@@ -259,8 +273,29 @@ editor preview  ==  PDF output
 - **Same model, editor and PDF.** The cover is an ordinary first page of the shared
   `EbookHtmlBuilder` + `ebook.css` layout — no PDF-only cover hack — so the editor
   preview and the exported PDF show the identical composition. Unit-tested in
-  `CoverPlanningServiceTest` / `EbookHtmlBuilderTest`; no new env vars (it reuses
-  the `OPENAI_*` image pipeline and `R2_*` storage).
+  `CoverPlanningServiceTest` / `CoverLayoutTest` / `EbookHtmlBuilderTest`; no new
+  env vars (it reuses the `OPENAI_*` image pipeline and `R2_*` storage).
+
+## Final validation (quality gate)
+
+Before a rendered book is published as `COMPLETED`, `EbookValidationService`
+inspects its final state (`inspect()` is a pure function of the book, chapters,
+images and the true rendered page count, so it is unit-tested without a DB or
+renderer):
+
+- **Fatal** (raises `EbookValidationException` ⇒ book → `FAILED`, hold refunded):
+  a render with no pages, or a book with no rendered chapter content. Deliberately
+  narrow, so a legitimately-shaped book is never failed on a cosmetic issue.
+- **Warning** (logged, never fatal): a visual cover layout with no placed cover
+  image (the builder still downgrades it to a typographic cover), a cover asset
+  whose real aspect ratio drifts from its layout region ratio beyond tolerance
+  (a stale/wrong asset that would crop heavily), or a placed image with no
+  storage key.
+
+The gate runs **after** rendering and **before** credit reconciliation, so a
+genuinely broken book fails and the full hold is refunded rather than a broken
+book silently becoming a finished product. Unit-tested in
+`EbookValidationServiceTest`.
 
 ## Content design system
 

@@ -81,19 +81,30 @@ public class CoverPlanningService {
             prompt = null;
         }
         String concept = trimToNull(rc.visualConcept());
-        AspectRatio ratio = AspectRatio.fromString(rc.aspectRatio());
-        return new CoverPlan(layout, concept == null ? "(unspecified)" : concept, prompt, ratio);
+        // The aspect ratio is decided by the layout's image region, not the model,
+        // so the visual is generated for the composition it will fill (no distortion,
+        // minimal crop). The model's own aspectRatio, if any, is ignored.
+        return new CoverPlan(layout, concept == null ? "(unspecified)" : concept, prompt,
+                ratioFor(layout));
+    }
+
+    /** The generation aspect ratio for a layout: its image-region ratio, or a safe portrait. */
+    private static AspectRatio ratioFor(CoverLayout layout) {
+        return (layout != null && layout.requiresVisual() && layout.imageAspectRatio() != null)
+                ? layout.imageAspectRatio()
+                : AspectRatio.PORTRAIT;
     }
 
     /**
      * The deterministic plan: an EDITORIAL cover (a strong, generally-flattering
-     * composition) with a topic-derived, text-free prompt and a portrait ratio.
+     * composition) with a topic-derived, text-free prompt, generated at the
+     * layout's own image-region ratio.
      */
     static CoverPlan fallback(Ebook ebook) {
         return new CoverPlan(CoverLayout.EDITORIAL,
                 "Topic-derived editorial visual (fallback)",
                 CoverPrompts.fallbackImagePrompt(ebook),
-                AspectRatio.PORTRAIT);
+                ratioFor(CoverLayout.EDITORIAL));
     }
 
     private static String trimToNull(String s) {

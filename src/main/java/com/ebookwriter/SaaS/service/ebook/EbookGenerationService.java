@@ -45,6 +45,7 @@ public class EbookGenerationService {
     private final ImageGenerationService imageGenerationService;
     private final CoverGenerationService coverGenerationService;
     private final PdfGenerationService pdfGenerationService;
+    private final EbookValidationService validationService;
     private final AnthropicProperties anthropicProperties;
     private final CreditService creditService;
 
@@ -118,6 +119,12 @@ public class EbookGenerationService {
             updateStatus(ebookId, EbookStatus.RENDERING, 96);
             int pageBudget = ebookRepository.findById(ebookId).map(Ebook::getPageBudget).orElse(0);
             int actualPages = pdfGenerationService.renderAndStore(ebookId, pageBudget);
+
+            // Step 4.5 — final quality gate. A genuinely broken render (no pages, no
+            // content) raises EbookValidationException here, before any credits are
+            // reconciled, so the book fails and the full hold is refunded rather than
+            // a broken book being published as COMPLETED. Quality warnings are logged.
+            validationService.validateOrThrow(ebookId, actualPages);
 
             // Step 5 — true up the up-front hold to the real page count: charge for
             // exactly the pages rendered (1 credit = 1 final page) and refund the
