@@ -32,14 +32,25 @@ public final class PlanningPrompts {
                   ]
                 }
 
+                Your job is to design a COMPLETE book: a coherent arc that opens the
+                topic, develops it, and ends with a real conclusion. The length is a
+                RESULT of covering the topic well, not a number to hit.
+
                 Rules for the plan:
-                - Choose a sensible number of chapters for the target length. Order
-                  them so the book builds logically.
-                - Set each chapter's "approxPages" (an integer). The sum of all
-                  chapters' "approxPages" is a HARD MAXIMUM: it MUST NOT exceed the
-                  maximum page count given in the brief. Aim to use most of that
-                  budget, but never go over it. Fewer, shorter chapters are better
-                  than breaching the limit.
+                - Choose a sensible number of chapters for a complete treatment of
+                  the topic. Order them so the book builds logically.
+                - ALWAYS end the book with a natural concluding chapter (a wrap-up /
+                  conclusion / final chapter) that ties the key ideas together and
+                  closes the book. Never leave the arc open-ended, and never plan a
+                  book that would stop partway through the topic.
+                - Set each chapter's "approxPages" (an integer). Size the WHOLE book
+                  — every chapter plus the conclusion — to fit within the page range
+                  in the brief. The upper bound there is a HARD MAXIMUM: the sum of
+                  all "approxPages" MUST NOT exceed it. If the topic is broad, cover
+                  it at the right altitude and still conclude within the budget
+                  rather than starting material you cannot finish. Do NOT pad with
+                  filler to reach the range — a complete book that lands a little
+                  under is better than a padded one, and far better than one cut off.
                 - Make chapter scopes distinct and non-overlapping.
                 - COMPLETE THE PROMISED STRUCTURE. If the title, topic or
                   instructions promise a fixed structure (e.g. a "7-day plan", a
@@ -53,11 +64,12 @@ public final class PlanningPrompts {
                 """;
     }
 
-    public static String user(Ebook e, int targetPages, int maxPages) {
-        return user(e, targetPages, maxPages, "");
+    public static String user(Ebook e, int targetLowPages, int targetHighPages, int maxPages) {
+        return user(e, targetLowPages, targetHighPages, maxPages, "");
     }
 
-    public static String user(Ebook e, int targetPages, int maxPages, String structureHint) {
+    public static String user(Ebook e, int targetLowPages, int targetHighPages, int maxPages,
+                              String structureHint) {
         String structureSection = (structureHint == null || structureHint.isBlank())
                 ? ""
                 : "\nPROMISED STRUCTURE (must be fully covered)\n" + structureHint.strip() + "\n";
@@ -73,11 +85,13 @@ public final class PlanningPrompts {
                 Desired writing style:
                 %s
 
-                Target length: aim for the sum of all chapters' approxPages to be
-                about %d pages — this is the length the reader asked for, so plan
-                to hit it, not to pad beyond it. You may go a little higher only if
-                the material genuinely needs it, but the sum MUST NOT exceed %d
-                pages under any circumstances (a HARD LIMIT).
+                Expected length: a complete book on this topic is typically around
+                %d–%d pages. Treat this as orientation, not a quota — let the topic
+                decide the natural length within it. Do not pad to reach it. Whatever
+                length you choose, the sum of all chapters' approxPages MUST NOT
+                exceed %d pages under any circumstances (a HARD LIMIT), and the book
+                MUST reach a proper conclusion within that limit — plan the ending in,
+                never let the book run out of room mid-topic.
 
                 Language:
                 %s
@@ -91,7 +105,8 @@ public final class PlanningPrompts {
                 nz(e.getTopic()),
                 nz(e.getTargetAudience()),
                 nz(e.getStyle()),
-                targetPages,
+                targetLowPages,
+                targetHighPages,
                 maxPages,
                 blankToEnglish(e.getLanguage()),
                 nz(e.getAdditionalInstructions()),

@@ -143,3 +143,12 @@ credits:
   # balance may dip up to this many credits below zero (lowest balance = -10),
   # and never further. It bounds both the up-front hold and the render page cap.
   max-overdraft: ${CREDITS_MAX_OVERDRAFT:10}
+  # Minimum credit budget required to START a standard generation. Credits are
+  # the generation budget, NOT a promise of an exact page count — this is simply
+  # the smallest budget Scrivetta needs to produce a complete standard ebook.
+  min-generation-budget: ${CREDITS_MIN_GENERATION_BUDGET:30}
+  # Orientational page range for a standard ebook (used to describe the expected
+  # result and to size the plan). The book's real length is decided by the topic;
+  # a larger balance does NOT make a longer book.
+  standard-target-min-pages: ${CREDITS_STANDARD_TARGET_MIN_PAGES:20}
+  standard-target-pages: ${CREDITS_STANDARD_TARGET_PAGES:30}

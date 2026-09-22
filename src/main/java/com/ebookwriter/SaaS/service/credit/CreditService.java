@@ -109,13 +109,31 @@ public class CreditService {
      */
     @Transactional
     public int reserveGenerationHold(UUID userId, UUID ebookId, int targetPages) {
+        return reserveGenerationHold(userId, ebookId, targetPages, MIN_BALANCE_TO_START);
+    }
+
+    /**
+     * Reserve the up-front hold, requiring at least {@code minBalanceToStart}
+     * credits to begin. This is the same ledger operation as
+     * {@link #reserveGenerationHold(UUID, UUID, int)} but with a caller-supplied
+     * minimum: the ebook flow passes the standard <em>generation budget</em>
+     * (e.g. 30 credits), so a user below that budget cannot start. The minimum is
+     * checked under the same wallet lock as the reservation itself, so the gate is
+     * race-safe: a concurrent spend that drops the balance below the minimum is
+     * seen here and rejected.
+     *
+     * @throws InsufficientCreditsException if the balance is below {@code minBalanceToStart}
+     */
+    @Transactional
+    public int reserveGenerationHold(UUID userId, UUID ebookId, int targetPages, int minBalanceToStart) {
         int target = Math.max(1, targetPages);
+        int minToStart = Math.max(MIN_BALANCE_TO_START, minBalanceToStart);
         int maxOverdraft = Math.max(0, creditProperties.getMaxOverdraft());
         CreditBalance wallet = lockOrCreateWallet(userId);
         int balance = wallet.getBalance();
 
-        if (balance < MIN_BALANCE_TO_START) {
-            throw new InsufficientCreditsException(MIN_BALANCE_TO_START, balance);
+        if (balance < minToStart) {
+            throw new InsufficientCreditsException(minToStart, balance);
         }
 
         // Ceiling = min(target, balance) + overdraft. Guarantees balance - hold >=

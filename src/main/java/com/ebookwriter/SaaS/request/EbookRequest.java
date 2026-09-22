@@ -1,7 +1,5 @@
 package com.ebookwriter.SaaS.request;
 
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -9,6 +7,12 @@ import lombok.NoArgsConstructor;
 
 /**
  * The single ebook-generation brief provided by the user.
+ *
+ * <p>The user no longer chooses a page count. Scrivetta decides how much content
+ * a complete, worthwhile ebook needs from the topic, scope and quality of the
+ * material — the final length is a <em>result</em> of generation, not an order.
+ * The generation budget is the user's credit balance (see the credits API), and
+ * any exact page count sent by an older client is ignored.
  */
 @Data
 @NoArgsConstructor
@@ -21,16 +25,6 @@ public class EbookRequest {
     private String targetAudience;
 
     private String style;
-
-    /**
-     * The <b>target length</b>, in pages — the expected size of the ebook, not a
-     * guaranteed final page count. The AI can't hit an exact number, so the book
-     * may finish a little shorter or longer. Credits are charged on the real
-     * final page count (1 credit = 1 final page), not on this target.
-     */
-    @Min(1)
-    @Max(500)
-    private int approxPageCount;
 
     /** e.g. "English". Defaults to English when blank. */
     private String language;
