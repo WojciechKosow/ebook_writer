@@ -43,14 +43,15 @@ public final class PlanningPrompts {
                   conclusion / final chapter) that ties the key ideas together and
                   closes the book. Never leave the arc open-ended, and never plan a
                   book that would stop partway through the topic.
-                - Set each chapter's "approxPages" (an integer). Size the WHOLE book
-                  — every chapter plus the conclusion — to fit within the page range
-                  in the brief. The upper bound there is a HARD MAXIMUM: the sum of
-                  all "approxPages" MUST NOT exceed it. If the topic is broad, cover
-                  it at the right altitude and still conclude within the budget
-                  rather than starting material you cannot finish. Do NOT pad with
-                  filler to reach the range — a complete book that lands a little
-                  under is better than a padded one, and far better than one cut off.
+                - Set each chapter's "approxPages" (an integer). Give the topic the
+                  room it needs: plan every chapter the material calls for. The brief
+                  states a rough typical range and one HARD MAXIMUM for the total —
+                  the sum of all "approxPages" MUST NOT exceed that maximum, but you
+                  are free to use as much of it as a complete treatment needs. Only if
+                  the complete book would exceed the maximum, cover the topic at a
+                  higher altitude and still conclude within it rather than starting
+                  material you cannot finish. Do NOT pad with filler — a complete book
+                  is the goal, never a padded one and never one cut off mid-topic.
                 - Make chapter scopes distinct and non-overlapping.
                 - COMPLETE THE PROMISED STRUCTURE. If the title, topic or
                   instructions promise a fixed structure (e.g. a "7-day plan", a
@@ -85,13 +86,18 @@ public final class PlanningPrompts {
                 Desired writing style:
                 %s
 
-                Expected length: a complete book on this topic is typically around
-                %d–%d pages. Treat this as orientation, not a quota — let the topic
-                decide the natural length within it. Do not pad to reach it. Whatever
-                length you choose, the sum of all chapters' approxPages MUST NOT
-                exceed %d pages under any circumstances (a HARD LIMIT), and the book
-                MUST reach a proper conclusion within that limit — plan the ending in,
-                never let the book run out of room mid-topic.
+                Length: cover the topic and this brief COMPLETELY. Plan every
+                chapter the material genuinely needs and give each enough pages to be
+                worthwhile — if the brief implies many chapters or a broad scope,
+                plan them all; do not compress or drop parts to keep the book short.
+                Many simple standard ebooks land around %d–%d pages, but that is only
+                a rough guide, NOT a target or a cap: a richer topic should be longer.
+                Do not pad with filler either — let the topic decide. The ONE hard
+                limit is that the sum of all chapters' approxPages must not exceed %d
+                pages (the user's available budget); stay within it and always plan a
+                proper concluding chapter so the book ends naturally rather than
+                running out of room mid-topic. Only trim scope to fit this limit if
+                the complete book would genuinely exceed it.
 
                 Language:
                 %s

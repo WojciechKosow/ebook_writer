@@ -134,10 +134,13 @@ public class EbookService {
         }
         ebook.setStatus(EbookStatus.PENDING);
 
-        // System-defined standard target: the length the planner aims for. It is
-        // fixed regardless of how many credits the user holds — a larger balance
-        // never produces a longer book.
-        int targetPages = Math.max(1, creditProperties.getStandardTargetPages());
+        // The book's ceiling is the user's own budget, not a fixed page target:
+        // reserve against the absolute safety cap so the hold becomes
+        // min(balance, maxGenerationBudget) + overdraft. A user with enough credits
+        // gets the whole book (the planner and render are free to run to the topic's
+        // natural length), and it only winds down when it approaches their actual
+        // budget — nothing is cut short at an arbitrary page count.
+        int targetPages = Math.max(1, creditProperties.getMaxGenerationBudget());
 
         // Reserve the overdraft-aware hold under the wallet lock, gated on the
         // standard generation budget.
