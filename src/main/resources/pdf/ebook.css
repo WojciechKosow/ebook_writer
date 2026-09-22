@@ -210,12 +210,19 @@ th {
 .cover--typographic .cover-eyebrow { margin-bottom: 1.1cm; }
 .cover--typographic .book-title { font-size: 34pt; }
 
-/* --- IMAGE_LED: full-bleed visual + title over a legibility scrim --- */
+/* Cover image regions are sized to the SAME aspect ratio the visual is generated
+   at (CoverLayout.imageAspectRatio): full-bleed regions are 2:3 (PORTRAIT), the
+   partial regions are 3:2 (LANDSCAPE). Because the region ratio matches the asset
+   ratio, object-fit: cover crops nothing meaningful, and even a renderer that
+   ignored object-fit would show no distortion. Never set only one of width/height
+   on a cover image (that would let it stretch); always pin both to the region. */
+
+/* --- IMAGE_LED: full-bleed visual (2:3) + title over a legibility scrim --- */
 .cover--image-led { background: #14110d; }
 .cover-bg {
     position: absolute;
     top: 0; left: 0;
-    width: 6in; height: 9in;
+    width: 6in; height: 9in;   /* 2:3 — matches PORTRAIT asset exactly */
     object-fit: cover;
     object-position: center;
 }
@@ -228,38 +235,38 @@ th {
 }
 .cover-overlay--scrim .book-title { font-size: 30pt; }
 
-/* --- EDITORIAL: visual in the upper field, title on paper in the lower third --- */
+/* --- EDITORIAL: visual (3:2) in the upper field, title on paper below --- */
 .cover--editorial .cover-art--editorial {
     position: absolute;
     top: 0; left: 0;
-    width: 6in; height: 4.9in;
+    width: 6in; height: 4in;   /* 3:2 — matches LANDSCAPE asset exactly */
     object-fit: cover;
     object-position: center;
 }
 .cover--editorial .cover-overlay--lower {
     position: absolute;
-    left: 1.7cm; right: 1.7cm; top: 5.5in;
+    left: 1.7cm; right: 1.7cm; top: 4.7in;
     text-align: left;
 }
 .cover--editorial .cover-eyebrow { margin-bottom: 0.6cm; }
 
-/* --- SPLIT: visual top region, typography on a distinct panel below --- */
+/* --- SPLIT: visual (3:2) top region, typography on a distinct panel below --- */
 .cover--split .cover-art--split {
     position: absolute;
     top: 0; left: 0;
-    width: 6in; height: 5in;
+    width: 6in; height: 4in;   /* 3:2 — matches LANDSCAPE asset exactly */
     object-fit: cover;
     object-position: center;
 }
 .cover--split .cover-panel {
     position: absolute;
-    left: 0; right: 0; top: 5in; bottom: 0;
+    left: 0; right: 0; top: 4in; bottom: 0;
     background: #f4f2ec;
-    padding: 1.3cm 1.7cm;
+    padding: 1.5cm 1.7cm;
     text-align: left;
 }
 
-/* --- MINIMAL: strong typography up top, a small framed visual below --- */
+/* --- MINIMAL: strong typography up top, a small framed visual (3:2) below --- */
 .cover--minimal .cover-overlay--upper {
     position: absolute;
     top: 3cm; left: 1.7cm; right: 1.7cm;
@@ -268,7 +275,7 @@ th {
 .cover--minimal .cover-art--minimal {
     position: absolute;
     right: 1.7cm; bottom: 2.2cm;
-    width: 7.4cm; height: 5cm;
+    width: 7.5cm; height: 5cm;   /* 3:2 — matches LANDSCAPE asset exactly */
     object-fit: cover;
     object-position: center;
 }

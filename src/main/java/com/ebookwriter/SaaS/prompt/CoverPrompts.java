@@ -43,34 +43,43 @@ public final class CoverPrompts {
                 image must contain NO words of any kind.
 
                 Analyse the book — subject, audience, emotional tone — and decide:
-                1. The most fitting COMPOSITION (choose exactly one):
-                   - EDITORIAL   : a large visual in the upper area, strong title below
-                                   it on paper; title safe area is the LOWER third.
-                   - IMAGE_LED   : the visual fills the whole cover; title sits over a
-                                   scrim; title safe area is the BOTTOM band.
-                   - SPLIT       : visual on the top ~55%, typography on a panel below;
-                                   title safe area is the BOTTOM panel.
-                   - MINIMAL     : a small, quiet visual with lots of negative space and
-                                   strong typography; title safe area is the UPPER area.
+                1. The most fitting COMPOSITION (choose exactly one). Each layout
+                   fixes the SHAPE of the image region, so compose the visual for
+                   that shape and put its negative space where the title will sit:
+                   - EDITORIAL   : a landscape (3:2, wider than tall) visual across
+                                   the upper field; strong title below it on paper.
+                                   Keep the focal point centred; title safe area is
+                                   the LOWER third of the page (outside the image).
+                   - IMAGE_LED   : a portrait (2:3, taller than wide) visual that
+                                   fills the whole cover; title sits over a scrim.
+                                   Leave the BOTTOM band calm and uncluttered.
+                   - SPLIT       : a landscape (3:2) visual across the top region;
+                                   typography on a distinct panel below. Title safe
+                                   area is the BOTTOM panel (outside the image).
+                   - MINIMAL     : a small landscape (3:2) visual low on the page with
+                                   lots of negative space; strong typography up top.
+                                   Title safe area is the UPPER area (outside the image).
                    - TYPOGRAPHIC : no image is needed; the subject reads better as pure
                                    typography. Use this only when a visual would add
                                    nothing.
                 2. The visual DIRECTION: photography, conceptual illustration, abstract
                    or textural — whatever genuinely suits this subject and audience.
                 3. A concrete IMAGE PROMPT for an image model that renders ONLY the
-                   visual: concrete subject, composition, palette and mood. It must
-                   leave clear, uncluttered negative space in the layout's title safe
-                   area so the typography stays readable. Support the meaning of the
-                   book, never merely decorate.
+                   visual: concrete subject, composition, palette and mood, framed for
+                   the chosen layout's shape (landscape or portrait as above). It must
+                   leave clear, uncluttered negative space toward the layout's title
+                   safe area so the typography stays readable. Support the meaning of
+                   the book, never merely decorate.
 
                 Reply with ONLY a JSON object, no prose, in exactly this shape:
                 {
                   "layout": "EDITORIAL|IMAGE_LED|SPLIT|MINIMAL|TYPOGRAPHIC",
                   "visualConcept": "<one plain sentence describing the visual>",
-                  "imagePrompt": "<prompt for the image model, no text/words/logos>",
-                  "aspectRatio": "2:3|3:2|1:1"
+                  "imagePrompt": "<prompt for the image model, no text/words/logos>"
                 }
-                If TYPOGRAPHIC, set imagePrompt to "" and aspectRatio to "2:3".
+                The image region's exact aspect ratio is decided by the layout, so do
+                NOT specify pixel dimensions or an aspect ratio — just compose for the
+                shape described above. If TYPOGRAPHIC, set imagePrompt to "".
                 Never include the title, subtitle, author, brand or any lettering in
                 the imagePrompt.
                 """;
