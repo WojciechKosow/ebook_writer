@@ -46,6 +46,10 @@ public class SecurityConfig {
                         // (see StripeWebhookService), not a JWT — Stripe calls it
                         // server-to-server.
                         .requestMatchers("/api/stripe/webhook").permitAll()
+                        // Signed PDF links: the short-lived token in the URL is the
+                        // credential (verified in the controller), so the browser can
+                        // download natively without an Authorization header.
+                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/ebooks/*/file").permitAll()
                         .anyRequest().authenticated()
                 )
                 .httpBasic(basic -> basic.disable())
