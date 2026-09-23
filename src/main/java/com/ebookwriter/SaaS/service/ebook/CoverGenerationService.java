@@ -154,7 +154,8 @@ public class CoverGenerationService {
         AspectRatio ratio = plan.layout() != null && plan.layout().imageAspectRatio() != null
                 ? plan.layout().imageAspectRatio()
                 : plan.aspectRatio();
-        OpenAiImageClient.GeneratedImage generated = imageClient.generate(prompt, ratio);
+        OpenAiImageClient.GeneratedImage generated =
+                imageClient.generate(prompt, ratio, openAiProperties.getCoverQuality());
         byte[] bytes = generated.bytes();
 
         String key = "ebooks/" + ebook.getId() + "/images/" + UUID.randomUUID() + ".png";
@@ -207,7 +208,7 @@ public class CoverGenerationService {
     }
 
     private List<EbookChapter> chapters(UUID ebookId) {
-        return chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+        return ManuscriptContext.inBook(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId));
     }
 
     private boolean canGenerate() {

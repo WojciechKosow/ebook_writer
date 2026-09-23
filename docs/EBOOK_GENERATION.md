@@ -57,7 +57,8 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
   the bytes live in a private Cloudflare R2 bucket under `storageKey`. Carries a
   `role` (what it is — general/logo/author/product/cover/illustration), a
   `placement` (where it's used — unused/cover/chapter + the chapter), `placedBy`
-  (AI or user), a `displayWidthPercent` (resize), content type, dimensions, size,
+  (AI or user), a `displayWidthPercent` (resize), an optional crop focal point
+  (`focalX`/`focalY`), content type, dimensions, size,
   and an optional AI `aiDescription`/`tags`. Assets belong to the ebook and
   persist from before generation through editing.
 
@@ -91,7 +92,7 @@ to the authenticated user.
 | POST   | `/api/ebooks/{id}/images`     | Upload an asset (multipart `file`, optional `role`). Returns `201`. Works on a draft or a finished book. |
 | GET    | `/api/ebooks/{id}/images`     | List the book's assets (role, placement, usage, dimensions). |
 | GET    | `/api/ebooks/{id}/images/{imageId}/raw` | Stream an asset's bytes for preview (bucket is private). |
-| PATCH  | `/api/ebooks/{id}/images/{imageId}` | Update editor metadata: `role` and/or `displayWidthPercent` (resize, 1–100). |
+| PATCH  | `/api/ebooks/{id}/images/{imageId}` | Update editor metadata: `role`, `displayWidthPercent` (resize, 1–100) and/or `focalX`/`focalY` (crop focal point, 0–100). |
 | PUT    | `/api/ebooks/{id}/images/{imageId}/cover` | Make this asset the cover (demotes any current cover). |
 | POST   | `/api/ebooks/{id}/images/cover/regenerate` | Regenerate the AI cover visual, keeping title/subtitle/layout. |
 | DELETE | `/api/ebooks/{id}/images/{imageId}` | Delete an asset (also removes it from storage). |
@@ -103,13 +104,21 @@ to the authenticated user.
   "topic": "Building SaaS Applications with Spring Boot",
   "targetAudience": "Junior Java developers",
   "style": "Practical, technical, easy to understand",
-  "approxPageCount": 50,
+  "targetPages": 50,
   "language": "English",
   "additionalInstructions": "Focus on real-world development. Include examples.",
   "sourceMaterial": "(optional examples or source text)",
   "authorName": "(optional — printed on the cover as a byline)"
 }
 ```
+
+`targetPages` is the selected **target length** (~20 / 30 / 50 / 75 / 100; the
+options, default and the user's affordable size are served by
+`GET /api/ebooks/generation-budget`). It is a *soft content budget* — see
+[Target length & credits](#target-length--credits). Optional (defaults to
+`credits.standard-target-pages`), clamped to `[10, credits.max-target-pages]`;
+`approxPageCount` is accepted as an alias for older clients. The status response
+echoes it as `targetPages` next to the real `actualPageCount`.
 
 Frontend flow: `POST /api/ebooks` (draft) → optionally upload assets to
 `POST .../images` → `POST .../start` → poll `GET /api/ebooks/{id}` until
@@ -249,9 +258,11 @@ editor preview  ==  PDF output
   landscape (3:2). `CoverGenerationService` generates the visual **at that exact
   ratio** — the image is prepared *for* the composition rather than generated as a
   generic square and squashed to fit — and the matching CSS regions in `ebook.css`
-  are sized to the same ratio, so `object-fit: cover` crops nothing meaningful and
-  the image can never be distorted (it holds even in a renderer that ignores
-  `object-fit`). The art-director prompt describes the target shape per layout; the
+  are sized to the same ratio. openhtmltopdf does **not** honour `object-fit`
+  (verified by the rendered-PDF QA), so any cover whose shape differs from its
+  region — e.g. a user upload — is cropped to the region's exact ratio around its
+  focal point by `CoverImageFitter` before drawing, in both the PDF and the preview.
+  An already-fitted AI cover is passed through byte-for-byte. The art-director prompt describes the target shape per layout; the
   model no longer picks pixel dimensions. The generated PNG is stored and embedded
   in the PDF **without any resize or recompression**, preserving quality.
 - **Separate, editable elements.** The visual is a normal `EbookImage`
@@ -260,6 +271,13 @@ editor preview  ==  PDF output
   **upload**, **resize/reposition** (`PATCH …/images/{id}`) and **remove**
   (`DELETE …/images/{id}`) for free, with no duplicate infrastructure. The
   title/subtitle are edited through the normal content model.
+- **Focal point & quality.** `PATCH …/images/{id}` accepts `focalX`/`focalY`
+  (0–100% of the image). When an asset's shape differs from its region (e.g. a
+  square user upload in a portrait cover), `CoverImageFitter` crops it at full
+  resolution to the region's ratio around that point (never stretched; the stored
+  asset is untouched) — the same crop in preview and PDF. The cover visual is requested at
+  `openai.cover-quality` (default `high`); PNG bytes are embedded losslessly, with
+  no resize or recompression.
 - **Regenerate.** `POST /api/ebooks/{id}/images/cover/regenerate` re-generates just
   the visual — keeping the title, subtitle, layout and the rest of the book — and
   replaces the previous AI cover (a user-uploaded cover is demoted, not deleted).
@@ -276,6 +294,27 @@ editor preview  ==  PDF output
   `CoverPlanningServiceTest` / `CoverLayoutTest` / `EbookHtmlBuilderTest`; no new
   env vars (it reuses the `OPENAI_*` image pipeline and `R2_*` storage).
 
+## Pagination & final page
+
+- **Semantic units stay together** (`EbookContentRenderer.paginate`, shared by
+  preview and PDF): an image on its own line becomes a `<figure>` with its caption
+  inside (captions can't separate from images; generic/overlong alt text isn't
+  printed); a section heading is grouped with the block it introduces (paragraph,
+  list, component, modest table/figure) so it can't be stranded at a page foot —
+  a very long paragraph is left free so a page isn't pushed forward for one
+  heading. Components, code, figures and table rows avoid page-internal breaks;
+  table headers repeat on continuation pages.
+- **No near-empty last page.** After rendering, if the final page holds only a
+  spilled line or two (and no image), the renderer re-renders with the final
+  chapter set slightly tighter (`chapter--snug`) and keeps it only if the page
+  disappears. The decision is stored on the book (`layoutSnugEnding`) so the
+  editor preview uses the identical layout.
+- **Opener pages are intentional.** Chapter/day openers are sparse by design and
+  are never treated as defects.
+- **Deferred chapters** are excluded from the TOC, the body, the editor content,
+  and image/cover planning. (An editor save sends the authoritative chapter list,
+  so saving drops them.)
+
 ## Final validation (quality gate)
 
 Before a rendered book is published as `COMPLETED`, `EbookValidationService`
@@ -291,6 +330,16 @@ renderer):
   whose real aspect ratio drifts from its layout region ratio beyond tolerance
   (a stale/wrong asset that would crop heavily), or a placed image with no
   storage key.
+
+- **Ending** (warning): the final chapter ends mid-sentence, or its last paragraph
+  refers to content that doesn't follow ("in the next chapter…").
+- **Rendered-PDF QA** (`PdfQualityInspector`, over the exact bytes delivered): an
+  unreadable/page-less PDF is **fatal**; warnings for pages not at the 6×9" trim,
+  empty pages, pages holding only a stray token, a sparse final page, non-embedded
+  fonts, fewer images drawn than placed (missing/broken), images drawn distorted
+  (drawn vs intrinsic aspect), under-resolved (< 110 dpi) or extremely compressed
+  JPEGs, glyphs outside the page (overflow/clipping), and **TOC page numbers that
+  don't match** the page each entry links to.
 
 The gate runs **after** rendering and **before** credit reconciliation, so a
 genuinely broken book fails and the full hold is refunded rather than a broken
@@ -483,6 +532,9 @@ future regeneration can preserve them.
 | `OPENAI_IMAGES_ENABLED` | `true` | Master switch for the whole image pipeline (planner + generator). |
 | `OPENAI_MAX_IMAGES_PER_BOOK` | `6` | Hard ceiling on generated images per book. |
 | `OPENAI_MAX_IMAGES_PER_CHAPTER` | `2` | Hard ceiling on generated images per chapter. |
+| `OPENAI_COVER_QUALITY` | `high` | `quality` sent for the cover visual (gpt-image: `low\|medium\|high\|auto`; blank = provider default). |
+| `CREDITS_STANDARD_TARGET_PAGES` | `30` | Default target length when none is selected. |
+| `CREDITS_MAX_TARGET_PAGES` | `150` | Largest selectable target (higher is clamped). |
 | `OPENAI_READ_TIMEOUT_MS` | `120000` | Per-call read timeout (image generation is slow). |
 | `OPENAI_CONNECT_TIMEOUT_MS` | `10000` | Per-call connect timeout. |
 | `OPENAI_MAX_RETRIES` | `2` | Retries on a failed image call before that one image is given up. |
@@ -513,6 +565,54 @@ Three ways to run it, cheapest to best:
   the consistency pass at a fraction of the cost — a good default for
   validation.
 - **On, same model**: best quality, highest cost.
+
+## Target length & credits
+
+Two separate concepts drive generation, and they are never confused:
+
+| | **Target length** (`targetPages`) | **Credit ceiling** (`pageBudget`) |
+|---|---|---|
+| What | how much content we *ideally* want | how much the user is *allowed* to generate |
+| Used by | planning (outline, depth, exercises, visuals) | writing pacing + render safety bound |
+| Nature | **soft** — never truncates, never pads | **hard** — `min(balance, cap) + overdraft` |
+
+1. **Content budgeting before generation.** `ContentBudget.forTarget` turns the
+   target into a plan scale: chapter range, depth, practical components per
+   chapter, visual density (~20 focused … ~100 definitive). The planner is asked to
+   land in roughly `0.9×–1.15×` of the target. `BookPlanningService` then keeps the
+   outline near it: a plan within the **soft limit** (`1.25×` the content target,
+   or more if a promised structure — every day of a 7-day program — needs it) is
+   kept exactly as designed; a plan far above it (the "keeps expanding until the
+   credits run out" failure) is rebalanced toward the target **without dropping
+   chapters**; a short plan is never inflated. If the user can't strictly afford
+   the target, a complete book is planned at the affordable size instead of
+   planning the full target and running out mid-book.
+2. **Credit-aware writing (`WritingBudget`).** Before each chapter the
+   orchestrator re-checks the remaining credit capacity (net of front matter, a
+   page per possible opener, image slack and a safety margin) against the rest of
+   the plan, using the words actually written so far:
+   - *enough credits* → write as planned. Passing the soft target never stops a
+     book — a chapter that ran long is kept whole and generation continues;
+   - *slightly short* → tighten the remaining chapters (≥ 60% of plan), drop none;
+   - *genuinely short* → **wind down**: keep as many upcoming chapters as fit, always
+     keep the planned final chapter, and mark the ones in between `DEFERRED`
+     (outline kept, never rendered — ready for a future *Continue* feature). The
+     final chapter is told exactly which topics are out of scope so it neither
+     references nor apologises for them.
+   Credits are permission to continue, never an instruction to write more: chapter
+   targets are never raised because credits are available.
+3. **Never mid-thought.** The chapter target is a guide, not a stop ("finish the
+   thought"), with generous output-token headroom. If a response still hits the
+   token limit, `ManuscriptIntegrity.repairTruncated` drops the incomplete tail —
+   half sentence, unclosed exercise/component, unterminated code fence, dangling
+   heading — back to the last complete block. A truncated *edit* is discarded in
+   favour of the complete original.
+4. **Premium ending architecture.** The final chapter is written (and edited)
+   against `ChapterPrompts.ENDING_ARCHITECTURE`: synthesis (not a TOC recap) →
+   practical next step → completion checklist where it fits → final takeaway →
+   intentional closing, with generic AI sign-offs banned and no references to
+   content that doesn't exist. Non-final chapters end at clean boundaries and only
+   refer forward to chapters in the (deferral-aware) outline.
 
 ## Page-count handling & billing
 
@@ -550,13 +650,13 @@ balance can ever reach from generation is `-10`.
    the 6×9" layout, measured against the real PDF pipeline
    (`WordsPerPageCalibrationTest`). This keeps the natural length close to the
    target so the overshoot the ceiling has to trim is small.
-4. **Stop a runaway at the ceiling.** After rendering, the true page count is read
-   from the PDF (`PDDocument.getNumberOfPages()`). A natural ending above the
-   target renders in full. Only if the book exceeds the reserved ceiling (a genuine
-   runaway that would breach the overdraft floor) is trailing content trimmed — at
-   a **paragraph boundary**, never mid-sentence — and the book re-rendered, a
-   cheap API-free loop, until it fits; trimmed chapters are persisted so the stored
-   manuscript matches the PDF.
+4. **Stop a runaway at the ceiling — keeping the ending.** After rendering, the
+   true page count is read from the PDF. A book above its target renders in full.
+   Only if it exceeds the reserved credit ceiling (writing is paced to prevent
+   this) is content removed: whole `##` sections from the end of the latest
+   *earlier* chapter first, so the final chapter — synthesis, next step, closing —
+   is preserved; components and code blocks are never split. Trimmed chapters are
+   persisted so the stored manuscript matches the PDF.
 5. **Bill the real page count, idempotently.** The hold is trued up
    (`EbookGenerationService.reconcileCredits`): the user is charged for exactly the
    pages rendered (clamped to `[1, ceiling]`) and the unused reservation is refunded

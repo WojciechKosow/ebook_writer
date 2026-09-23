@@ -51,23 +51,32 @@ public class BookEditingService {
 
         // Size the ceiling off the existing content so the editor has room to
         // return the full chapter plus modest expansion.
-        long estimatedTokens = chapter.getContent().length() / 3L + 2000L;
+        long estimatedTokens = chapter.getContent().length() / 2L + 3000L;
         long maxTokens = Math.min(MAX_OUTPUT_TOKENS, estimatedTokens);
 
         String system = EditingPrompts.system(ebook.getLanguage());
+        List<EbookChapter> inBook = ManuscriptContext.inBook(chapters);
+        boolean finalChapter = !inBook.isEmpty()
+                && inBook.get(inBook.size() - 1).getId().equals(chapter.getId());
         String userPrompt = EditingPrompts.user(
                 ebook,
-                ManuscriptContext.outline(chapters),
+                ManuscriptContext.outline(inBook),
                 chapter,
-                ManuscriptContext.otherSummaries(chapters, chapter.getChapterNumber())
+                ManuscriptContext.otherSummaries(inBook, chapter.getChapterNumber()),
+                finalChapter
         );
 
-        String edited = anthropicService
-                .complete(system, userPrompt, maxTokens, anthropicProperties.resolveEditingModel())
-                .trim();
+        AnthropicService.Completion completion = anthropicService
+                .completeDetailed(system, userPrompt, maxTokens, anthropicProperties.resolveEditingModel());
+        String edited = completion.text().trim();
 
-        if (!edited.isEmpty()) {
-            chapter.setContent(edited);
+        // An edit cut off by the token limit would silently lose the chapter's tail
+        // (often its conclusion). Keep the complete original instead.
+        if (completion.truncated()) {
+            log.warn("Edit of chapter {} in ebook {} was truncated; keeping the unedited chapter",
+                    chapter.getChapterNumber(), ebookId);
+        } else if (!edited.isEmpty()) {
+            chapter.setContent(ManuscriptIntegrity.trimTrailingOrphans(edited));
         }
         chapter.setStatus(ChapterStatus.EDITED);
         chapterRepository.save(chapter);

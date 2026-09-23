@@ -393,8 +393,9 @@ th {
     margin-top: 1em;
 }
 
-/* Inline chapter images: never overflow the column, keep their aspect ratio,
-   and stay with a short caption. */
+/* Inline chapter images: never overflow the column, keep their aspect ratio
+   (height follows width — an image is scaled, never stretched), and stay with
+   their caption: an image on its own line is rendered as a <figure>. */
 .chapter-body img {
     display: block;
     max-width: 100%;
@@ -402,6 +403,44 @@ th {
     margin: 1.1em auto;
     page-break-inside: avoid;
 }
+.figure {
+    margin: 1.2em 0;
+    padding: 0;
+    page-break-inside: avoid;
+}
+.figure img { margin: 0 auto; }
+.figure figcaption {
+    font-family: "Ebook Sans";
+    font-size: 8.5pt;
+    line-height: 1.4;
+    color: #6b6b6b;
+    text-align: center;
+    margin: 0.55em auto 0;
+    max-width: 10cm;
+}
+
+/* ===========================================================================
+   Semantic pagination
+   Units that belong together are grouped by EbookContentRenderer so the page
+   breaker keeps them on one page: a heading with the block it introduces (no
+   heading stranded at a page foot), a figure with its caption, table rows whole
+   with the header repeated on a continuation page.
+   =========================================================================== */
+.keep-with-next { page-break-inside: avoid; }
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; }
+li { orphans: 2; widows: 2; }
+
+/* The book's ending. When the final page would otherwise hold only a spilled
+   line or two, the renderer sets the final chapter slightly tighter (it records
+   the decision on the book, so the editor preview does the same) and the
+   content reflows back — no near-empty last page. */
+.chapter--snug .chapter-body { line-height: 1.46; }
+.chapter--snug .chapter-body p { margin-bottom: 0.5em; }
+.chapter--snug .chapter-body h2 { margin-top: 1.2em; }
+.chapter--snug .chapter-body h3 { margin-top: 1em; }
+.chapter--snug .cmp { margin: 0.9em 0; }
+.chapter--snug .figure { margin: 0.9em 0; }
 
 /* ===========================================================================
    Semantic component system

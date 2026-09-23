@@ -84,4 +84,33 @@ class EbookHtmlBuilderTest {
     void keepsOriginalWhenStrippingWouldEmptyIt() {
         assertEquals("Day 1", EbookHtmlBuilder.displayTitle("Day 1", true));
     }
+
+    @Test
+    void theLastChapterIsMarkedAsTheBooksEndingAndSnugOnlyWhenDecided() {
+        EbookHtmlBuilder builder = new EbookHtmlBuilder();
+        Ebook ebook = Ebook.builder().topic("Focus").title("Focus").build();
+        List<EbookChapter> chapters = List.of(
+                EbookChapter.builder().chapterNumber(1).title("One").content("First.").build(),
+                EbookChapter.builder().chapterNumber(2).title("Two").content("Last.").build(),
+                EbookChapter.builder().chapterNumber(3).title("Deferred").content(null).build());
+
+        String natural = builder.build(ebook, chapters, "");
+        assertEquals(1, natural.split("chapter--final", -1).length - 1);
+        assertTrue(natural.indexOf("chapter--final") > natural.indexOf("id=\"chapter-1\""),
+                "the final marker sits on the last chapter that has content");
+        assertFalse(natural.contains("chapter--snug"));
+        assertFalse(natural.contains("Deferred"), "a deferred (empty) chapter is never rendered or listed");
+
+        ebook.setLayoutSnugEnding(true);
+        assertTrue(builder.build(ebook, chapters, "").contains("chapter--final chapter--snug"));
+    }
+
+    @Test
+    void coverFocalPointBecomesObjectPosition() {
+        EbookImage cover = EbookImage.builder().id(java.util.UUID.randomUUID())
+                .placement(EbookImagePlacement.COVER).focalX(30).focalY(120).build();
+        assertEquals("30% 100%", EbookHtmlBuilder.objectPosition(cover), "clamped to the image");
+        assertEquals(null, EbookHtmlBuilder.objectPosition(
+                EbookImage.builder().placement(EbookImagePlacement.COVER).build()), "no focal point → centre");
+    }
 }

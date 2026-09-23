@@ -134,4 +134,43 @@ class EbookContentRendererTest {
         }
         return count;
     }
+
+    @Test
+    void anImageOnItsOwnLineBecomesAFigureWithItsCaption() {
+        String html = renderer.toHtml("Text.\n\n![A desk cleared for deep work](ebook-image:abc)\n\nMore.");
+        assertTrue(html.contains("<figure class=\"figure\">"));
+        assertTrue(html.contains("<figcaption>A desk cleared for deep work</figcaption>"),
+                "the caption lives inside the figure so it can never separate from the image");
+        assertTrue(html.contains("ebook-image:abc"));
+    }
+
+    @Test
+    void genericOrDescriptiveAltTextIsNotPrintedAsACaption() {
+        assertFalse(renderer.toHtml("![Illustration](ebook-image:abc)").contains("figcaption"));
+        String longAlt = "x".repeat(EbookContentRenderer.MAX_CAPTION_CHARS + 1);
+        assertFalse(renderer.toHtml("![" + longAlt + "](ebook-image:abc)").contains("figcaption"));
+    }
+
+    @Test
+    void aHeadingIsKeptWithTheBlockItIntroduces() {
+        String html = renderer.toHtml("## The audit\n\nList every app you opened today.\n\nAnother paragraph.");
+        assertTrue(html.contains("<div class=\"keep-with-next\"><h2>The audit</h2><p>List every app"),
+                "heading and its first block travel together: " + html);
+        assertEquals(1, countOccurrences(html, "keep-with-next"));
+    }
+
+    @Test
+    void aHeadingIsKeptWithAComponentThatFollowsIt() {
+        String html = renderer.toHtml("### Try it\n\n:::exercise The audit\nList every app.\n:::");
+        assertTrue(html.contains("keep-with-next"));
+        assertTrue(html.indexOf("keep-with-next") < html.indexOf("cmp--exercise"));
+    }
+
+    @Test
+    void aVeryLongParagraphIsNotGluedToItsHeading() {
+        String longPara = "word ".repeat(EbookContentRenderer.KEEP_WITH_NEXT_MAX_CHARS / 4);
+        String html = renderer.toHtml("## Heading\n\n" + longPara);
+        assertFalse(html.contains("keep-with-next"),
+                "gluing a page-long paragraph would push a whole page forward for one heading");
+    }
 }

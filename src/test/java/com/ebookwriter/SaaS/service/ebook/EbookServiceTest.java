@@ -17,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -165,5 +166,50 @@ class EbookServiceTest {
         GenerationBudgetResponse info = ebookService.getGenerationBudget(userId);
 
         assertFalse(info.canGenerate(), "10 credits is below the 30-credit minimum");
+    }
+
+    @Test
+    void createDraftStoresTheSelectedTargetAsASoftContentBudget() {
+        when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
+        EbookRequest request = new EbookRequest();
+        request.setTopic("Focus");
+        request.setTargetPages(50);
+
+        assertEquals(50, ebookService.createDraft(user(), request).getApproxPageCount());
+    }
+
+    @Test
+    void outOfRangeTargetsAreClampedNotRejected() {
+        assertEquals(creditProperties.getMaxTargetPages(), ebookService.resolveTargetPages(5000));
+        assertEquals(ContentBudget.MIN_TARGET_PAGES, ebookService.resolveTargetPages(3));
+        assertEquals(creditProperties.getStandardTargetPages(), ebookService.resolveTargetPages(null));
+    }
+
+    @Test
+    void aShortTargetOnlyNeedsCreditsForThatShortBook() {
+        Ebook shortBook = draft();
+        shortBook.setApproxPageCount(20);
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(shortBook));
+        when(creditService.getBalance(userId)).thenReturn(25); // below 30, above the 20-page target
+        when(ebookRepository.claimForStart(ebookId, EbookStatus.DRAFT, EbookStatus.PENDING)).thenReturn(1);
+        when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
+        when(creditService.reserveGenerationHold(eq(userId), eq(ebookId), anyInt(), eq(20))).thenReturn(35);
+
+        Ebook started = ebookService.start(ebookId, userId);
+
+        assertEquals(EbookStatus.PENDING, started.getStatus());
+        verify(creditService).reserveGenerationHold(userId, ebookId,
+                creditProperties.getMaxGenerationBudget(), 20);
+    }
+
+    @Test
+    void generationBudgetOffersTheTargetOptionsAndWhatTheBalanceCovers() {
+        when(creditService.getBalance(userId)).thenReturn(47);
+
+        GenerationBudgetResponse info = ebookService.getGenerationBudget(userId);
+
+        assertEquals(List.of(20, 30, 50, 75, 100), info.targetOptions());
+        assertEquals(creditProperties.getStandardTargetPages(), info.defaultTargetPages());
+        assertEquals(47, info.affordablePages());
     }
 }

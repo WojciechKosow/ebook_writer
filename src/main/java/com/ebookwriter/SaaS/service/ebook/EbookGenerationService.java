@@ -5,6 +5,8 @@ import com.ebookwriter.SaaS.entity.ContentSource;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
+import com.ebookwriter.SaaS.config.properties.OpenAiProperties;
+import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.EbookStatus;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
@@ -14,7 +16,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -48,6 +53,7 @@ public class EbookGenerationService {
     private final EbookValidationService validationService;
     private final AnthropicProperties anthropicProperties;
     private final CreditService creditService;
+    private final OpenAiProperties openAiProperties;
 
     @Async("ebookExecutor")
     public void generate(UUID ebookId) {
@@ -64,17 +70,16 @@ public class EbookGenerationService {
 
             List<EbookChapter> chapters =
                     chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
-            int total = chapters.size();
 
-            // Step 2 — write chapters sequentially
+            // Step 2 — write chapters sequentially, paced by the credit budget. The
+            // selected target already shaped the plan; here credits are permission
+            // to continue, never a reason to stop early or to write more. If the
+            // remaining credits can't cover the rest of the plan, the book is wound
+            // down to its planned ending instead of being cut off.
             updateStatus(ebookId, EbookStatus.WRITING, WRITING_START);
-            int done = 0;
-            for (EbookChapter chapter : chapters) {
-                chapterGenerationService.generate(ebookId, chapter.getId());
-                done++;
-                updateProgress(ebookId,
-                        WRITING_START + (int) Math.round((double) WRITING_SPAN * done / total));
-            }
+            writeChapters(ebookId, chapters);
+            chapters = ManuscriptContext.inBook(
+                    chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId));
 
             // Step 3 — editorial pass (optional; the most expensive step)
             if (anthropicProperties.isEditingEnabled()) {
@@ -110,12 +115,11 @@ public class EbookGenerationService {
             // per-chapter usage (metadata only — rendering reads the Markdown refs).
             assetUsageService.sync(ebookId, ContentSource.AI);
 
-            // Step 4 — render PDF and learn the real page count. The reserved
-            // ceiling (target + allowed overdraft, capped so the balance can't
-            // fall below -maxOverdraft) is a hard limit: a runaway book is trimmed
-            // at a paragraph boundary to fit rather than driving the balance past
-            // the overdraft floor. A natural ending a little over target renders
-            // in full — the ceiling only bites the genuine overshoot.
+            // Step 4 — render PDF and learn the real page count. The soft target is
+            // never enforced here: a book past its target renders in full. Only the
+            // credit ceiling (min(balance, cap) + overdraft) is a hard limit; writing
+            // is paced to stay inside it, and if a render still overshoots, whole
+            // sections are removed before the book's ending — the conclusion is kept.
             updateStatus(ebookId, EbookStatus.RENDERING, 96);
             int pageBudget = ebookRepository.findById(ebookId).map(Ebook::getPageBudget).orElse(0);
             int actualPages = pdfGenerationService.renderAndStore(ebookId, pageBudget);
@@ -138,6 +142,112 @@ public class EbookGenerationService {
             log.error("Generation failed for ebook {}", ebookId, e);
             fail(ebookId, e);
         }
+    }
+
+    /**
+     * Write every planned chapter in order, asking {@link WritingBudget} before
+     * each one whether the remaining credits still cover the rest of the plan:
+     * <ul>
+     *   <li>they do — the chapter is written at its planned depth (a book that has
+     *       already passed its soft target keeps going: the target never stops it);</li>
+     *   <li>they nearly do — the remaining chapters are written a little tighter;</li>
+     *   <li>they don't — the book is wound down: chapters that no longer fit are
+     *       marked {@link ChapterStatus#DEFERRED} (kept in the outline, never
+     *       rendered) and the planned final chapter is written as the ending, told
+     *       which topics are out of scope so it never references them.</li>
+     * </ul>
+     * The decision is re-taken before every chapter from the words actually
+     * written, so a chapter that ran long or short is accounted for.
+     */
+    private void writeChapters(UUID ebookId, List<EbookChapter> chapters) {
+        int pageBudget = ebookRepository.findById(ebookId).map(Ebook::getPageBudget).orElse(0);
+        int capacity = WritingBudget.capacityWords(pageBudget, chapters.size(), imageReservePages());
+
+        Set<Integer> deferred = new HashSet<>();
+        List<String> omittedTitles = new ArrayList<>();
+        int wordsWritten = 0;
+        int done = 0;
+
+        for (int i = 0; i < chapters.size(); i++) {
+            EbookChapter chapter = chapters.get(i);
+            if (deferred.contains(chapter.getChapterNumber())) {
+                continue;
+            }
+
+            List<WritingBudget.PlannedWords> remaining = new ArrayList<>();
+            for (EbookChapter c : chapters.subList(i, chapters.size())) {
+                if (!deferred.contains(c.getChapterNumber())) {
+                    remaining.add(new WritingBudget.PlannedWords(
+                            c.getChapterNumber(), ChapterGenerationService.plannedWords(c)));
+                }
+            }
+            WritingBudget.Decision decision = WritingBudget.decide(remaining, wordsWritten, capacity);
+
+            if (decision.windDown()) {
+                for (EbookChapter c : chapters) {
+                    if (decision.isDeferred(c.getChapterNumber()) && deferred.add(c.getChapterNumber())) {
+                        markDeferred(c);
+                        omittedTitles.add(c.getTitle());
+                    }
+                }
+                log.warn("Ebook {}: credits cover {} more words but the plan needs more; winding down — "
+                                + "deferred chapters {} so the book ends at its planned conclusion",
+                        ebookId, Math.max(0, capacity - wordsWritten), decision.deferred());
+                if (deferred.contains(chapter.getChapterNumber())) {
+                    continue;
+                }
+            }
+
+            int lastInBook = -1;
+            for (WritingBudget.PlannedWords p : remaining) {
+                if (!deferred.contains(p.chapterNumber())) {
+                    lastInBook = p.chapterNumber();
+                }
+            }
+            boolean isFinal = chapter.getChapterNumber() == lastInBook;
+            ChapterDirective directive = new ChapterDirective(
+                    decision.targetFor(chapter.getChapterNumber()),
+                    decision.compressed(),
+                    isFinal,
+                    isFinal ? omittedTitles : List.of());
+
+            chapterGenerationService.generate(ebookId, chapter.getId(), directive);
+            wordsWritten += chapterRepository.findById(chapter.getId())
+                    .map(c -> wordCount(c.getContent())).orElse(0);
+
+            done++;
+            int inBook = chapters.size() - deferred.size();
+            updateProgress(ebookId,
+                    WRITING_START + (int) Math.round((double) WRITING_SPAN * done / Math.max(1, inBook)));
+        }
+        log.info("Wrote ebook {}: {} words across {} chapters ({} deferred, credit capacity {} words)",
+                ebookId, wordsWritten, done, deferred.size(),
+                capacity == Integer.MAX_VALUE ? "unbounded" : capacity);
+    }
+
+    private void markDeferred(EbookChapter chapter) {
+        chapter.setStatus(ChapterStatus.DEFERRED);
+        chapter.setContent(null);
+        chapterRepository.save(chapter);
+    }
+
+    /**
+     * Pages to hold back from the credit capacity for generated illustrations
+     * (roughly half a page each), so images added after writing can't push the
+     * render past the ceiling.
+     */
+    private int imageReservePages() {
+        if (!openAiProperties.isEnabled() || !openAiProperties.isConfigured()) {
+            return 0;
+        }
+        return (int) Math.ceil(Math.max(0, openAiProperties.getMaxImagesPerBook()) * 0.5);
+    }
+
+    private static int wordCount(String s) {
+        if (s == null || s.isBlank()) {
+            return 0;
+        }
+        return s.strip().split("\\s+").length;
     }
 
     /**

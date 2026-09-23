@@ -30,6 +30,13 @@ public class EbookStatusResponse {
     private boolean downloadReady;
 
     /**
+     * The target length the user selected (soft content budget). The finished
+     * book lands around it but may be shorter or longer — see
+     * {@link #actualPageCount} for the real result.
+     */
+    private int targetPages;
+
+    /**
      * The <b>final</b> number of pages in the rendered PDF, set once generation
      * completes (0 while still generating). Scrivetta decides the length from the
      * topic; this is the real result, not something the user ordered. It is also
@@ -58,6 +65,7 @@ public class EbookStatusResponse {
                 .description(ebook.getDescription())
                 .errorMessage(ebook.getErrorMessage())
                 .downloadReady(ebook.getStatus() == EbookStatus.COMPLETED)
+                .targetPages(ebook.getApproxPageCount())
                 .actualPageCount(ebook.getActualPageCount())
                 .creditsCharged(ebook.getCreditsCharged())
                 .chapters(chapters)

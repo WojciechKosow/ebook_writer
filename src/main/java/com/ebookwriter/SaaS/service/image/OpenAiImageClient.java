@@ -51,10 +51,19 @@ public class OpenAiImageClient {
      * once retries are exhausted or on a non-retryable provider error.
      */
     public GeneratedImage generate(String prompt, AspectRatio aspectRatio) {
+        return generate(prompt, aspectRatio, null);
+    }
+
+    /**
+     * As {@link #generate(String, AspectRatio)} with an explicit rendering
+     * {@code quality} (e.g. {@code "high"} for the cover); null/blank uses the
+     * provider default.
+     */
+    public GeneratedImage generate(String prompt, AspectRatio aspectRatio, String quality) {
         if (!properties.isConfigured()) {
             throw new ImageGenerationException("OpenAI is not configured (set OPENAI_API_KEY).");
         }
-        String body = requestBody(prompt, aspectRatio);
+        String body = requestBody(prompt, aspectRatio, quality);
         int attempts = Math.max(1, properties.getMaxRetries());
         ImageGenerationException last = null;
 
@@ -88,12 +97,15 @@ public class OpenAiImageClient {
                 : new ImageGenerationException("OpenAI image generation failed");
     }
 
-    private String requestBody(String prompt, AspectRatio aspectRatio) {
+    String requestBody(String prompt, AspectRatio aspectRatio, String quality) {
         ObjectNode node = MAPPER.createObjectNode();
         node.put("model", properties.getImageModel());
         node.put("prompt", prompt);
         node.put("size", aspectRatio.openAiSize());
         node.put("n", 1);
+        if (quality != null && !quality.isBlank()) {
+            node.put("quality", quality.strip());
+        }
         return node.toString();
     }
 

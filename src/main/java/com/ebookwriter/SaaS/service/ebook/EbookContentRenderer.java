@@ -4,6 +4,9 @@ import org.commonmark.Extension;
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.parser.Parser;
 import org.commonmark.renderer.html.HtmlRenderer;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -109,7 +112,87 @@ public class EbookContentRenderer {
             // Defensive: if commonmark didn't wrap it (shouldn't happen), still swap.
             html = html.replace(token, components.get(i));
         }
-        return html;
+        return paginate(html);
+    }
+
+    // ---- Semantic pagination ------------------------------------------------
+
+    /** A heading is kept with a following block only if that block is this short (chars). */
+    static final int KEEP_WITH_NEXT_MAX_CHARS = 700;
+
+    /** Alt text that says nothing — never printed as a caption. */
+    private static final java.util.Set<String> GENERIC_ALT = java.util.Set.of(
+            "", "image", "illustration", "picture", "photo", "figure", "diagram");
+
+    /** Captions longer than this read as descriptions, not captions, and are not printed. */
+    static final int MAX_CAPTION_CHARS = 140;
+
+    /**
+     * Group semantic units so the page breaker can't split them — the same HTML
+     * drives the editor preview and the PDF, so both paginate alike:
+     * <ul>
+     *   <li><b>figures</b> — an image on its own line becomes a {@code <figure>}
+     *       with its caption (a meaningful alt text) inside it, so a caption can
+     *       never land on a different page from its image;</li>
+     *   <li><b>heading + lead</b> — a section heading is wrapped with the block
+     *       that follows it (a paragraph, list, component, table or figure of
+     *       modest size), so a heading never sits alone at the foot of a page.
+     *       A very long following paragraph is left free (orphans/widows handle
+     *       it) so a whole page isn't pushed forward for one heading.</li>
+     * </ul>
+     */
+    static String paginate(String html) {
+        if (html == null || html.isBlank()) {
+            return html;
+        }
+        Document doc = Jsoup.parseBodyFragment(html);
+        doc.outputSettings().prettyPrint(false);
+        Element body = doc.body();
+
+        for (Element p : body.select("p")) {
+            if (p.children().size() == 1 && p.child(0).tagName().equals("img")
+                    && p.ownText().isBlank()) {
+                Element img = p.child(0);
+                Element figure = new Element("figure").addClass("figure");
+                figure.appendChild(img.clone());
+                String alt = img.attr("alt").strip();
+                if (!GENERIC_ALT.contains(alt.toLowerCase(Locale.ROOT)) && alt.length() <= MAX_CAPTION_CHARS) {
+                    figure.appendElement("figcaption").text(alt);
+                }
+                p.replaceWith(figure);
+            }
+        }
+
+        for (Element heading : new ArrayList<>(body.children())) {
+            String tag = heading.tagName();
+            if (!(tag.equals("h2") || tag.equals("h3") || tag.equals("h4"))) {
+                continue;
+            }
+            Element next = heading.nextElementSibling();
+            if (next == null || next.tagName().matches("h[1-6]") || !keepable(next)) {
+                continue;
+            }
+            Element group = new Element("div").addClass("keep-with-next");
+            heading.before(group);
+            group.appendChild(heading);
+            group.appendChild(next);
+        }
+        return body.html();
+    }
+
+    /** Whether a block is small enough to travel with its heading. */
+    private static boolean keepable(Element block) {
+        String tag = block.tagName();
+        if (tag.equals("figure") || tag.equals("pre")) {
+            return true;
+        }
+        if (tag.equals("div") && block.hasClass("cmp")) {
+            return block.text().length() <= KEEP_WITH_NEXT_MAX_CHARS * 2;
+        }
+        if (tag.equals("table")) {
+            return block.select("tr").size() <= 12;
+        }
+        return block.text().length() <= KEEP_WITH_NEXT_MAX_CHARS;
     }
 
     /**

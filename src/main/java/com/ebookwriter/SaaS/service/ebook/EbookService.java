@@ -56,20 +56,20 @@ public class EbookService {
      * can upload assets to it, but no credits are held and nothing is generated
      * yet. Call {@link #start(UUID, UUID)} to reserve credits and begin.
      *
-     * <p>The user does not choose a page count. Scrivetta decides how much content
-     * a complete ebook needs; we seed the row with the system standard target
-     * (~{@code standardTargetPages}) purely as the length the planner aims for and
-     * a fallback for legacy code paths — it is not something the user ordered.
+     * <p>The user's selected target length (~20/30/50/75/100 pages) is stored in
+     * {@code approxPageCount}. It is a <b>soft content budget</b>: it shapes the
+     * plan so the book lands around that size, and is never a hard page limit.
+     * When no target is selected the standard target is used.
      */
     public Ebook createDraft(User user, EbookRequest request) {
-        int standardTarget = Math.max(1, creditProperties.getStandardTargetPages());
+        int target = resolveTargetPages(request.getTargetPages());
 
         Ebook ebook = Ebook.builder()
                 .user(user)
                 .topic(request.getTopic())
                 .targetAudience(request.getTargetAudience())
                 .style(request.getStyle())
-                .approxPageCount(standardTarget)
+                .approxPageCount(target)
                 .language(blankToEnglish(request.getLanguage()))
                 .additionalInstructions(request.getAdditionalInstructions())
                 .sourceMaterial(request.getSourceMaterial())
@@ -82,6 +82,30 @@ public class EbookService {
     }
 
     /**
+     * Normalise a selected target length: absent → the standard target; out of
+     * range → clamped to {@code [ContentBudget.MIN_TARGET_PAGES, maxTargetPages]}.
+     * Clamped rather than rejected, because the target is only a planning signal.
+     */
+    int resolveTargetPages(Integer requested) {
+        int max = Math.max(ContentBudget.MIN_TARGET_PAGES, creditProperties.getMaxTargetPages());
+        int fallback = Math.max(ContentBudget.MIN_TARGET_PAGES, creditProperties.getStandardTargetPages());
+        if (requested == null || requested <= 0) {
+            return Math.min(fallback, max);
+        }
+        return Math.max(ContentBudget.MIN_TARGET_PAGES, Math.min(requested, max));
+    }
+
+    /**
+     * The balance needed to start a book with this target: the standard minimum
+     * budget, but never more than the target itself — a user who asks for a short
+     * ~20-page book only needs enough credits for that book.
+     */
+    int minimumToStart(int targetPages) {
+        int minBudget = Math.max(1, creditProperties.getMinGenerationBudget());
+        return Math.max(1, Math.min(minBudget, targetPages));
+    }
+
+    /**
      * Reserve the generation credit hold and start generating a draft in the
      * background. Only a {@link EbookStatus#DRAFT} may be started; starting an
      * already-started book is a {@link IllegalStateException} (→ 409).
@@ -89,9 +113,9 @@ public class EbookService {
      * <p>Billing is <b>final-page-count based</b>: 1 credit = 1 rendered page, and
      * the length is a <em>result</em> of generation, never a size the user ordered.
      * Credits are the generation <b>budget</b>: a user must hold at least the
-     * standard {@code minGenerationBudget} (e.g. 30 credits) to begin — this is the
-     * smallest budget Scrivetta needs to produce a complete standard ebook, not a
-     * promise of that many pages. We reserve a ceiling — {@code min(target,
+     * standard {@code minGenerationBudget} (e.g. 30 credits) — or the selected
+     * target, if that is smaller — to begin. This is the smallest budget needed to
+     * produce a complete book at that scale, not a promise of that many pages. We reserve a ceiling — {@code min(target,
      * balance) + maxOverdraft} — as an up-front hold (see
      * {@link CreditService#reserveGenerationHold}). That ceiling both caps how many
      * pages may be rendered and guarantees the balance can never fall below
@@ -116,7 +140,8 @@ public class EbookService {
             throw new IllegalStateException("Ebook has already been started");
         }
 
-        int minBudget = Math.max(1, creditProperties.getMinGenerationBudget());
+        int minBudget = minimumToStart(ebook.getApproxPageCount() > 0
+                ? ebook.getApproxPageCount() : resolveTargetPages(null));
 
         // Friendly early gate before we mutate any state: a user below the standard
         // generation budget cannot start. The authoritative, race-safe check is in
@@ -134,12 +159,13 @@ public class EbookService {
         }
         ebook.setStatus(EbookStatus.PENDING);
 
-        // The book's ceiling is the user's own budget, not a fixed page target:
-        // reserve against the absolute safety cap so the hold becomes
-        // min(balance, maxGenerationBudget) + overdraft. A user with enough credits
-        // gets the whole book (the planner and render are free to run to the topic's
-        // natural length), and it only winds down when it approaches their actual
-        // budget — nothing is cut short at an arbitrary page count.
+        // Two separate concepts: the TARGET (approxPageCount) shapes the plan; the
+        // CEILING reserved here is what the user may actually generate. Reserve
+        // against the absolute safety cap so the hold becomes
+        // min(balance, maxGenerationBudget) + overdraft: a book that genuinely needs
+        // to run past its soft target may continue while credits allow, and is only
+        // wound down to a natural ending when it approaches the user's real budget.
+        // Unused credits are refunded after render.
         int targetPages = Math.max(1, creditProperties.getMaxGenerationBudget());
 
         // Reserve the overdraft-aware hold under the wallet lock, gated on the
@@ -186,10 +212,17 @@ public class EbookService {
     @Transactional(readOnly = true)
     public GenerationBudgetResponse getGenerationBudget(UUID userId) {
         int balance = creditService.getBalance(userId);
-        int minCredits = Math.max(1, creditProperties.getMinGenerationBudget());
         int low = Math.max(1, creditProperties.getStandardTargetMinPages());
         int high = Math.max(low, creditProperties.getStandardTargetPages());
-        return new GenerationBudgetResponse(minCredits, low, high, balance, balance >= minCredits);
+        int defaultTarget = resolveTargetPages(null);
+        int minCredits = minimumToStart(defaultTarget);
+        int maxTarget = Math.max(ContentBudget.MIN_TARGET_PAGES, creditProperties.getMaxTargetPages());
+        int affordable = Math.max(0, Math.min(balance, creditProperties.getMaxGenerationBudget()));
+        List<Integer> options = GenerationBudgetResponse.TARGET_OPTIONS.stream()
+                .filter(t -> t <= maxTarget)
+                .toList();
+        return new GenerationBudgetResponse(minCredits, low, high, balance, balance >= minCredits,
+                options, defaultTarget, maxTarget, affordable);
     }
 
     @Transactional(readOnly = true)
@@ -211,8 +244,10 @@ public class EbookService {
     public EbookContentResponse getContent(UUID ebookId, UUID userId) {
         Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
-        List<EbookChapter> chapters =
-                chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+        // Chapters deferred to end the book within the user's credits are not part
+        // of the book, so the editor never sees them as empty chapters.
+        List<EbookChapter> chapters = ManuscriptContext.inBook(
+                chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId));
         return EbookContentResponse.from(ebook, chapters);
     }
 

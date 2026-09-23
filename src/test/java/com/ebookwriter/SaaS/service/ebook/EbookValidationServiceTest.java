@@ -64,7 +64,7 @@ class EbookValidationServiceTest {
     @Test
     void missingCoverVisualIsAWarningNotFatal() {
         EbookValidationService.Report r = EbookValidationService.inspect(
-                book(CoverLayout.EDITORIAL), List.of(chapter("content")), List.of(), 20);
+                book(CoverLayout.EDITORIAL), List.of(chapter("A complete chapter.")), List.of(), 20);
         assertFalse(r.hasFatal());
         assertTrue(hasWarningContaining(r, "expects a visual"));
     }
@@ -72,7 +72,7 @@ class EbookValidationServiceTest {
     @Test
     void typographicCoverWithoutImageIsFine() {
         EbookValidationService.Report r = EbookValidationService.inspect(
-                book(CoverLayout.TYPOGRAPHIC), List.of(chapter("content")), List.of(), 20);
+                book(CoverLayout.TYPOGRAPHIC), List.of(chapter("A complete chapter.")), List.of(), 20);
         assertFalse(r.hasFatal());
         assertTrue(r.warnings().isEmpty());
     }
@@ -81,9 +81,25 @@ class EbookValidationServiceTest {
     void mismatchedCoverAspectRatioIsAWarning() {
         // A portrait asset (1024x1536) forced into EDITORIAL's landscape region.
         EbookValidationService.Report r = EbookValidationService.inspect(
-                book(CoverLayout.EDITORIAL), List.of(chapter("content")),
+                book(CoverLayout.EDITORIAL), List.of(chapter("A complete chapter.")),
                 List.of(cover(1024, 1536)), 20);
         assertFalse(r.hasFatal());
         assertTrue(hasWarningContaining(r, "does not match layout"));
+    }
+
+    @Test
+    void aFinalChapterThatStopsMidSentenceIsFlagged() {
+        EbookValidationService.Report r = EbookValidationService.inspect(
+                book(CoverLayout.TYPOGRAPHIC), List.of(chapter("Focus is a practice and the")), List.of(), 20);
+        assertFalse(r.hasFatal());
+        assertTrue(hasWarningContaining(r, "ends mid-sentence"));
+    }
+
+    @Test
+    void aFinalParagraphPointingAtMissingContentIsFlagged() {
+        EbookValidationService.Report r = EbookValidationService.inspect(book(CoverLayout.TYPOGRAPHIC),
+                List.of(chapter("Good work.\n\nIn the next chapter, we will build your evening routine.")),
+                List.of(), 20);
+        assertTrue(hasWarningContaining(r, "refers to content that does not follow"));
     }
 }

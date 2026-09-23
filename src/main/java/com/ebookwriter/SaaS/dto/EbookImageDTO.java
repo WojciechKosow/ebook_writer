@@ -31,6 +31,9 @@ public class EbookImageDTO {
     private ContentSource placedBy;
     /** Display width as a percentage of the text column (inline), or null for default. */
     private Integer displayWidthPercent;
+    /** Crop focal point (percent of width/height, null = centre) for cropped placements such as the cover. */
+    private Integer focalX;
+    private Integer focalY;
     private String contentType;
     private String originalFilename;
     private long sizeBytes;
@@ -52,6 +55,8 @@ public class EbookImageDTO {
                 image.getChapter() != null ? image.getChapter().getId() : null,
                 image.getPlacedBy(),
                 image.getDisplayWidthPercent(),
+                image.getFocalX(),
+                image.getFocalY(),
                 image.getContentType(),
                 image.getOriginalFilename(),
                 image.getSizeBytes(),
