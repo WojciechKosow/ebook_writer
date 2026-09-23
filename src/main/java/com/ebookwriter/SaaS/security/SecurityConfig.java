@@ -83,7 +83,8 @@ public class SecurityConfig {
         ));
 
         config.setExposedHeaders(List.of(
-                "Authorization"
+                "Authorization",
+                "Content-Disposition"
         ));
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
