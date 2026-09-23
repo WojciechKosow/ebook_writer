@@ -73,7 +73,7 @@ public class EbookImageController {
                 .body(image.bytes());
     }
 
-    /** Update editor-adjustable metadata: the asset's role and/or inline display width. */
+    /** Update editor-adjustable metadata: role, inline display width, and/or crop focal point. */
     @PatchMapping("/{imageId}")
     public ResponseEntity<EbookImageDTO> update(@PathVariable UUID ebookId,
                                                 @PathVariable UUID imageId,
@@ -81,7 +81,8 @@ public class EbookImageController {
                                                 Authentication authentication) {
         User user = currentUser(authentication);
         return ResponseEntity.ok(imageService.updateMetadata(
-                ebookId, user.getId(), imageId, request.getRole(), request.getDisplayWidthPercent()));
+                ebookId, user.getId(), imageId, request.getRole(), request.getDisplayWidthPercent(),
+                request.getFocalX(), request.getFocalY()));
     }
 
     /** Make this image the book's cover (demotes any current cover). */

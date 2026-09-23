@@ -24,6 +24,11 @@ public final class EditingPrompts {
                 - Unnecessary filler
                 - Structural problems or drift from the requested style
                 - Anything from the chapter's intended scope that is missing
+                - References to chapters or sections that are NOT in the outline
+                  (e.g. "in Chapter 7 we will…" when there is no such chapter):
+                  rewrite or remove them so nothing points at missing content
+                - An ending that trails off: every section, exercise, list and the
+                  final sentence must be complete
 
                 Rules:
                 - Improve the manuscript WITHOUT changing the author's intended topic
@@ -41,6 +46,19 @@ public final class EditingPrompts {
                               String fullOutline,
                               EbookChapter chapter,
                               String otherSummaries) {
+        return user(e, fullOutline, chapter, otherSummaries, false);
+    }
+
+    public static String user(Ebook e,
+                              String fullOutline,
+                              EbookChapter chapter,
+                              String otherSummaries,
+                              boolean finalChapter) {
+        String endingSection = finalChapter
+                ? "\nTHIS IS THE BOOK'S FINAL CHAPTER. Keep (or, if missing, strengthen) a "
+                        + "deliberate ending that fits the book, and never weaken or remove it:\n"
+                        + ChapterPrompts.ENDING_ARCHITECTURE + "\n"
+                : "";
         return """
                 GLOBAL WRITING GUIDELINES
                 %s
@@ -54,6 +72,7 @@ public final class EditingPrompts {
                 CHAPTER %d: %s
                 Intended scope: %s
 
+                %s
                 CURRENT CHAPTER TEXT
                 %s
 
@@ -66,6 +85,7 @@ public final class EditingPrompts {
                 chapter.getChapterNumber(),
                 nz(chapter.getTitle()),
                 nz(chapter.getDescription()),
+                endingSection,
                 nz(chapter.getContent())
         );
     }

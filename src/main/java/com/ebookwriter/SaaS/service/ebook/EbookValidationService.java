@@ -7,6 +7,7 @@ import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.entity.EbookImagePlacement;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookImageRepository;
+import com.ebookwriter.SaaS.repository.EbookPdfRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +16,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * The final quality gate: a book is validated <b>after</b> it is rendered and
@@ -53,6 +58,10 @@ public class EbookValidationService {
     private final EbookRepository ebookRepository;
     private final EbookChapterRepository chapterRepository;
     private final EbookImageRepository imageRepository;
+    private final EbookPdfRepository pdfRepository;
+
+    private static final Pattern IMAGE_REF = Pattern.compile(
+            Pattern.quote(EbookImage.REF_SCHEME) + "([0-9a-fA-F-]{36})");
 
     public enum Severity { FATAL, WARNING }
 
@@ -95,7 +104,16 @@ public class EbookValidationService {
         List<EbookChapter> chapters = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
         List<EbookImage> images = imageRepository.findByEbookIdOrderByCreatedAtAsc(ebookId);
 
-        Report report = inspect(ebook, chapters, images, pageCount);
+        Report manuscript = inspect(ebook, chapters, images, pageCount);
+
+        // Production QA over the rendered bytes the reader will actually receive.
+        List<Issue> all = new ArrayList<>(manuscript.issues());
+        pdfRepository.findById(ebookId).ifPresent(pdf -> {
+            PdfQualityInspector.Result qa = PdfQualityInspector.inspect(
+                    pdf.getData(), expectedDrawnImages(chapters, images));
+            all.addAll(qa.issues());
+        });
+        Report report = new Report(List.copyOf(all));
 
         for (Issue w : report.warnings()) {
             log.warn("Ebook {} validation warning: {}", ebookId, w.message());
@@ -107,6 +125,39 @@ public class EbookValidationService {
         log.info("Ebook {} passed final validation ({} page(s), {} warning(s))",
                 ebookId, pageCount, report.warnings().size());
         return report;
+    }
+
+    /**
+     * How many images the rendered PDF should contain: the cover visual (if one is
+     * placed) plus every inline {@code ebook-image:} reference in the book's
+     * chapters that resolves to a stored asset (unresolvable references are
+     * dropped by the renderer by design).
+     */
+    static int expectedDrawnImages(List<EbookChapter> chapters, List<EbookImage> images) {
+        if (images == null) {
+            return 0;
+        }
+        Set<String> stored = images.stream()
+                .filter(i -> i.getStorageKey() != null && !i.getStorageKey().isBlank())
+                .map(i -> i.getId().toString())
+                .collect(Collectors.toSet());
+        int count = images.stream()
+                .anyMatch(i -> i.getPlacement() == EbookImagePlacement.COVER
+                        && stored.contains(i.getId().toString())) ? 1 : 0;
+        if (chapters != null) {
+            for (EbookChapter c : ManuscriptContext.inBook(chapters)) {
+                if (c.getContent() == null) {
+                    continue;
+                }
+                Matcher m = IMAGE_REF.matcher(c.getContent());
+                while (m.find()) {
+                    if (stored.contains(m.group(1))) {
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
     }
 
     /**
@@ -129,6 +180,28 @@ public class EbookValidationService {
                 .count();
         if (chaptersWithContent == 0) {
             issues.add(new Issue(Severity.FATAL, "book has no rendered chapter content"));
+        }
+
+        // --- Natural ending (WARNING) ---
+        // The book must end at a semantic boundary: its last chapter may not stop
+        // mid-sentence, and its final paragraph may not point at content that
+        // doesn't follow ("in the next chapter…").
+        EbookChapter ending = null;
+        if (chapters != null) {
+            for (EbookChapter c : ManuscriptContext.inBook(chapters)) {
+                if (c.getContent() != null && !c.getContent().isBlank()) {
+                    ending = c;
+                }
+            }
+        }
+        if (ending != null) {
+            if (ManuscriptIntegrity.endsMidThought(ending.getContent())) {
+                issues.add(new Issue(Severity.WARNING, "the book's final chapter ends mid-sentence"));
+            }
+            if (ManuscriptIntegrity.hasDanglingForwardReference(ending.getContent())) {
+                issues.add(new Issue(Severity.WARNING,
+                        "the book's final paragraph refers to content that does not follow"));
+            }
         }
 
         // --- Cover (WARNING) ---

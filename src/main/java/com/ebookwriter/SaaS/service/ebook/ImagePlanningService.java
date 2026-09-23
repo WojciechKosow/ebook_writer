@@ -73,7 +73,8 @@ public class ImagePlanningService {
 
         Ebook ebook = ebookRepository.findById(ebookId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found: " + ebookId));
-        List<EbookChapter> chapters = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+        List<EbookChapter> chapters = ManuscriptContext.inBook(
+                chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId));
 
         boolean hasContent = chapters.stream()
                 .anyMatch(c -> c.getContent() != null && !c.getContent().isBlank());

@@ -134,6 +134,15 @@ public class Ebook {
     @Enumerated(EnumType.STRING)
     private com.ebookwriter.SaaS.dto.cover.CoverLayout coverLayout;
 
+    /**
+     * Layout decision made by the renderer: when the book's last page would hold
+     * only a line or two that spilled over, the final chapter is set slightly
+     * tighter so that content reflows onto the previous page. Stored (not
+     * recomputed) so the editor preview and the PDF use the identical layout.
+     * Nullable so {@code ddl-auto=update} can add it to an existing table.
+     */
+    private Boolean layoutSnugEnding;
+
     /** Raw plan JSON kept for debugging / potential reprocessing. */
     @Column(columnDefinition = "text")
     private String planJson;

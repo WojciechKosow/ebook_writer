@@ -134,7 +134,8 @@ public class EbookPreviewService {
      */
     String buildPreviewHtml(Ebook ebook, List<EbookChapter> chapters, List<EbookImage> images) {
         String html = htmlBuilder.build(ebook, chapters, previewCss(), images);
-        return inlineImages(html, images);
+        return inlineImages(html, images, EbookHtmlBuilder.coverImage(images),
+                EbookHtmlBuilder.coverRegionRatio(ebook, images));
     }
 
     /**
@@ -143,7 +144,8 @@ public class EbookPreviewService {
      * whose id no longer resolves, or whose bytes are missing from storage, is
      * dropped so it doesn't render as a broken reference (mirrors the PDF path).
      */
-    private String inlineImages(String html, List<EbookImage> images) {
+    private String inlineImages(String html, List<EbookImage> images, EbookImage cover,
+                                com.ebookwriter.SaaS.dto.image.AspectRatio coverRegion) {
         Map<String, EbookImage> byId = new HashMap<>();
         for (EbookImage image : images) {
             byId.put(image.getId().toString(), image);
@@ -160,16 +162,26 @@ public class EbookPreviewService {
             String id = src.substring(EbookImage.REF_SCHEME.length());
             EbookImage image = byId.get(id);
             if (image == null) {
-                img.remove();
+                PdfGenerationService.removeImage(img);
                 continue;
             }
             Optional<byte[]> bytes = storage.download(image.getStorageKey());
             if (bytes.isEmpty()) {
-                img.remove();
+                PdfGenerationService.removeImage(img);
                 continue;
             }
-            img.attr("src", "data:" + image.getContentType() + ";base64,"
-                    + Base64.getEncoder().encodeToString(bytes.get()));
+            byte[] data = bytes.get();
+            String type = image.getContentType();
+            // The cover is cropped to its region exactly as the PDF renderer does,
+            // so preview and download frame it identically.
+            if (image == cover && coverRegion != null) {
+                CoverImageFitter.Fitted fitted = CoverImageFitter.fit(data, type, coverRegion,
+                        image.getFocalX(), image.getFocalY());
+                data = fitted.bytes();
+                type = fitted.contentType();
+            }
+            img.attr("src", "data:" + type + ";base64,"
+                    + Base64.getEncoder().encodeToString(data));
 
             // Persist the editor's "resize", exactly as the PDF renderer does.
             Integer pct = image.getDisplayWidthPercent();

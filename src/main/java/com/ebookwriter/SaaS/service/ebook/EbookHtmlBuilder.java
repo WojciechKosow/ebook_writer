@@ -69,7 +69,7 @@ public class EbookHtmlBuilder {
 
         appendCover(html, ebook, cover);
         appendTableOfContents(html, chapters);
-        appendChapters(html, chapters, layoutByNumber);
+        appendChapters(html, chapters, layoutByNumber, Boolean.TRUE.equals(ebook.getLayoutSnugEnding()));
 
         html.append("</body></html>");
         return html.toString();
@@ -141,13 +141,49 @@ public class EbookHtmlBuilder {
         return stored;
     }
 
-    /** Emit the cover visual as an image element (empty when there is no cover). */
+    /**
+     * The aspect ratio of the region the cover visual is drawn into, or null when
+     * the book has no cover visual. Renderers crop the cover to this ratio before
+     * drawing (see {@link CoverImageFitter}) so it can never be stretched.
+     */
+    public static com.ebookwriter.SaaS.dto.image.AspectRatio coverRegionRatio(Ebook ebook, List<EbookImage> images) {
+        EbookImage cover = coverImage(images);
+        if (cover == null) {
+            return null;
+        }
+        return resolveLayout(ebook.getCoverLayout(), true).imageAspectRatio();
+    }
+
+    /**
+     * Emit the cover visual as an image element (empty when there is no cover).
+     * The region is sized to the layout's ratio and the image fills it with
+     * {@code object-fit: cover} — scaled, never stretched. When the asset's shape
+     * differs (e.g. a user upload), the crop is framed around its focal point.
+     */
     private void appendCoverImage(StringBuilder html, EbookImage cover, String cssClass) {
         if (cover == null) {
             return;
         }
         html.append("<img class=\"").append(cssClass).append("\" src=\"")
-                .append(cover.markdownRef()).append("\" alt=\"\"/>");
+                .append(cover.markdownRef()).append("\" alt=\"\"");
+        String position = objectPosition(cover);
+        if (position != null) {
+            html.append(" style=\"object-position: ").append(position).append("\"");
+        }
+        html.append("/>");
+    }
+
+    /**
+     * The CSS {@code object-position} for an image's focal point, or null for the
+     * default (centre). Percentages are clamped to 0–100.
+     */
+    static String objectPosition(EbookImage image) {
+        if (image == null || (image.getFocalX() == null && image.getFocalY() == null)) {
+            return null;
+        }
+        int x = image.getFocalX() == null ? 50 : Math.max(0, Math.min(100, image.getFocalX()));
+        int y = image.getFocalY() == null ? 50 : Math.max(0, Math.min(100, image.getFocalY()));
+        return x + "% " + y + "%";
     }
 
     /** The cover's typographic block — real, editable text. {@code light} inverts colours for a scrim. */
@@ -282,19 +318,32 @@ public class EbookHtmlBuilder {
 
     // ---- Chapters -----------------------------------------------------------
 
+    /**
+     * Emit every chapter. The last one carries {@code chapter--final} (a styling
+     * hook for the book's ending) and, when the renderer decided the book's last
+     * page would otherwise hold only a spilled line or two, {@code chapter--snug}
+     * — a slightly tighter setting of the final chapter that reflows it back.
+     */
     private void appendChapters(StringBuilder html, List<EbookChapter> chapters,
-                                Map<Integer, DocumentComposer.ChapterLayout> layouts) {
+                                Map<Integer, DocumentComposer.ChapterLayout> layouts, boolean snugEnding) {
+        EbookChapter last = null;
+        for (EbookChapter c : chapters) {
+            if (!isBlank(c.getContent())) {
+                last = c;
+            }
+        }
         int displayNum = 0;
         for (EbookChapter c : chapters) {
             if (isBlank(c.getContent())) {
                 continue;
             }
             displayNum++;
+            String endClass = c == last ? (snugEnding ? " chapter--final chapter--snug" : " chapter--final") : "";
             DocumentComposer.ChapterLayout layout = layouts.get(c.getChapterNumber());
             if (layout != null && layout.style() == DocumentComposer.OpenerStyle.FULL_PAGE) {
-                appendFullPageOpener(html, c, layout);
+                appendFullPageOpener(html, c, layout, endClass);
             } else {
-                appendBandChapter(html, c, layout, displayNum);
+                appendBandChapter(html, c, layout, displayNum, endClass);
             }
         }
     }
@@ -305,7 +354,7 @@ public class EbookHtmlBuilder {
      * contents page points at the divider — the reader's entry to the section.
      */
     private void appendFullPageOpener(StringBuilder html, EbookChapter c,
-                                      DocumentComposer.ChapterLayout layout) {
+                                      DocumentComposer.ChapterLayout layout, String endClass) {
         String anchor = "chapter-" + c.getChapterNumber();
         html.append("<div class=\"opener")
                 .append(layout.unit() ? " opener--unit" : " opener--chapter")
@@ -322,7 +371,7 @@ public class EbookHtmlBuilder {
         }
         html.append("</div>");
         // Body begins on the page after the opener (no page-break-before of its own).
-        html.append("<div class=\"chapter-continued\">")
+        html.append("<div class=\"chapter-continued").append(endClass).append("\">")
                 .append("<div class=\"chapter-body\">")
                 .append(contentRenderer.toHtml(c.getContent()))
                 .append("</div></div>");
@@ -330,12 +379,13 @@ public class EbookHtmlBuilder {
 
     /** A strong opener band at the top of the content page (the compact default). */
     private void appendBandChapter(StringBuilder html, EbookChapter c,
-                                   DocumentComposer.ChapterLayout layout, int displayNum) {
+                                   DocumentComposer.ChapterLayout layout, int displayNum, String endClass) {
         String anchor = "chapter-" + c.getChapterNumber();
         boolean unit = layout != null && layout.unit();
         String label = layout != null ? layout.label() : "Chapter " + displayNum;
         html.append("<div class=\"chapter")
                 .append(unit ? " chapter--unit" : "")
+                .append(endClass)
                 .append("\" id=\"").append(anchor).append("\">")
                 .append("<div class=\"chapter-opener\">")
                 .append("<div class=\"chapter-num\">").append(escape(label)).append("</div>")
@@ -376,7 +426,7 @@ public class EbookHtmlBuilder {
     }
 
     /** The book's cover image, or null if none is placed as the cover. */
-    private static EbookImage coverImage(List<EbookImage> images) {
+    static EbookImage coverImage(List<EbookImage> images) {
         if (images == null) {
             return null;
         }

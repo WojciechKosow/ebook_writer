@@ -141,6 +141,18 @@ public class EbookImageService {
     @Transactional
     public EbookImageDTO updateMetadata(UUID ebookId, UUID userId, UUID imageId,
                                         EbookImageRole role, Integer displayWidthPercent) {
+        return updateMetadata(ebookId, userId, imageId, role, displayWidthPercent, null, null);
+    }
+
+    /**
+     * As {@link #updateMetadata(UUID, UUID, UUID, EbookImageRole, Integer)}, also
+     * setting the crop focal point (0–100% of width/height) used when the image
+     * fills a region of a different shape (the cover).
+     */
+    @Transactional
+    public EbookImageDTO updateMetadata(UUID ebookId, UUID userId, UUID imageId,
+                                        EbookImageRole role, Integer displayWidthPercent,
+                                        Integer focalX, Integer focalY) {
         Ebook ebook = requireOwnedEbook(ebookId, userId);
         EbookImage image = imageRepository.findByIdAndEbookId(imageId, ebookId)
                 .orElseThrow(() -> new IllegalArgumentException("Image not found"));
@@ -155,9 +167,17 @@ public class EbookImageService {
             image.setDisplayWidthPercent(clamped);
             image.setPlacedBy(ContentSource.USER);
         }
+        if (focalX != null || focalY != null) {
+            Integer fx = focalX == null ? image.getFocalX() : Integer.valueOf(Math.max(0, Math.min(100, focalX)));
+            Integer fy = focalY == null ? image.getFocalY() : Integer.valueOf(Math.max(0, Math.min(100, focalY)));
+            sizeChanged |= !java.util.Objects.equals(fx, image.getFocalX())
+                    || !java.util.Objects.equals(fy, image.getFocalY());
+            image.setFocalX(fx);
+            image.setFocalY(fy);
+        }
         image = imageRepository.save(image);
 
-        // A resize only affects the PDF if the image is actually placed.
+        // A resize/reframe only affects the PDF if the image is actually placed.
         if (sizeChanged && image.getPlacement() != EbookImagePlacement.UNUSED) {
             reRenderIfCompleted(ebook);
         }

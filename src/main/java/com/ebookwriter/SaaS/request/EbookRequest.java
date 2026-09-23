@@ -1,5 +1,6 @@
 package com.ebookwriter.SaaS.request;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -8,11 +9,12 @@ import lombok.NoArgsConstructor;
 /**
  * The single ebook-generation brief provided by the user.
  *
- * <p>The user no longer chooses a page count. Scrivetta decides how much content
- * a complete, worthwhile ebook needs from the topic, scope and quality of the
- * material — the final length is a <em>result</em> of generation, not an order.
- * The generation budget is the user's credit balance (see the credits API), and
- * any exact page count sent by an older client is ignored.
+ * <p>The user may select a <b>target length</b> ({@link #targetPages}, e.g. ~20,
+ * ~30, ~50, ~75 or ~100 pages). It is a <em>soft content budget</em>: it shapes
+ * the outline (chapter count, depth, exercises, visuals) so the book naturally
+ * lands around that size, but it is never a hard page limit — a book is not
+ * truncated for exceeding it, nor padded to reach it. How far a book may run is
+ * bounded only by the user's credits (see the credits API).
  */
 @Data
 @NoArgsConstructor
@@ -36,4 +38,12 @@ public class EbookRequest {
 
     /** Optional author/creator name to print on the cover. */
     private String authorName;
+
+    /**
+     * The selected target length in pages (soft). Optional — when absent the
+     * standard target is used. Out-of-range values are clamped, not rejected.
+     * {@code approxPageCount} is accepted as an alias for older clients.
+     */
+    @JsonAlias("approxPageCount")
+    private Integer targetPages;
 }

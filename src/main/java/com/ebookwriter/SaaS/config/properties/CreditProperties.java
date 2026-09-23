@@ -79,4 +79,12 @@ public class CreditProperties {
      * when it approaches the user's actual budget.
      */
     private int maxGenerationBudget = 250;
+
+    /**
+     * The largest <em>target length</em> a user may select. The target is a soft
+     * content budget (it shapes planning, it never truncates a book); values above
+     * this are clamped. The default target, when the user selects none, is
+     * {@link #standardTargetPages}.
+     */
+    private int maxTargetPages = 150;
 }
