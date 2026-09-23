@@ -12,6 +12,7 @@ import com.ebookwriter.SaaS.service.ebook.EbookPreviewService;
 import com.ebookwriter.SaaS.service.ebook.EbookService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/ebooks")
 @RequiredArgsConstructor
@@ -146,10 +148,17 @@ public class EbookController {
     public ResponseEntity<byte[]> download(@PathVariable UUID id,
                                            Authentication authentication) {
         User user = currentUser(authentication);
+        long started = System.currentTimeMillis();
         EbookService.PdfDownload pdf = ebookService.getPdf(id, user.getId());
+        // Logged so a download that fails in the browser can be told apart from one
+        // that never reached (or never left) the server.
+        log.info("Serving PDF for ebook {} ({} KB, loaded in {} ms)",
+                id, pdf.bytes().length / 1024, System.currentTimeMillis() - started);
 
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_PDF)
+                .contentLength(pdf.bytes().length)
+                .cacheControl(CacheControl.noStore())
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename=\"" + pdf.filename() + "\"")
                 .body(pdf.bytes());
