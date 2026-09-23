@@ -73,7 +73,10 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<?> handleGeneric(RuntimeException ex) {
         String message = ex.getMessage() != null ? ex.getMessage() : "Unexpected error";
-        log.error("Request failed with {}: {}", ex.getClass().getSimpleName(), message, ex);
+        // One line at WARN (expected client errors like a missing refresh cookie
+        // land here too); the stack trace is available at DEBUG.
+        log.warn("Request failed with {}: {}", ex.getClass().getSimpleName(), message);
+        log.debug("Stack trace for failed request", ex);
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(Map.of("message", message));

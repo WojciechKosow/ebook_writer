@@ -344,6 +344,16 @@ public class EbookService {
                 .toList();
     }
 
+    /** Throw unless the user owns this ebook and its PDF is ready to download. */
+    @Transactional(readOnly = true)
+    public void requireDownloadable(UUID ebookId, UUID userId) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        if (ebook.getStatus() != EbookStatus.COMPLETED || !pdfRepository.existsById(ebookId)) {
+            throw new IllegalStateException("Ebook is not ready for download");
+        }
+    }
+
     /** Load an ebook's PDF for download; enforces ownership and completion. */
     @Transactional(readOnly = true)
     public PdfDownload getPdf(UUID ebookId, UUID userId) {
