@@ -1,5 +1,6 @@
 package com.ebookwriter.SaaS.config;
 
+import com.ebookwriter.SaaS.config.properties.GoogleOAuthProperties;
 import com.ebookwriter.SaaS.config.properties.StripeProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,6 +42,7 @@ public class StartupConfigValidator implements ApplicationRunner {
     private static final int MIN_JWT_SECRET_BYTES = 32; // HS256 needs a 256-bit key
 
     private final StripeProperties stripeProperties;
+    private final GoogleOAuthProperties googleOAuthProperties;
 
     @Value("${jwt.secret:}")
     private String jwtSecret;
@@ -52,6 +54,25 @@ public class StartupConfigValidator implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         validateJwtSecret();
         validateStripe();
+        validateGoogleOAuth();
+    }
+
+    private void validateGoogleOAuth() {
+        boolean anySet = !isBlank(googleOAuthProperties.getClientId())
+                || !isBlank(googleOAuthProperties.getClientSecret());
+        if (!anySet) {
+            log.info("[Startup] Google sign-in is disabled (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set).");
+            return;
+        }
+        if (!googleOAuthProperties.isConfigured()) {
+            warnOrFail("Google sign-in is partially configured — set GOOGLE_CLIENT_ID, "
+                    + "GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI together.");
+            return;
+        }
+        String redirect = googleOAuthProperties.getRedirectUri();
+        if (requireStrongSecrets && !redirect.startsWith("https://")) {
+            warnOrFail("GOOGLE_REDIRECT_URI must be an https:// URL in production (got " + redirect + ").");
+        }
     }
 
     private void validateJwtSecret() {

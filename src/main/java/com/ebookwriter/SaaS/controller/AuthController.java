@@ -9,13 +9,13 @@ import com.ebookwriter.SaaS.request.LoginRequest;
 import com.ebookwriter.SaaS.request.PasswordResetRequest;
 import com.ebookwriter.SaaS.request.RegisterRequest;
 import com.ebookwriter.SaaS.response.AuthResponse;
+import com.ebookwriter.SaaS.security.AuthCookies;
 import com.ebookwriter.SaaS.security.JwtProvider;
 import com.ebookwriter.SaaS.service.RefreshTokenRotationResult;
 import com.ebookwriter.SaaS.service.RefreshTokenService;
 import com.ebookwriter.SaaS.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
@@ -31,21 +31,13 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AuthController {
 
-    private static final String REFRESH_COOKIE = "refreshToken";
-
-    // Cross-site by default: the frontend (e.g. Vercel) and backend (e.g.
-    // Railway) are different sites, so the refresh cookie must be SameSite=None
-    // + Secure to be sent on /refresh and /logout. Override for same-site setups.
-    @Value("${app.auth.cookie-same-site:None}")
-    private String cookieSameSite;
-
-    @Value("${app.auth.cookie-secure:true}")
-    private boolean cookieSecure;
+    private static final String REFRESH_COOKIE = AuthCookies.REFRESH_COOKIE;
 
     private final UserService userService;
     private final JwtProvider jwtProvider;
     private final RefreshTokenService refreshTokenService;
     private final UserRepository userRepository;
+    private final AuthCookies authCookies;
 
     @PostMapping("/register")
     public ResponseEntity<String> register(@Valid @RequestBody RegisterRequest request) {
@@ -153,12 +145,6 @@ public class AuthController {
     }
 
     private ResponseCookie refreshCookie(String value, Duration maxAge) {
-        return ResponseCookie.from(REFRESH_COOKIE, value)
-                .httpOnly(true)
-                .secure(cookieSecure)
-                .sameSite(cookieSameSite)
-                .path("/")
-                .maxAge(maxAge)
-                .build();
+        return authCookies.refreshCookie(value, maxAge);
     }
 }
