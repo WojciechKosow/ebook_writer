@@ -70,6 +70,17 @@ app:
     cookie-same-site: ${APP_AUTH_COOKIE_SAME_SITE:None}
     cookie-secure: ${APP_AUTH_COOKIE_SECURE:true}
 
+# "Continue with Google" — OAuth 2.0 / OpenID Connect sign-in (scopes: openid
+# email profile; authentication only). Create an OAuth client of type "Web
+# application" in Google Cloud Console. The client secret stays on the backend.
+# GOOGLE_REDIRECT_URI is this backend's public callback and must be registered
+# verbatim under "Authorized redirect URIs". Leave blank locally to disable.
+google:
+  oauth:
+    client-id: ${GOOGLE_CLIENT_ID:}
+    client-secret: ${GOOGLE_CLIENT_SECRET:}
+    redirect-uri: ${GOOGLE_REDIRECT_URI:http://localhost:8080/api/auth/oauth2/google/callback}
+
 # Anthropic (Claude) — ebook generation. Model must be a Claude 4.6+ model
 # (adaptive thinking is used).
 anthropic:

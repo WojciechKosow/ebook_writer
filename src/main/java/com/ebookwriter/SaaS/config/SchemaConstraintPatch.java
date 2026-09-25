@@ -46,7 +46,9 @@ public class SchemaConstraintPatch implements ApplicationRunner {
             new String[]{"ebook_images", "ebook_images_placed_by_check"},
             new String[]{"ebooks", "ebooks_status_check"},
             new String[]{"ebook_chapters", "ebook_chapters_status_check"},
-            new String[]{"ebook_chapters", "ebook_chapters_content_source_check"});
+            new String[]{"ebook_chapters", "ebook_chapters_content_source_check"},
+            // TokenType grew OAUTH_LOGIN (Google sign-in handoff codes).
+            new String[]{"user_tokens", "user_tokens_type_check"});
 
     @Override
     public void run(ApplicationArguments args) {
