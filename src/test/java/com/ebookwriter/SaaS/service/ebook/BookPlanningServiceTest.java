@@ -72,4 +72,54 @@ class BookPlanningServiceTest {
         assertEquals(3, clamped.size());
         assertTrue(totalPages(clamped) <= 3);
     }
+
+    @Test
+    void droppingChaptersToFitAlwaysKeepsTheConcludingChapter() {
+        List<PlannedChapter> plan = List.of(
+                new PlannedChapter("A", "", 2),
+                new PlannedChapter("B", "", 2),
+                new PlannedChapter("C", "", 2),
+                new PlannedChapter("D", "", 2),
+                new PlannedChapter("Conclusion", "", 2));
+
+        List<PlannedChapter> clamped = BookPlanningService.clampToBudget(plan, 3);
+
+        assertEquals("Conclusion", clamped.get(clamped.size() - 1).title(),
+                "the book keeps its ending even under a tight ceiling");
+    }
+
+    @Test
+    void aPlanWithinTheSoftLimitIsLeftExactlyAsDesigned() {
+        List<PlannedChapter> plan = List.of(
+                new PlannedChapter("A", "", 12),
+                new PlannedChapter("B", "", 12),
+                new PlannedChapter("C", "", 9));
+
+        // Target 28 content pages, soft limit 35: a 33-page plan is a natural overshoot.
+        assertEquals(plan, BookPlanningService.rebalanceToTarget(plan, 35, 28));
+    }
+
+    @Test
+    void anExpandedPlanIsRebalancedTowardTheTargetWithoutDroppingChapters() {
+        // Asked for ~30 pages, the model planned 90 — the "keeps expanding" failure.
+        List<PlannedChapter> plan = List.of(
+                new PlannedChapter("A", "", 30),
+                new PlannedChapter("B", "", 30),
+                new PlannedChapter("Conclusion", "", 30));
+
+        List<PlannedChapter> rebalanced = BookPlanningService.rebalanceToTarget(plan, 35, 28);
+
+        assertEquals(3, rebalanced.size(), "every planned topic survives");
+        int total = totalPages(rebalanced);
+        assertTrue(total >= 26 && total <= 30, "lands near the target, got " + total);
+    }
+
+    @Test
+    void aShortPlanIsNeverPaddedUpToTheTarget() {
+        List<PlannedChapter> plan = List.of(
+                new PlannedChapter("A", "", 5),
+                new PlannedChapter("B", "", 5));
+
+        assertEquals(10, totalPages(BookPlanningService.rebalanceToTarget(plan, 35, 28)));
+    }
 }

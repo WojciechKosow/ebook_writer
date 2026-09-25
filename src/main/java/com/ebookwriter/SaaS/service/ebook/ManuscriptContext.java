@@ -1,5 +1,6 @@
 package com.ebookwriter.SaaS.service.ebook;
 
+import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 
 import java.util.List;
@@ -12,6 +13,17 @@ import java.util.stream.Collectors;
 final class ManuscriptContext {
 
     private ManuscriptContext() {
+    }
+
+    /**
+     * The chapters that are part of this book — everything except those
+     * {@link ChapterStatus#DEFERRED deferred} to end the book within the user's
+     * credits. Prompts see only these, so no chapter promises a deferred one.
+     */
+    static List<EbookChapter> inBook(List<EbookChapter> chapters) {
+        return chapters.stream()
+                .filter(c -> c.getStatus() != ChapterStatus.DEFERRED)
+                .toList();
     }
 
     /** A compact outline: "N. Title — description" per chapter. */

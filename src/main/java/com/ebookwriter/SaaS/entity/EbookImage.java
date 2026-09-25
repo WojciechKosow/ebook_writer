@@ -77,6 +77,16 @@ public class EbookImage {
      */
     private Integer displayWidthPercent;
 
+    /**
+     * Focal point for cropped placements (the cover), as percentages of the image
+     * width/height (0–100; null = centre). When the image's shape differs from its
+     * region (e.g. a user-uploaded cover), it is scaled to fill without distortion
+     * and cropped around this point, so the subject stays in frame. Applied through
+     * the shared layout, so editor preview and PDF crop identically.
+     */
+    private Integer focalX;
+    private Integer focalY;
+
     /** MIME type of the stored bytes (e.g. {@code image/png}). */
     @Column(nullable = false)
     private String contentType;

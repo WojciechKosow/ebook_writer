@@ -1,5 +1,6 @@
 package com.ebookwriter.SaaS.exceptions;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -10,6 +11,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.HashMap;
 import java.util.Map;
 
+@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -63,11 +65,34 @@ public class GlobalExceptionHandler {
                 .body(Map.of("message", e.getMessage() != null ? e.getMessage() : "Conflict"));
     }
 
+    /**
+     * Any other runtime failure. Logged with its stack trace — this handler used
+     * to swallow errors silently, which made production failures (e.g. a preview
+     * returning 400) impossible to diagnose from the logs.
+     */
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<?> handleGeneric(RuntimeException ex) {
         String message = ex.getMessage() != null ? ex.getMessage() : "Unexpected error";
+        // One line at WARN (expected client errors like a missing refresh cookie
+        // land here too); the stack trace is available at DEBUG.
+        log.warn("Request failed with {}: {}", ex.getClass().getSimpleName(), message);
+        log.debug("Stack trace for failed request", ex);
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(Map.of("message", message));
+    }
+
+    /**
+     * Checked exceptions (e.g. an I/O failure while producing a response). Handled
+     * here, inside Spring MVC, so the response keeps its CORS headers — an
+     * exception escaping to the servlet container's error page loses them, and the
+     * browser then reports only an opaque network error (net::ERR_FAILED).
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<?> handleUnexpected(Exception ex) {
+        log.error("Request failed with {}: {}", ex.getClass().getSimpleName(), ex.getMessage(), ex);
+        return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("message", "Unexpected server error"));
     }
 }

@@ -1,5 +1,23 @@
-/* Ebook PDF stylesheet. Font families are registered in code
-   (PdfGenerationService) from the bundled Liberation fonts. */
+/* ===========================================================================
+   Scrivetta ebook stylesheet — a single editorial design system shared by the
+   PDF export (openhtmltopdf) and the in-editor preview (browser). Font families
+   are registered in code (PdfGenerationService) from the bundled Liberation
+   fonts; the preview maps them to metric-compatible web fonts.
+
+   NOTE: openhtmltopdf (Flying Saucer) does not support CSS custom properties
+   (var()) or flexbox, so values are written out literally and layout uses the
+   box model / floats / tables. Keep it that way.
+
+   Design language: minimal, editorial, premium, highly readable. Strong type
+   hierarchy and intentional whitespace over decoration.
+
+   Typography scale (pt):
+     cover title 34 · cover subtitle 14 · chapter title 26 · h2 15.5 · h3 12.5
+     · h4 11 · body 11 · caption 8.5 · component label 8.5 · pull quote 16
+   Ink palette:
+     text #1a1a1a · strong #111 · muted #6b6b6b · faint #9a9a9a · hairline #e6e3dd
+     · accent (ink) #1a1a1a · positive #1f6b4f · caution #9a5b12
+   =========================================================================== */
 
 @page {
     size: 6in 9in;
@@ -8,8 +26,8 @@
     @bottom-center {
         content: counter(page);
         font-family: "Ebook Sans";
-        font-size: 9pt;
-        color: #888;
+        font-size: 8.5pt;
+        color: #9a9a9a;
     }
 }
 
@@ -20,47 +38,76 @@
     @bottom-center { content: ""; }
 }
 
+/* The contents page carries no folio either — front matter reads cleaner. */
+@page frontmatter {
+    @bottom-center { content: ""; }
+}
+
 body {
     font-family: "Ebook Serif";
     font-size: 11pt;
-    line-height: 1.5;
+    line-height: 1.52;
     color: #1a1a1a;
     margin: 0;
+    -fs-font-scaling: false;
+    hyphens: auto;
 }
 
 p {
-    margin: 0 0 0.7em 0;
+    margin: 0 0 0.65em 0;
     text-align: justify;
+    orphans: 2;
+    widows: 2;
 }
+
+/* The first paragraph after a heading or opener sits flush (no indent); the
+   opening of a chapter body drops its top margin so it hugs the opener rule. */
+.chapter-body > p:first-child { margin-top: 0; }
 
 h1, h2, h3, h4 {
     font-family: "Ebook Sans";
     color: #111;
-    line-height: 1.25;
+    line-height: 1.22;
     page-break-after: avoid;
 }
 
-h2 { font-size: 15pt; margin: 1.4em 0 0.5em; }
-h3 { font-size: 12.5pt; margin: 1.2em 0 0.4em; }
-h4 { font-size: 11pt; margin: 1em 0 0.3em; }
+h2 {
+    font-size: 15.5pt;
+    font-weight: bold;
+    letter-spacing: -0.01em;
+    margin: 1.5em 0 0.5em;
+    padding-bottom: 0.25em;
+    border-bottom: 1px solid #e6e3dd;
+}
+h3 { font-size: 12.5pt; margin: 1.25em 0 0.35em; }
+h4 {
+    font-size: 9.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6b6b6b;
+    margin: 1.1em 0 0.3em;
+}
 
-ul, ol { margin: 0 0 0.7em 1.4em; padding: 0; }
-li { margin: 0 0 0.3em 0; }
+ul, ol { margin: 0 0 0.7em 1.3em; padding: 0; }
+li { margin: 0 0 0.32em 0; padding-left: 0.15em; }
 
 strong { font-weight: bold; }
 em { font-style: italic; }
 
+a { color: inherit; text-decoration: none; }
+
 blockquote {
-    margin: 0.8em 0;
-    padding: 0.2em 0 0.2em 1em;
-    border-left: 3px solid #ccc;
-    color: #444;
+    margin: 1em 0;
+    padding: 0.1em 0 0.1em 1em;
+    border-left: 2px solid #d8d3c9;
+    color: #4a4a4a;
+    font-style: italic;
 }
 
 code {
     font-family: "Ebook Mono";
     font-size: 9.5pt;
-    background: #f2f2f2;
+    background: #f3f1ec;
     padding: 0.05em 0.3em;
     border-radius: 3px;
 }
@@ -68,40 +115,43 @@ code {
 pre {
     font-family: "Ebook Mono";
     font-size: 9pt;
-    line-height: 1.4;
-    background: #f5f5f5;
-    border: 1px solid #e2e2e2;
+    line-height: 1.42;
+    background: #f7f5f0;
+    border: 1px solid #e6e3dd;
     border-radius: 4px;
     padding: 0.8em 1em;
-    margin: 0.8em 0;
+    margin: 0.9em 0;
     white-space: pre-wrap;
     word-wrap: break-word;
     page-break-inside: avoid;
 }
-
-pre code {
-    background: none;
-    padding: 0;
-    font-size: 9pt;
-}
+pre code { background: none; padding: 0; font-size: 9pt; }
 
 table {
     width: 100%;
     border-collapse: collapse;
-    margin: 0.8em 0;
+    margin: 1em 0;
     font-size: 10pt;
+    page-break-inside: avoid;
 }
 th, td {
-    border: 1px solid #ccc;
-    padding: 0.4em 0.6em;
+    border: 1px solid #e6e3dd;
+    padding: 0.45em 0.65em;
     text-align: left;
+    vertical-align: top;
 }
-th { background: #f2f2f2; font-family: "Ebook Sans"; }
+th {
+    background: #f7f5f0;
+    font-family: "Ebook Sans";
+    font-size: 8.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #4a4a4a;
+}
 
-/* ---- Cover ---- */
-/* The cover fills the whole first page. A placed cover image is drawn full-bleed
-   behind the title (object-fit: cover crops without distortion — supported by
-   both openhtmltopdf 1.0.10+ and browsers, so the PDF matches the preview). */
+/* ===========================================================================
+   Cover
+   =========================================================================== */
 .cover {
     page: cover;
     page-break-after: always;
@@ -109,106 +159,679 @@ th { background: #f2f2f2; font-family: "Ebook Sans"; }
     width: 6in;
     height: 9in;
     overflow: hidden;
-    text-align: center;
-    background: #f4f2ee;
+    background: #f4f2ec;
 }
+
+/* --- Shared cover typography (real, editable text — never baked into the image).
+   Dark on paper by default; the --light variant inverts it over an image scrim. */
+.cover-eyebrow {
+    font-family: "Ebook Sans";
+    font-size: 9.5pt;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: #8a8377;
+    margin-bottom: 0.7cm;
+}
+.cover-eyebrow:before {
+    content: "";
+    display: block;
+    width: 1.4cm;
+    border-top: 2px solid #1a1a1a;
+    margin-bottom: 0.5cm;
+}
+.book-title {
+    font-family: "Ebook Sans";
+    font-size: 32pt;
+    font-weight: bold;
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    color: #14110d;
+    margin-bottom: 0.5cm;
+}
+.book-subtitle {
+    font-family: "Ebook Serif";
+    font-style: italic;
+    font-size: 14pt;
+    line-height: 1.35;
+    color: #55503f;
+    max-width: 10cm;
+}
+.cover-overlay--light .cover-eyebrow { color: rgba(255, 255, 255, 0.9); }
+.cover-overlay--light .cover-eyebrow:before { border-top-color: rgba(255, 255, 255, 0.85); }
+.cover-overlay--light .book-title { color: #ffffff; }
+.cover-overlay--light .book-subtitle { color: rgba(255, 255, 255, 0.92); }
+
+/* --- TYPOGRAPHIC: composed title page, no image --- */
+.cover--typographic .cover-overlay {
+    position: absolute;
+    top: 3.4cm; left: 1.7cm; right: 1.7cm;
+    text-align: left;
+}
+.cover--typographic .cover-eyebrow { margin-bottom: 1.1cm; }
+.cover--typographic .book-title { font-size: 34pt; }
+
+/* Cover image regions are sized to the SAME aspect ratio the visual is generated
+   at (CoverLayout.imageAspectRatio): full-bleed regions are 2:3 (PORTRAIT), the
+   partial regions are 3:2 (LANDSCAPE). Because the region ratio matches the asset
+   ratio, object-fit: cover crops nothing meaningful, and even a renderer that
+   ignored object-fit would show no distortion. Never set only one of width/height
+   on a cover image (that would let it stretch); always pin both to the region. */
+
+/* --- IMAGE_LED: full-bleed visual (2:3) + title over a legibility scrim --- */
+.cover--image-led { background: #14110d; }
 .cover-bg {
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 6in;
-    height: 9in;
+    top: 0; left: 0;
+    width: 6in; height: 9in;   /* 2:3 — matches PORTRAIT asset exactly */
     object-fit: cover;
     object-position: center;
 }
-.cover-overlay {
+.cover-overlay--scrim {
     position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    padding: 1.6cm 1.4cm;
+    left: 0; right: 0; bottom: 0;
+    padding: 1.5cm 1.5cm 1.7cm;
+    background: rgba(15, 13, 10, 0.58);
+    text-align: left;
 }
-/* Plain (no image) cover: sit the title in the upper third, like a title page. */
-.cover:not(.cover--with-image) .cover-overlay {
-    top: 5.5cm;
-    bottom: auto;
+.cover-overlay--scrim .book-title { font-size: 30pt; }
+
+/* --- EDITORIAL: visual (3:2) in the upper field, title on paper below --- */
+.cover--editorial .cover-art--editorial {
+    position: absolute;
+    top: 0; left: 0;
+    width: 6in; height: 4in;   /* 3:2 — matches LANDSCAPE asset exactly */
+    object-fit: cover;
+    object-position: center;
 }
-/* With an image, lay the title over a legibility scrim at the foot of the page. */
-.cover--with-image .cover-overlay {
-    background: rgba(20, 18, 16, 0.55);
-    padding-top: 1.1cm;
-    padding-bottom: 1.6cm;
+.cover--editorial .cover-overlay--lower {
+    position: absolute;
+    left: 1.7cm; right: 1.7cm; top: 4.7in;
+    text-align: left;
 }
-.cover .book-title {
-    font-family: "Ebook Sans";
-    font-size: 30pt;
-    font-weight: bold;
-    line-height: 1.15;
-    margin-bottom: 0.4em;
-    color: #111;
+.cover--editorial .cover-eyebrow { margin-bottom: 0.6cm; }
+
+/* --- SPLIT: visual (3:2) top region, typography on a distinct panel below --- */
+.cover--split .cover-art--split {
+    position: absolute;
+    top: 0; left: 0;
+    width: 6in; height: 4in;   /* 3:2 — matches LANDSCAPE asset exactly */
+    object-fit: cover;
+    object-position: center;
 }
-.cover .book-subtitle {
-    font-family: "Ebook Sans";
-    font-size: 15pt;
-    color: #555;
-}
-.cover--with-image .book-title {
-    color: #fff;
-}
-.cover--with-image .book-subtitle {
-    color: rgba(255, 255, 255, 0.92);
+.cover--split .cover-panel {
+    position: absolute;
+    left: 0; right: 0; top: 4in; bottom: 0;
+    background: #f4f2ec;
+    padding: 1.5cm 1.7cm;
+    text-align: left;
 }
 
-/* ---- Inline chapter images ---- */
+/* --- MINIMAL: strong typography up top, a small framed visual (3:2) below --- */
+.cover--minimal .cover-overlay--upper {
+    position: absolute;
+    top: 3cm; left: 1.7cm; right: 1.7cm;
+    text-align: left;
+}
+.cover--minimal .cover-art--minimal {
+    position: absolute;
+    right: 1.7cm; bottom: 2.2cm;
+    width: 7.5cm; height: 5cm;   /* 3:2 — matches LANDSCAPE asset exactly */
+    object-fit: cover;
+    object-position: center;
+}
+
+/* ===========================================================================
+   Table of contents
+   =========================================================================== */
+.toc {
+    page: frontmatter;
+    page-break-after: always;
+    padding-top: 1.2cm;
+}
+.toc-heading {
+    font-family: "Ebook Sans";
+    font-size: 22pt;
+    font-weight: bold;
+    letter-spacing: -0.01em;
+    color: #14110d;
+    margin-bottom: 0.2cm;
+}
+.toc-heading:after {
+    content: "";
+    display: block;
+    width: 1.4cm;
+    border-top: 2px solid #1a1a1a;
+    margin-top: 0.35cm;
+    margin-bottom: 0.9cm;
+}
+/* The TOC is a two-column table so page numbers align to a consistent right
+   margin. The number is the real printed page, resolved from the chapter anchor
+   with target-counter (generated content must NOT be floated — openhtmltopdf
+   loses the href element and NPEs — hence the table). The dotted rule under each
+   row reads as an editorial leader. */
+.toc-list {
+    width: 100%;
+    border: 0;
+    border-collapse: collapse;
+    border-spacing: 0;
+    margin: 0;
+}
+.toc-item { font-size: 11.5pt; line-height: 1.3; }
+.toc-entry {
+    padding: 0 0 0.55em 0;
+    border: 0;
+    border-bottom: 1px dotted #d3ccbd;
+    vertical-align: bottom;
+}
+.toc-pagecell {
+    padding: 0 0 0.55em 0.6em;
+    border: 0;
+    border-bottom: 1px dotted #d3ccbd;
+    text-align: right;
+    vertical-align: bottom;
+    white-space: nowrap;
+}
+.toc-link { color: #1a1a1a; }
+.toc-pagelink { color: #6b6b6b; }
+.toc-pagelink:after {
+    content: target-counter(attr(href), page);
+    font-family: "Ebook Sans";
+    font-size: 10pt;
+    color: #6b6b6b;
+}
+.toc-num {
+    font-family: "Ebook Sans";
+    font-size: 9pt;
+    color: #b1aa98;
+    letter-spacing: 0.05em;
+    margin-right: 0.7em;
+}
+.toc-title { font-family: "Ebook Serif"; }
+
+/* ===========================================================================
+   Chapters
+   =========================================================================== */
+.chapter { page-break-before: always; }
+
+/* The opener is a composed editorial page-top: kicker number, large title, an
+   optional one-line intro, and a short rule that separates it from the body. */
+.chapter-opener {
+    margin-bottom: 1.1em;
+    page-break-after: avoid;
+    page-break-inside: avoid;
+}
+.chapter-num {
+    font-family: "Ebook Sans";
+    font-size: 9pt;
+    font-weight: normal;
+    color: #b1aa98;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    margin-bottom: 0.55em;
+}
+.chapter-title {
+    font-family: "Ebook Sans";
+    font-size: 26pt;
+    font-weight: bold;
+    color: #14110d;
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    margin: 0;
+}
+.chapter-intro {
+    font-family: "Ebook Serif";
+    font-style: italic;
+    font-size: 12.5pt;
+    line-height: 1.45;
+    color: #6b6b6b;
+    margin-top: 0.7em;
+    max-width: 11cm;
+}
+.chapter-rule {
+    width: 1.4cm;
+    border-top: 2px solid #1a1a1a;
+    margin-top: 1em;
+}
+
+/* Inline chapter images: never overflow the column, keep their aspect ratio
+   (height follows width — an image is scaled, never stretched), and stay with
+   their caption: an image on its own line is rendered as a <figure>. */
 .chapter-body img {
     display: block;
     max-width: 100%;
-    margin: 0.9em auto;
+    height: auto;
+    margin: 1.1em auto;
     page-break-inside: avoid;
 }
-
-/* ---- Table of contents ---- */
-.toc {
-    page-break-after: always;
+.figure {
+    margin: 1.2em 0;
+    padding: 0;
+    page-break-inside: avoid;
 }
-.toc h1 {
+.figure img { margin: 0 auto; }
+.figure figcaption {
     font-family: "Ebook Sans";
-    font-size: 22pt;
+    font-size: 8.5pt;
+    line-height: 1.4;
+    color: #6b6b6b;
+    text-align: center;
+    margin: 0.55em auto 0;
+    max-width: 10cm;
+}
+
+/* ===========================================================================
+   Semantic pagination
+   Units that belong together are grouped by EbookContentRenderer so the page
+   breaker keeps them on one page: a heading with the block it introduces (no
+   heading stranded at a page foot), a figure with its caption, table rows whole
+   with the header repeated on a continuation page.
+   =========================================================================== */
+.keep-with-next { page-break-inside: avoid; }
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; }
+li { orphans: 2; widows: 2; }
+
+/* The book's ending. When the final page would otherwise hold only a spilled
+   line or two, the renderer sets the final chapter slightly tighter (it records
+   the decision on the book, so the editor preview does the same) and the
+   content reflows back — no near-empty last page. */
+.chapter--snug .chapter-body { line-height: 1.46; }
+.chapter--snug .chapter-body p { margin-bottom: 0.5em; }
+.chapter--snug .chapter-body h2 { margin-top: 1.2em; }
+.chapter--snug .chapter-body h3 { margin-top: 1em; }
+.chapter--snug .cmp { margin: 0.9em 0; }
+.chapter--snug .figure { margin: 0.9em 0; }
+
+/* ===========================================================================
+   Semantic component system
+   Rendered by EbookContentRenderer from :::directive blocks. Each component has
+   a consistent visual weight and never splits awkwardly across a page.
+   =========================================================================== */
+.cmp {
+    margin: 1.15em 0;
+    page-break-inside: avoid;
+}
+.cmp-label {
+    font-family: "Ebook Sans";
+    font-size: 8.5pt;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: #8a8377;
+    margin-bottom: 0.45em;
+}
+.cmp-title {
+    font-family: "Ebook Sans";
+    font-size: 12pt;
+    font-weight: bold;
+    color: #14110d;
+    margin-bottom: 0.35em;
+}
+.cmp-body > p:last-child { margin-bottom: 0; }
+.cmp-body > p:first-child { margin-top: 0; }
+.cmp-body p { text-align: left; }
+
+/* --- Key idea: a quiet, framed panel with an ink keyline --- */
+.cmp--keyidea {
+    border-left: 3px solid #1a1a1a;
+    background: #f7f5f0;
+    padding: 0.85em 1.1em;
+}
+.cmp--keyidea .cmp-body {
+    font-size: 12pt;
+    line-height: 1.5;
+    color: #24211b;
+}
+
+/* --- Takeaway / summary --- */
+.cmp--takeaway {
+    border: 1px solid #e6e3dd;
+    border-top: 2px solid #1a1a1a;
+    padding: 0.85em 1.1em;
+    background: #fbfaf7;
+}
+
+/* --- Note / generic callout --- */
+.cmp--note, .cmp--tip {
+    border-left: 3px solid #d8d3c9;
+    padding: 0.35em 0 0.35em 1em;
+    color: #4a4a4a;
+}
+
+/* --- Example --- */
+.cmp--example {
+    border-left: 3px solid #b1aa98;
+    padding: 0.35em 0 0.35em 1em;
+}
+
+/* --- Exercise: a workbook task --- */
+.cmp--exercise {
+    border: 1px solid #d8d3c9;
+    border-radius: 4px;
+    padding: 0.9em 1.1em;
+}
+.cmp--exercise .cmp-label { color: #1a1a1a; }
+
+/* --- Warning / common mistake --- */
+.cmp--warning {
+    border-left: 3px solid #9a5b12;
+    background: #faf6ee;
+    padding: 0.75em 1.1em;
+}
+.cmp--warning .cmp-label { color: #9a5b12; }
+
+/* --- Done when: a positive completion criterion --- */
+.cmp--donewhen {
+    border: 1px solid #cfe0d6;
+    border-left: 3px solid #1f6b4f;
+    background: #f4f9f6;
+    padding: 0.75em 1.1em;
+}
+.cmp--donewhen .cmp-label { color: #1f6b4f; }
+.cmp--donewhen .cmp-body {
+    font-size: 11pt;
+    color: #234034;
+}
+
+/* --- Pull quote: a large, centred editorial quotation --- */
+.cmp--pullquote {
+    margin: 1.6em 0;
+    padding: 0.2em 1.2cm;
+    text-align: center;
+    page-break-inside: avoid;
+}
+.cmp--pullquote .cmp-body {
+    font-family: "Ebook Serif";
+    font-style: italic;
+    font-size: 16pt;
+    line-height: 1.4;
+    color: #2b271f;
+}
+.cmp--pullquote .cmp-body p { text-align: center; margin: 0; }
+.cmp--pullquote:before {
+    content: "";
+    display: block;
+    width: 1cm;
+    border-top: 2px solid #1a1a1a;
+    margin: 0 auto 0.6em;
+}
+
+/* --- Action plan / steps --- */
+.cmp--steps {
+    border-top: 2px solid #1a1a1a;
+    padding-top: 0.7em;
+    margin: 1.4em 0;
+}
+.steps-eyebrow {
+    font-family: "Ebook Sans";
+    font-size: 9pt;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: #8a8377;
     margin-bottom: 0.8em;
 }
-.toc ol {
-    list-style: none;
-    margin-left: 0;
+.steps-list { list-style: none; margin: 0; padding: 0; }
+.step {
+    margin: 0 0 0.9em 0;
+    padding: 0 0 0.9em 0;
+    border-bottom: 1px solid #ece9e2;
+    page-break-inside: avoid;
 }
-.toc li {
-    margin-bottom: 0.5em;
-    font-size: 11.5pt;
-}
-.toc .toc-num { color: #888; }
-
-/* ---- Chapters ---- */
-.chapter {
-    page-break-before: always;
-}
-.chapter-heading {
+.step-index {
+    float: left;
+    width: 1.5cm;
     font-family: "Ebook Sans";
-    margin-bottom: 1.2em;
-    padding-bottom: 0.4em;
-    border-bottom: 2px solid #eee;
-}
-.chapter-heading .chapter-num {
-    display: block;
-    font-size: 11pt;
-    font-weight: normal;
-    color: #999;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    margin-bottom: 0.3em;
-}
-.chapter-heading .chapter-title {
-    display: block;
-    font-size: 24pt;
+    font-size: 17pt;
     font-weight: bold;
-    color: #111;
-    line-height: 1.15;
+    color: #cfc7b6;
+    line-height: 1;
+}
+.step-main { margin-left: 1.7cm; }
+.step-title {
+    font-family: "Ebook Sans";
+    font-size: 10.5pt;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #14110d;
+    margin-bottom: 0.25em;
+}
+.step-meta {
+    font-weight: normal;
+    font-size: 8pt;
+    letter-spacing: 0.1em;
+    color: #9a9a9a;
+    margin-left: 0.6em;
+}
+.step-desc {
+    font-size: 10.5pt;
+    line-height: 1.45;
+    color: #3a362d;
+}
+.step-desc p { text-align: left; margin: 0; }
+
+/* --- Flow / process diagram: drawn with type, not an image --- */
+.cmp--flow {
+    border: 1px solid #e6e3dd;
+    border-radius: 4px;
+    background: #fbfaf7;
+    padding: 1em 1em 0.6em;
+    margin: 1.4em 0;
+    text-align: center;
+    page-break-inside: avoid;
+}
+.flow-title {
+    font-family: "Ebook Sans";
+    font-size: 8.5pt;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: #8a8377;
+    margin-bottom: 0.8em;
+}
+.flow-node {
+    display: inline-block;
+    min-width: 5.5cm;
+    font-family: "Ebook Sans";
+    font-size: 10.5pt;
+    font-weight: bold;
+    color: #24211b;
+    background: #ffffff;
+    border: 1px solid #d8d3c9;
+    border-radius: 3px;
+    padding: 0.45em 0.9em;
+    margin: 0 auto;
+}
+/* A drawn down-arrow between nodes (CSS triangle — no glyph dependency). */
+.flow-arrow {
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 7px solid #b1aa98;
+    margin: 0.45em auto;
+}
+
+/* --- Checklist: drawn boxes, no glyph dependency --- */
+.cmp--checklist { padding: 0.2em 0; }
+.checklist { list-style: none; margin: 0; padding: 0; }
+.check-item {
+    position: relative;
+    margin: 0 0 0.5em 0;
+    padding-left: 1.5em;
+    line-height: 1.45;
+}
+.check-item:before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.18em;
+    width: 0.62em;
+    height: 0.62em;
+    border: 1.5px solid #6b6b6b;
+    border-radius: 2px;
+}
+
+/* ===========================================================================
+   Cover visual concept (typographic cover only)
+   An art-directed element derived from the book's structure — a large program
+   numeral for a multi-day/step book, otherwise the title's initial as a ghosted
+   monogram. Set low and quiet so the title hierarchy stays dominant.
+   =========================================================================== */
+.cover-visual {
+    position: absolute;
+    right: 1.5cm;
+    bottom: 2.6cm;
+    text-align: right;
+}
+.cover-numeral {
+    font-family: "Ebook Sans";
+    font-size: 150pt;
+    font-weight: bold;
+    line-height: 0.8;
+    letter-spacing: -0.03em;
+    color: #e4dfd3;
+}
+.cover-numeral-label {
+    font-family: "Ebook Sans";
+    font-size: 11pt;
+    font-weight: bold;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: #b8b0a0;
+    margin-top: 0.2cm;
+    margin-right: 0.1cm;
+}
+.cover-monogram {
+    font-family: "Ebook Serif";
+    font-size: 150pt;
+    line-height: 0.8;
+    color: #e7e2d6;
+}
+.cover-byline {
+    font-family: "Ebook Sans";
+    font-size: 10.5pt;
+    letter-spacing: 0.04em;
+    color: #6f6a5c;
+    margin-top: 0.8cm;
+}
+.cover-overlay--light .cover-byline { color: rgba(255, 255, 255, 0.85); }
+
+/* Subtle publisher imprint at the foot of the cover. Right-aligned by default so
+   it clears the left-aligned title/byline; MINIMAL keeps it left because its
+   visual sits bottom-right. */
+.cover-imprint {
+    position: absolute;
+    right: 1.7cm;
+    bottom: 1.4cm;
+    font-family: "Ebook Sans";
+    font-size: 8pt;
+    font-weight: bold;
+    letter-spacing: 0.32em;
+    color: #b8b0a0;
+}
+.cover--minimal .cover-imprint {
+    left: 1.7cm;
+    right: auto;
+}
+/* On a full-bleed image the foot sits over the dark scrim — lighten the imprint. */
+.cover--image-led .cover-imprint {
+    color: rgba(255, 255, 255, 0.72);
+}
+
+/* ===========================================================================
+   Full-page openers (chapter / day-step dividers)
+   A dedicated page that separates a major section from the previous one. The
+   composer (DocumentComposer) only emits these when the book is substantial and
+   the page budget affords the extra page — short books use the band opener below.
+   =========================================================================== */
+@page opener {
+    @bottom-center { content: ""; }
+}
+.opener {
+    page: opener;
+    page-break-before: always;
+    page-break-after: always;
+    padding-top: 4.2cm;
+}
+.opener-numeral {
+    font-family: "Ebook Sans";
+    font-size: 82pt;
+    font-weight: bold;
+    line-height: 0.9;
+    letter-spacing: -0.03em;
+    color: #e4dfd3;
+    margin-bottom: 0.4cm;
+}
+.opener-label {
+    font-family: "Ebook Sans";
+    font-size: 10pt;
+    font-weight: bold;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    color: #8a8377;
+    margin-bottom: 0.5em;
+}
+.opener-title {
+    font-family: "Ebook Sans";
+    font-size: 30pt;
+    font-weight: bold;
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    color: #14110d;
+    margin: 0 0 0.7cm 0;
+    max-width: 12cm;
+}
+.opener-meta {
+    display: inline-block;
+    white-space: nowrap;
+    font-family: "Ebook Sans";
+    font-size: 8.5pt;
+    font-weight: bold;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #6b6b6b;
+    border: 1px solid #d3ccbd;
+    border-radius: 999px;
+    padding: 0.25em 0.9em;
+    margin-bottom: 0.7cm;
+}
+.opener--unit .opener-meta {
+    color: #1f6b4f;
+    border-color: #bcd8c9;
+}
+.opener-statement {
+    font-family: "Ebook Serif";
+    font-style: italic;
+    font-size: 13.5pt;
+    line-height: 1.5;
+    color: #55503f;
+    max-width: 11cm;
+}
+.opener-statement:before {
+    content: "";
+    display: block;
+    width: 1.4cm;
+    border-top: 2px solid #1a1a1a;
+    margin-bottom: 0.6cm;
+}
+/* The body that follows an opener page starts a fresh page but adds no divider
+   of its own (the opener was the divider). */
+.chapter-continued { }
+
+/* A unit's band opener (compact books) carries the same day/step meta chip. */
+.chapter-meta {
+    display: inline-block;
+    white-space: nowrap;
+    font-family: "Ebook Sans";
+    font-size: 8pt;
+    font-weight: bold;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #1f6b4f;
+    border: 1px solid #bcd8c9;
+    border-radius: 999px;
+    padding: 0.2em 0.8em;
+    margin: 0.1em 0 0.6em 0;
 }

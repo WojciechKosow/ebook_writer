@@ -137,6 +137,54 @@ class ImagePlanningServiceTest {
     }
 
     @Test
+    void salvagesCompleteImagesFromTruncatedJson() {
+        // The failure seen in production: the model was cut off mid-array, so the
+        // last object is incomplete. The complete objects must still be recovered.
+        String truncated = """
+                {
+                  "images": [
+                    {"chapterNumber": 1, "anchorHeading": "Intro", "type": "DIAGRAM",
+                     "purpose": "p", "description": "d", "generationPrompt": "one", "aspectRatio": "3:2", "priority": 1},
+                    {"chapterNumber": 2, "anchorHeading": null, "type": "CHART",
+                     "purpose": "p", "description": "d", "generationPrompt": "two", "aspectRatio": "16:9", "priority": 2},
+                    {"chapterNumber": 3, "anchorHeading": null, "type": "PHOTO",
+                     "purpose": "p", "descrip""";
+
+        List<ImagePlanningService.RawImage> salvaged = ImagePlanningService.salvageImages(truncated);
+
+        assertEquals(2, salvaged.size(), "the two complete objects survive; the cut-off one is dropped");
+        assertEquals("one", salvaged.get(0).generationPrompt());
+        assertEquals("two", salvaged.get(1).generationPrompt());
+    }
+
+    @Test
+    void salvageIgnoresBracesInsidePromptStrings() {
+        String truncated = """
+                { "images": [
+                  {"chapterNumber": 1, "generationPrompt": "draw a { nested } [tricky] prompt", "priority": 1},
+                  {"chapterNumber": 2, "generationPrompt": "next", "prio""";
+        List<ImagePlanningService.RawImage> salvaged = ImagePlanningService.salvageImages(truncated);
+        assertEquals(1, salvaged.size());
+        assertEquals("draw a { nested } [tricky] prompt", salvaged.get(0).generationPrompt());
+    }
+
+    @Test
+    void planSalvagesTruncatedModelOutputEndToEnd() {
+        ImagePlanningService service = service(props(true, 6, 2));
+        UUID id = ebookWith2Chapters();
+        when(anthropic.complete(any(), any(), anyLong())).thenReturn("""
+                {
+                  "images": [
+                    {"chapterNumber": 1, "type": "DIAGRAM", "generationPrompt": "draw", "aspectRatio": "3:2", "priority": 1},
+                    {"chapterNumber": 2, "type": "CHART", "generationPr""");
+
+        List<ImagePlan> plans = service.plan(id);
+        assertEquals(1, plans.size());
+        assertEquals(1, plans.get(0).chapterNumber());
+        assertEquals("draw", plans.get(0).generationPrompt());
+    }
+
+    @Test
     void planReturnsEmptyOnMalformedModelOutput() {
         ImagePlanningService service = service(props(true, 6, 2));
         UUID id = ebookWith2Chapters();

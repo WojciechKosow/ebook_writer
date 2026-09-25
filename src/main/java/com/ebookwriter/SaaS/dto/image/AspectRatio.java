@@ -35,6 +35,12 @@ public enum AspectRatio {
         return openAiSize;
     }
 
+    /** The width/height ratio of the generated pixels (e.g. {@code 1.5} for 3:2). */
+    public double ratio() {
+        String[] wh = openAiSize.split("x");
+        return Double.parseDouble(wh[0]) / Double.parseDouble(wh[1]);
+    }
+
     /**
      * Map a free-form ratio string from the model to the nearest supported ratio.
      * Anything wider than tall is LANDSCAPE, taller than wide is PORTRAIT, and

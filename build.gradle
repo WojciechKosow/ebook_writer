@@ -32,6 +32,11 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	// "Continue with Google": Nimbus-backed JWT decoding to verify the OpenID
+	// Connect ID token (signature via Google's JWKS, iss/aud/exp/nonce). Only the
+	// JOSE module — the OAuth flow itself is a small hand-rolled server-side
+	// authorization-code + PKCE exchange (see security/oauth).
+	implementation 'org.springframework.security:spring-security-oauth2-jose'
 
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'

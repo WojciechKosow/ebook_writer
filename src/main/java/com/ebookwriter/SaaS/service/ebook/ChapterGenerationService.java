@@ -42,8 +42,20 @@ public class ChapterGenerationService {
     private final EbookChapterRepository chapterRepository;
     private final EbookImageRepository imageRepository;
 
+    /** Write a chapter at its planned length (no credit pressure). */
     @Transactional
     public void generate(UUID ebookId, UUID chapterId) {
+        generate(ebookId, chapterId, null);
+    }
+
+    /**
+     * Write a chapter following the orchestrator's {@link ChapterDirective} (its
+     * word target, whether it ends the book, and which planned chapters were left
+     * out to end the book naturally). A {@code null} directive writes the chapter
+     * at its planned length, ending the book if it is the last one.
+     */
+    @Transactional
+    public void generate(UUID ebookId, UUID chapterId, ChapterDirective directive) {
 
         Ebook ebook = ebookRepository.findById(ebookId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found: " + ebookId));
@@ -54,24 +66,47 @@ public class ChapterGenerationService {
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Chapter not found: " + chapterId));
 
-        int targetWords = Math.max(300, chapter.getApproxPages() * WORDS_PER_PAGE);
-        long maxTokens = Math.min(MAX_OUTPUT_TOKENS, targetWords * 2L + 1000L);
+        List<EbookChapter> inBook = ManuscriptContext.inBook(chapters);
+        if (directive == null) {
+            boolean last = !inBook.isEmpty()
+                    && inBook.get(inBook.size() - 1).getId().equals(chapter.getId());
+            directive = new ChapterDirective(plannedWords(chapter), false, last, List.of());
+        }
+        int targetWords = Math.max(WritingBudget.MIN_CHAPTER_WORDS, directive.targetWords());
+        long maxTokens = outputTokenBudget(targetWords);
 
         String system = ChapterPrompts.system(ebook.getLanguage());
         String userPrompt = ChapterPrompts.user(
                 ebook,
-                ManuscriptContext.outline(chapters),
+                ManuscriptContext.outline(inBook),
                 chapter,
-                ManuscriptContext.previousSummaries(chapters, chapter.getChapterNumber()),
-                targetWords,
-                availableImages(chapterId)
+                ManuscriptContext.previousSummaries(inBook, chapter.getChapterNumber()),
+                directive,
+                availableImages(chapterId),
+                positionOf(inBook, chapter),
+                inBook.size()
         );
 
-        String raw = anthropicService.complete(system, userPrompt, maxTokens);
+        AnthropicService.Completion completion =
+                anthropicService.completeDetailed(system, userPrompt, maxTokens);
+        String raw = completion.text();
 
         String[] parts = raw.split(ChapterPrompts.SUMMARY_DELIMITER, 2);
         String content = parts[0].trim();
         String summary = parts.length > 1 ? parts[1].trim() : "";
+
+        // A response cut off by the token limit stops mid-thought (and never reached
+        // the summary delimiter). Repair it back to the last complete block so the
+        // chapter ends cleanly, and never keep a heading with no body at the end.
+        if (completion.truncated() && parts.length == 1) {
+            String repaired = ManuscriptIntegrity.repairTruncated(content);
+            log.warn("Chapter {} of ebook {} hit the output limit; repaired its tail ({} -> {} chars)",
+                    chapter.getChapterNumber(), ebookId, content.length(),
+                    repaired == null ? 0 : repaired.length());
+            content = repaired;
+        } else {
+            content = ManuscriptIntegrity.trimTrailingOrphans(content);
+        }
 
         chapter.setContent(content);
         chapter.setSummary(summary);
@@ -80,6 +115,31 @@ public class ChapterGenerationService {
 
         log.info("Wrote chapter {}/{} of ebook {} ({} chars)",
                 chapter.getChapterNumber(), chapters.size(), ebookId, content.length());
+    }
+
+    /** The chapter's planned length in words. */
+    static int plannedWords(EbookChapter chapter) {
+        return Math.max(WritingBudget.MIN_CHAPTER_WORDS, chapter.getApproxPages() * WORDS_PER_PAGE);
+    }
+
+    /**
+     * Output tokens for a chapter of {@code targetWords}: generous headroom (words
+     * → tokens, Markdown and component syntax, non-English text, adaptive thinking
+     * and the summary) so a chapter that runs a little long to finish its thought
+     * is never cut off. The target is the length signal; this is only a backstop.
+     */
+    static long outputTokenBudget(int targetWords) {
+        return Math.min(MAX_OUTPUT_TOKENS, targetWords * 3L + 3000L);
+    }
+
+    /** 1-based position of the chapter among the chapters that are in the book. */
+    private static int positionOf(List<EbookChapter> inBook, EbookChapter chapter) {
+        for (int i = 0; i < inBook.size(); i++) {
+            if (inBook.get(i).getId().equals(chapter.getId())) {
+                return i + 1;
+            }
+        }
+        return chapter.getChapterNumber();
     }
 
     /**

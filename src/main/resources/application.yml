@@ -70,6 +70,17 @@ app:
     cookie-same-site: ${APP_AUTH_COOKIE_SAME_SITE:None}
     cookie-secure: ${APP_AUTH_COOKIE_SECURE:true}
 
+# "Continue with Google" — OAuth 2.0 / OpenID Connect sign-in (scopes: openid
+# email profile; authentication only). Create an OAuth client of type "Web
+# application" in Google Cloud Console. The client secret stays on the backend.
+# GOOGLE_REDIRECT_URI is this backend's public callback and must be registered
+# verbatim under "Authorized redirect URIs". Leave blank locally to disable.
+google:
+  oauth:
+    client-id: ${GOOGLE_CLIENT_ID:}
+    client-secret: ${GOOGLE_CLIENT_SECRET:}
+    redirect-uri: ${GOOGLE_REDIRECT_URI:http://localhost:8080/api/auth/oauth2/google/callback}
+
 # Anthropic (Claude) — ebook generation. Model must be a Claude 4.6+ model
 # (adaptive thinking is used).
 anthropic:
@@ -121,6 +132,9 @@ openai:
   # regardless of what the model returns.
   max-images-per-book: ${OPENAI_MAX_IMAGES_PER_BOOK:6}
   max-images-per-chapter: ${OPENAI_MAX_IMAGES_PER_CHAPTER:2}
+  # Quality for the cover visual (gpt-image: low|medium|high|auto; blank = provider
+  # default). The cover is the most visible asset, so it defaults to high.
+  cover-quality: ${OPENAI_COVER_QUALITY:high}
 
 # Payments (Stripe) + credits. The $ amounts live in Stripe; credit grants here.
 stripe:
@@ -133,11 +147,31 @@ stripe:
   currency: ${STRIPE_CURRENCY:usd}
 
 credits:
-  # Credits granted per successful monthly subscription payment (1 credit ≈ 1 page).
+  # Credits granted per successful monthly subscription payment
+  # (1 credit = 1 final generated page).
   subscription-monthly-grant: ${CREDITS_SUBSCRIPTION_MONTHLY_GRANT:150}
   # Optional one-time grant when a wallet is first created (useful for testing).
   signup-bonus: ${CREDITS_SIGNUP_BONUS:0}
-  # Head-room over the requested page count when reserving the generation hold
-  # (0.20 = +20%). Always capped by the user's balance; the unused part is
-  # refunded once the real page count is known. Set 0 to hold exactly the ask.
-  page-budget-tolerance: ${CREDITS_PAGE_BUDGET_TOLERANCE:0.20}
+  # The single central overdraft limit for generation. Because the AI can't
+  # guarantee an exact page count, the requested length is only a target; the
+  # balance may dip up to this many credits below zero (lowest balance = -10),
+  # and never further. It bounds both the up-front hold and the render page cap.
+  max-overdraft: ${CREDITS_MAX_OVERDRAFT:10}
+  # Minimum credit budget required to START a standard generation. Credits are
+  # the generation budget, NOT a promise of an exact page count — this is simply
+  # the smallest budget Scrivetta needs to produce a complete standard ebook.
+  min-generation-budget: ${CREDITS_MIN_GENERATION_BUDGET:30}
+  # Orientational page range for a standard ebook. standard-target-pages is also
+  # the DEFAULT target length when the user selects none. A target is a soft
+  # content budget (it shapes planning); it is NOT a cap — the only hard limit is
+  # the user's credit budget below.
+  standard-target-min-pages: ${CREDITS_STANDARD_TARGET_MIN_PAGES:20}
+  standard-target-pages: ${CREDITS_STANDARD_TARGET_PAGES:30}
+  # Absolute per-generation page ceiling (safety bound only). The real per-book
+  # ceiling is min(balance, this) + max-overdraft, so a user with enough credits
+  # gets the whole book and it only winds down near their actual budget. Raise it
+  # if you want to allow even longer books; it just bounds a single runaway.
+  max-generation-budget: ${CREDITS_MAX_GENERATION_BUDGET:250}
+  # Largest selectable target length (pages). The target is a SOFT content budget
+  # that shapes planning; it never truncates a book. Higher requests are clamped.
+  max-target-pages: ${CREDITS_MAX_TARGET_PAGES:150}

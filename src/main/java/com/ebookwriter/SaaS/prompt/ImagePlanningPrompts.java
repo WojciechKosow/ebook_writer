@@ -34,10 +34,19 @@ public final class ImagePlanningPrompts {
                 at that point.
 
                 RULES:
-                - Prefer images that explain or clarify (a diagram of a process, a chart
-                  of a relationship, an illustration of a concept) over decorative ones.
+                - Prefer images that explain or clarify (an illustration of a concept,
+                  a scene that grounds an idea) over decorative ones.
+                - DIAGRAMS ARE NOT YOUR JOB. The book renders processes, cycles,
+                  sequences, timelines, comparisons, checklists and step-by-step action
+                  plans with its OWN typographic diagram components — crisp text, no
+                  spelling mistakes, on-brand. So do NOT propose an image for anything
+                  that is mostly boxes-and-arrows, labelled steps, or text in a chart.
+                  Only propose an image model image when the content genuinely needs a
+                  rendered picture: an ILLUSTRATION of a concept, or a PHOTO-style scene.
+                  Avoid the DIAGRAM and CHART types unless a picture truly cannot be
+                  expressed as text (it almost always can).
                 - Do NOT add an image just because a chapter exists. A chapter may have
-                  zero images.
+                  zero images. Whole books of pure prose need no images at all.
                 - Never propose decorative images that carry no information.
                 - Avoid repetition: no two images should communicate nearly the same
                   thing, and do not repeat a visual motif across chapters.

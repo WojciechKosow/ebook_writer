@@ -58,6 +58,15 @@ public class OpenAiProperties {
     /** Hard ceiling on generated images assigned to any single chapter. */
     private int maxImagesPerChapter = 2;
 
+    /**
+     * Rendering quality requested for the <b>cover</b> visual — the single most
+     * visible asset, so it is generated at the model's best quality by default.
+     * Sent as the API's {@code quality} parameter (gpt-image models accept
+     * {@code low|medium|high|auto}); blank omits it (provider default). Inline
+     * illustrations always use the provider default.
+     */
+    private String coverQuality = "high";
+
     /** True once an API key is present and the pipeline is enabled. */
     public boolean isConfigured() {
         return enabled && apiKey != null && !apiKey.isBlank();

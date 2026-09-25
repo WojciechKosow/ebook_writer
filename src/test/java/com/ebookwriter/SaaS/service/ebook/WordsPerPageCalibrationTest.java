@@ -86,7 +86,7 @@ class WordsPerPageCalibrationTest {
         int passes = 0;
         while (pageCount > budget && passes < 12) {
             int overflow = (pageCount - budget) * ChapterGenerationService.WORDS_PER_PAGE;
-            if (!PdfGenerationService.trimTrailingWords(chapters, overflow)) break;
+            if (!PdfGenerationService.trimOverflow(chapters, overflow)) break;
             pageCount = pages(pdf, ebook, chapters);
             passes++;
         }
@@ -110,5 +110,41 @@ class WordsPerPageCalibrationTest {
         assertFalse(PdfGenerationService.trimTrailingWords(chapters, 100),
                 "nothing left to trim once every chapter is empty");
         assertEquals("", chapters.get(0).getContent());
+    }
+
+    @Test
+    void anOverCeilingBookLosesEarlierSectionsNeverItsEnding() throws IOException {
+        PdfGenerationService pdf = new PdfGenerationService(null, null, null, new EbookHtmlBuilder(), null, null);
+        Ebook ebook = Ebook.builder().topic("Big").title("A Long Book").build();
+
+        List<EbookChapter> chapters = new ArrayList<>();
+        for (int i = 1; i <= 3; i++) {
+            StringBuilder body = new StringBuilder(prose(120));
+            for (int s = 1; s <= 4; s++) {
+                body.append("\n\n## Section ").append(s).append("\n\n").append(prose(220));
+            }
+            chapters.add(EbookChapter.builder().chapterNumber(i).title("Chapter " + i)
+                    .content(body.toString().strip()).build());
+        }
+        String ending = chapters.get(2).getContent() + "\n\nThe first hour is yours. Keep it that way.";
+        chapters.get(2).setContent(ending);
+
+        int pageCount = pages(pdf, ebook, chapters);
+        int budget = pageCount - 4;
+        int passes = 0;
+        while (pageCount > budget && passes < 12) {
+            int overflow = (pageCount - budget) * ChapterGenerationService.WORDS_PER_PAGE;
+            if (!PdfGenerationService.trimOverflow(chapters, overflow)) break;
+            pageCount = pages(pdf, ebook, chapters);
+            passes++;
+        }
+
+        assertTrue(pageCount <= budget, "the book fits the credit ceiling");
+        assertEquals(ending, chapters.get(2).getContent(), "the final chapter — the book's ending — is untouched");
+        assertFalse(chapters.get(1).getContent().contains("## Section 4"),
+                "the latest earlier chapter loses whole trailing sections first");
+        for (EbookChapter c : chapters) {
+            assertFalse(c.getContent().strip().endsWith("## Section 1"), "no orphan heading is left behind");
+        }
     }
 }

@@ -5,6 +5,7 @@ import com.ebookwriter.SaaS.entity.EbookImageRole;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.UserRepository;
 import com.ebookwriter.SaaS.request.EbookImageUpdateRequest;
+import com.ebookwriter.SaaS.service.ebook.CoverGenerationService;
 import com.ebookwriter.SaaS.service.ebook.EbookImageService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 public class EbookImageController {
 
     private final EbookImageService imageService;
+    private final CoverGenerationService coverGenerationService;
     private final UserRepository userRepository;
 
     /** Upload an image. {@code role} defaults to INLINE; pass COVER for the cover. */
@@ -71,7 +73,7 @@ public class EbookImageController {
                 .body(image.bytes());
     }
 
-    /** Update editor-adjustable metadata: the asset's role and/or inline display width. */
+    /** Update editor-adjustable metadata: role, inline display width, and/or crop focal point. */
     @PatchMapping("/{imageId}")
     public ResponseEntity<EbookImageDTO> update(@PathVariable UUID ebookId,
                                                 @PathVariable UUID imageId,
@@ -79,7 +81,8 @@ public class EbookImageController {
                                                 Authentication authentication) {
         User user = currentUser(authentication);
         return ResponseEntity.ok(imageService.updateMetadata(
-                ebookId, user.getId(), imageId, request.getRole(), request.getDisplayWidthPercent()));
+                ebookId, user.getId(), imageId, request.getRole(), request.getDisplayWidthPercent(),
+                request.getFocalX(), request.getFocalY()));
     }
 
     /** Make this image the book's cover (demotes any current cover). */
@@ -89,6 +92,19 @@ public class EbookImageController {
                                                   Authentication authentication) {
         User user = currentUser(authentication);
         return ResponseEntity.ok(imageService.setCover(ebookId, user.getId(), imageId));
+    }
+
+    /**
+     * Regenerate the AI cover visual, keeping the title, subtitle and layout. The
+     * previous AI cover is replaced; a user-uploaded cover is demoted (kept in the
+     * library). Returns the new cover asset. {@code 409}/error if image generation
+     * is not configured.
+     */
+    @PostMapping("/cover/regenerate")
+    public ResponseEntity<EbookImageDTO> regenerateCover(@PathVariable UUID ebookId,
+                                                         Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(coverGenerationService.regenerate(ebookId, user.getId()));
     }
 
     /** Clear the book's cover (keeps the asset, just unsets it as the cover). */

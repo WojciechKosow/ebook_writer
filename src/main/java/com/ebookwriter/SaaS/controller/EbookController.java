@@ -2,15 +2,18 @@ package com.ebookwriter.SaaS.controller;
 
 import com.ebookwriter.SaaS.dto.EbookContentResponse;
 import com.ebookwriter.SaaS.dto.EbookStatusResponse;
+import com.ebookwriter.SaaS.dto.GenerationBudgetResponse;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.UserRepository;
 import com.ebookwriter.SaaS.request.EbookContentUpdateRequest;
 import com.ebookwriter.SaaS.request.EbookRequest;
 import com.ebookwriter.SaaS.service.ebook.EbookPreviewService;
+import com.ebookwriter.SaaS.service.ebook.PdfDownloadLinkService;
 import com.ebookwriter.SaaS.service.ebook.EbookService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -20,8 +23,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/ebooks")
 @RequiredArgsConstructor
@@ -30,6 +35,7 @@ public class EbookController {
     private final EbookService ebookService;
     private final EbookPreviewService previewService;
     private final UserRepository userRepository;
+    private final PdfDownloadLinkService downloadLinkService;
 
     /**
      * Create a new ebook as a draft. No credits are held and generation does not
@@ -71,6 +77,18 @@ public class EbookController {
     public ResponseEntity<List<EbookStatusResponse>> list(Authentication authentication) {
         User user = currentUser(authentication);
         return ResponseEntity.ok(ebookService.list(user.getId()));
+    }
+
+    /**
+     * Describe the generation budget for the creation form: minimum credits to
+     * start, the orientational page range, the current balance and whether the
+     * user can generate now. Lets the UI show "Estimated usage ~20–30 credits",
+     * the balance, and an enough/not-enough message — a budget, not a page order.
+     */
+    @GetMapping("/generation-budget")
+    public ResponseEntity<GenerationBudgetResponse> generationBudget(Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(ebookService.getGenerationBudget(user.getId()));
     }
 
     /** Load the full editable manuscript (all chapters + Markdown bodies). */
@@ -133,10 +151,55 @@ public class EbookController {
     public ResponseEntity<byte[]> download(@PathVariable UUID id,
                                            Authentication authentication) {
         User user = currentUser(authentication);
+        long started = System.currentTimeMillis();
         EbookService.PdfDownload pdf = ebookService.getPdf(id, user.getId());
+        // Logged so a download that fails in the browser can be told apart from one
+        // that never reached (or never left) the server.
+        log.info("Serving PDF for ebook {} ({} KB, loaded in {} ms)",
+                id, pdf.bytes().length / 1024, System.currentTimeMillis() - started);
 
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_PDF)
+                .contentLength(pdf.bytes().length)
+                .cacheControl(CacheControl.noStore())
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + pdf.filename() + "\"")
+                .body(pdf.bytes());
+    }
+
+    /**
+     * Issue a short-lived signed link to the finished PDF. The frontend navigates
+     * to it so the browser downloads the file natively (see
+     * {@link PdfDownloadLinkService} for why this beats a fetch → blob download).
+     * Checks ownership and completion up front, so a link is only issued for a
+     * downloadable book.
+     */
+    @PostMapping("/{id}/download-link")
+    public ResponseEntity<Map<String, String>> downloadLink(@PathVariable UUID id,
+                                                            Authentication authentication) {
+        User user = currentUser(authentication);
+        ebookService.requireDownloadable(id, user.getId());
+        String token = downloadLinkService.issue(id, user.getId());
+        return ResponseEntity.ok(Map.of("url", "/api/ebooks/" + id + "/file?token=" + token));
+    }
+
+    /**
+     * Serve the PDF for a signed link (public route — the token is the
+     * credential). Sent as an attachment, uncached.
+     */
+    @GetMapping("/{id}/file")
+    public ResponseEntity<byte[]> file(@PathVariable UUID id, @RequestParam("token") String token) {
+        UUID userId = downloadLinkService.verify(token, id)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                        HttpStatus.FORBIDDEN, "This download link is invalid or has expired."));
+        long started = System.currentTimeMillis();
+        EbookService.PdfDownload pdf = ebookService.getPdf(id, userId);
+        log.info("Serving PDF via signed link for ebook {} ({} KB, loaded in {} ms)",
+                id, pdf.bytes().length / 1024, System.currentTimeMillis() - started);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .contentLength(pdf.bytes().length)
+                .cacheControl(CacheControl.noStore())
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename=\"" + pdf.filename() + "\"")
                 .body(pdf.bytes());

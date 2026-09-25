@@ -8,5 +8,12 @@ public enum ChapterStatus {
     PENDING,
     WRITTEN,
     EDITED,
-    FAILED
+    FAILED,
+    /**
+     * Planned but deliberately left out of this book because the user's credits
+     * could not cover the full plan: the book was wound down to a natural ending
+     * instead of being cut off mid-way. The outline entry is kept (no content) so
+     * a future "continue" feature can pick it up. Never rendered.
+     */
+    DEFERRED
 }

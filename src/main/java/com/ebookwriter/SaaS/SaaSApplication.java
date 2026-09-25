@@ -2,6 +2,7 @@ package com.ebookwriter.SaaS;
 
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.config.properties.CreditProperties;
+import com.ebookwriter.SaaS.config.properties.GoogleOAuthProperties;
 import com.ebookwriter.SaaS.config.properties.OpenAiProperties;
 import com.ebookwriter.SaaS.config.properties.PostmarkProperties;
 import com.ebookwriter.SaaS.config.properties.R2Properties;
@@ -19,7 +20,8 @@ import org.springframework.scheduling.annotation.EnableAsync;
 		StripeProperties.class,
 		CreditProperties.class,
 		R2Properties.class,
-		OpenAiProperties.class
+		OpenAiProperties.class,
+		GoogleOAuthProperties.class
 })
 public class SaaSApplication {
 
