@@ -181,6 +181,17 @@ knowledge:
   notes-context-chars: ${KNOWLEDGE_NOTES_CONTEXT_CHARS:4000}
   stale-processing-minutes: ${KNOWLEDGE_STALE_PROCESSING_MINUTES:30}
 
+# Knowledge-based writing: what each Claude chapter request may receive. Small but
+# sufficient — book context + this chapter's knowledge, answers, gaps and a few
+# excerpts of its own source files (never the whole upload).
+knowledge-writing:
+  max-book-context-chars: ${KNOWLEDGE_WRITING_MAX_BOOK_CONTEXT_CHARS:6000}
+  max-chapter-knowledge-chars: ${KNOWLEDGE_WRITING_MAX_CHAPTER_KNOWLEDGE_CHARS:12000}
+  max-answers-chars: ${KNOWLEDGE_WRITING_MAX_ANSWERS_CHARS:6000}
+  max-excerpts: ${KNOWLEDGE_WRITING_MAX_EXCERPTS:3}
+  max-excerpt-chars: ${KNOWLEDGE_WRITING_MAX_EXCERPT_CHARS:3500}
+  max-excerpt-total-chars: ${KNOWLEDGE_WRITING_MAX_EXCERPT_TOTAL_CHARS:9000}
+
 # Book Blueprint limits — "a few details", never a form; bounded (re)build cost.
 blueprint:
   max-questions: ${BLUEPRINT_MAX_QUESTIONS:8}
