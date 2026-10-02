@@ -51,11 +51,21 @@ public class EbookStatusResponse {
      */
     private int creditsCharged;
 
+    /** LEGACY (brief-only) or KNOWLEDGE (written from the author's knowledge + blueprint). */
+    private com.ebookwriter.SaaS.entity.GenerationMode generationMode;
+
+    /** True when a failed generation kept written chapters and can be resumed. */
+    private boolean resumable;
+
     private List<ChapterProgressDTO> chapters;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
     public static EbookStatusResponse from(Ebook ebook, List<ChapterProgressDTO> chapters) {
+        return from(ebook, chapters, false);
+    }
+
+    public static EbookStatusResponse from(Ebook ebook, List<ChapterProgressDTO> chapters, boolean resumable) {
         return EbookStatusResponse.builder()
                 .id(ebook.getId())
                 .status(ebook.getStatus())
@@ -68,6 +78,9 @@ public class EbookStatusResponse {
                 .targetPages(ebook.getApproxPageCount())
                 .actualPageCount(ebook.getActualPageCount())
                 .creditsCharged(ebook.getCreditsCharged())
+                .generationMode(ebook.getGenerationMode() == null
+                        ? com.ebookwriter.SaaS.entity.GenerationMode.LEGACY : ebook.getGenerationMode())
+                .resumable(resumable)
                 .chapters(chapters)
                 .createdAt(ebook.getCreatedAt())
                 .updatedAt(ebook.getUpdatedAt())

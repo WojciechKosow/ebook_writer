@@ -20,6 +20,7 @@ import com.ebookwriter.SaaS.request.EbookRequest;
 import com.ebookwriter.SaaS.config.properties.CreditProperties;
 import com.ebookwriter.SaaS.dto.GenerationBudgetResponse;
 import com.ebookwriter.SaaS.service.credit.CreditService;
+import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,6 +51,7 @@ public class EbookService {
     private final AssetUsageService assetUsageService;
     private final CreditService creditService;
     private final CreditProperties creditProperties;
+    private final BookBlueprintService blueprintService;
 
     /**
      * Create the ebook as a {@link EbookStatus#DRAFT}: the row exists so the user
@@ -141,6 +143,14 @@ public class EbookService {
             throw new IllegalStateException("Ebook has already been started");
         }
 
+        // Knowledge-based books are written from the author's BLUEPRINT_READY
+        // blueprint; a book with materials or a blueprint that isn't finished must not
+        // fall back to the brief-only flow and silently ignore the author's knowledge.
+        BookBlueprintService.GenerationReadiness readiness = blueprintService.readiness(ebookId);
+        if (readiness.blocked()) {
+            throw new IllegalStateException(readiness.blockedReason());
+        }
+
         int minBudget = minimumToStart(ebook.getApproxPageCount() > 0
                 ? ebook.getApproxPageCount() : resolveTargetPages(null));
 
@@ -185,11 +195,66 @@ public class EbookService {
 
         ebook.setPageBudget(pageBudget);
         ebook.setCreditsCharged(pageBudget);
+        ebook.setGenerationMode(readiness.mode());
         ebook = ebookRepository.save(ebook);
 
         // Credits committed; safe to hand off to the async worker.
         generationService.generate(ebook.getId());
         return ebook;
+    }
+
+    /**
+     * Resume a generation that FAILED part-way (e.g. one chapter could not be
+     * written): chapters already written are kept and only the missing ones are
+     * written, then the book is finished as usual. The failed run refunded its
+     * whole hold, so a new hold is reserved exactly as {@link #start} does (same
+     * minimum, same ceiling, same overdraft rule) and trued up after rendering.
+     * Throws {@link IllegalStateException} (→ 409) when the book is not resumable.
+     */
+    public Ebook resume(UUID ebookId, UUID userId) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        if (!isResumable(ebook, chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId))) {
+            throw new IllegalStateException("This ebook cannot be resumed.");
+        }
+        if (ebook.isKnowledgeBased() && blueprintService.getGenerationInput(ebookId).isEmpty()) {
+            throw new IllegalStateException("The book's knowledge or blueprint changed; it can't be resumed.");
+        }
+        int minBudget = minimumToStart(ebook.getApproxPageCount() > 0 ? ebook.getApproxPageCount() : resolveTargetPages(null));
+        int balance = creditService.getBalance(userId);
+        if (balance < minBudget) {
+            throw new InsufficientCreditsException(minBudget, balance);
+        }
+        if (ebookRepository.claimStatus(ebookId, EbookStatus.FAILED, EbookStatus.PENDING) == 0) {
+            throw new IllegalStateException("This ebook cannot be resumed.");
+        }
+        int pageBudget;
+        try {
+            pageBudget = creditService.reserveGenerationHold(userId, ebookId,
+                    Math.max(1, creditProperties.getMaxGenerationBudget()), minBudget);
+        } catch (InsufficientCreditsException e) {
+            ebookRepository.claimStatus(ebookId, EbookStatus.PENDING, EbookStatus.FAILED);
+            throw e;
+        }
+        ebook.setStatus(EbookStatus.PENDING);
+        ebook.setErrorMessage(null);
+        ebook.setPageBudget(pageBudget);
+        ebook.setCreditsCharged(pageBudget);
+        ebook.setCreditsRefunded(false);
+        ebook = ebookRepository.save(ebook);
+        generationService.resume(ebook.getId());
+        return ebook;
+    }
+
+    /**
+     * A FAILED book whose billing was never settled and that has a plan with at
+     * least one chapter already written can be resumed.
+     */
+    public static boolean isResumable(Ebook ebook, List<EbookChapter> chapters) {
+        return ebook.getStatus() == EbookStatus.FAILED
+                && !ebook.isCreditsReconciled()
+                && chapters.stream().anyMatch(c -> c.getStatus() == ChapterStatus.WRITTEN
+                || c.getStatus() == ChapterStatus.EDITED);
     }
 
     /**
@@ -230,11 +295,9 @@ public class EbookService {
     public EbookStatusResponse getStatus(UUID ebookId, UUID userId) {
         Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
-        List<ChapterProgressDTO> chapters =
-                chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).stream()
-                        .map(ChapterProgressDTO::from)
-                        .toList();
-        return EbookStatusResponse.from(ebook, chapters);
+        List<EbookChapter> rows = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+        List<ChapterProgressDTO> chapters = rows.stream().map(ChapterProgressDTO::from).toList();
+        return EbookStatusResponse.from(ebook, chapters, isResumable(ebook, rows));
     }
 
     /**

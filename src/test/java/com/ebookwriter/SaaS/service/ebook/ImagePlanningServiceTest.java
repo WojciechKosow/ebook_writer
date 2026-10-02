@@ -205,7 +205,7 @@ class ImagePlanningServiceTest {
     // ---- helpers ------------------------------------------------------------
 
     private ImagePlanningService service(OpenAiProperties props) {
-        return new ImagePlanningService(anthropic, ebookRepository, chapterRepository, props);
+        return new ImagePlanningService(anthropic, ebookRepository, chapterRepository, props, null);
     }
 
     private static OpenAiProperties props(boolean enabled, int perBook, int perChapter) {

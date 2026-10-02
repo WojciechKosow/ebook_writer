@@ -183,9 +183,13 @@ public final class KnowledgeAssembler {
 
     // ---- Merge -------------------------------------------------------------------
 
-    /** Deterministically merge per-batch results (first occurrence wins; sources are unioned). */
+    /**
+     * Deterministically merge per-batch results (first occurrence wins; sources are
+     * unioned). Also applied to a single batch: a model may list the same topic
+     * twice within one answer, and every duplicate would otherwise become its own
+     * blueprint chapter.
+     */
     public static BookKnowledgeData merge(List<BookKnowledgeData> parts) {
-        if (parts.size() == 1) return parts.get(0);
         List<ProjectInfo> projects = parts.stream().map(BookKnowledgeData::project).filter(p -> p != null).toList();
         ProjectInfo project = projects.isEmpty() ? null : new ProjectInfo(
                 first(projects, ProjectInfo::name), first(projects, ProjectInfo::type),

@@ -53,6 +53,7 @@ class EbookServiceTest {
     @Mock PdfGenerationService pdfGenerationService;
     @Mock AssetUsageService assetUsageService;
     @Mock CreditService creditService;
+    @Mock com.ebookwriter.SaaS.service.blueprint.BookBlueprintService blueprintService;
 
     CreditProperties creditProperties;
     EbookService ebookService;
@@ -66,7 +67,11 @@ class EbookServiceTest {
         creditProperties = new CreditProperties();
         ebookService = new EbookService(ebookRepository, chapterRepository, pdfRepository,
                 generationService, pdfGenerationService, assetUsageService, creditService,
-                creditProperties);
+                creditProperties, blueprintService);
+        // No materials / blueprint → the legacy brief-only flow (what these tests cover).
+        org.mockito.Mockito.lenient().when(blueprintService.readiness(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new com.ebookwriter.SaaS.service.blueprint.BookBlueprintService.GenerationReadiness(
+                        com.ebookwriter.SaaS.entity.GenerationMode.LEGACY, null));
     }
 
     private User user() {

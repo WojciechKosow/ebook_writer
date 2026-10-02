@@ -62,7 +62,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Spring Boot" + my-shop.zip + the author's rough notes.
  */
 @SpringBootTest
-class KnowledgePipelineIntegrationTest {
+public class KnowledgePipelineIntegrationTest {
 
     static final FakeOpenAiServer OPENAI = new FakeOpenAiServer();
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -393,7 +393,7 @@ class KnowledgePipelineIntegrationTest {
      * present in the request, citing them (sometimes by bare filename, once with an
      * invented file — both of which the pipeline must handle).
      */
-    static Reply modelLikeAnswer(FakeOpenAiServer.Request r) {
+    public static Reply modelLikeAnswer(FakeOpenAiServer.Request r) {
         if (isConsolidation(r)) {
             String marker = "RAW MERGED KNOWLEDGE FROM ALL BATCHES (JSON)\n";
             try {

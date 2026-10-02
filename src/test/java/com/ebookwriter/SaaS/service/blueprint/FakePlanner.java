@@ -19,9 +19,9 @@ import java.util.regex.Pattern;
  * a question, an inferable gap (must be dropped), slightly-off citations (must
  * be resolved) and an invented file (must be dropped).
  */
-final class FakePlanner {
+public final class FakePlanner {
 
-    enum Mode { NORMAL, NO_GAPS, MANY_GAPS }
+    public enum Mode { NORMAL, NO_GAPS, MANY_GAPS }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Pattern ANSWERED_ID = Pattern.compile("questionId: ([0-9a-f-]{36})");
@@ -29,7 +29,7 @@ final class FakePlanner {
     private FakePlanner() {
     }
 
-    static Reply answer(FakeOpenAiServer.Request r, Mode mode) {
+    public static Reply answer(FakeOpenAiServer.Request r, Mode mode) {
         String marker = "BOOK KNOWLEDGE (JSON)\n";
         JsonNode knowledge;
         try {

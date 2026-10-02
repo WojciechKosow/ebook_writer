@@ -54,6 +54,7 @@ public class SchemaConstraintPatch implements ApplicationRunner {
             new String[]{"knowledge_sources", "knowledge_sources_source_type_check"},
             new String[]{"knowledge_sources", "knowledge_sources_status_check"},
             new String[]{"book_blueprints", "book_blueprints_status_check"},
+            new String[]{"ebooks", "ebooks_generation_mode_check"},
             new String[]{"blueprint_questions", "blueprint_questions_status_check"});
 
     @Override

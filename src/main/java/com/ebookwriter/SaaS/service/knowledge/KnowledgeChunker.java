@@ -154,7 +154,7 @@ public class KnowledgeChunker {
     }
 
     /** Give each document a unique, citable ref. */
-    static Map<String, AnalysisDocument> assignRefs(List<AnalysisDocument> documents) {
+    public static Map<String, AnalysisDocument> assignRefs(List<AnalysisDocument> documents) {
         Map<String, Integer> pathCounts = new HashMap<>();
         for (AnalysisDocument d : documents) pathCounts.merge(basicRef(d), 1, Integer::sum);
 

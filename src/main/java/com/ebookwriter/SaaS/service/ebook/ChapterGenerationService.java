@@ -1,14 +1,19 @@
 package com.ebookwriter.SaaS.service.ebook;
 
+import com.ebookwriter.SaaS.config.properties.KnowledgeWritingProperties;
+import com.ebookwriter.SaaS.dto.blueprint.BookGenerationInput;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.prompt.ChapterPrompts;
+import com.ebookwriter.SaaS.prompt.KnowledgeChapterPrompts;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
+import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
+import com.ebookwriter.SaaS.service.knowledge.KnowledgeDocumentStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -20,6 +25,15 @@ import java.util.UUID;
 /**
  * Step 2 — write a single chapter, using the outline and earlier chapters'
  * summaries as context so content builds forward without repeating.
+ *
+ * <p>Two prompt paths, same output handling and persistence:
+ * <ul>
+ *   <li><b>legacy</b> books — {@link ChapterPrompts}: the brief and outline;</li>
+ *   <li><b>knowledge-based</b> books — {@link KnowledgeChapterPrompts}: the book
+ *       context plus the knowledge, answers, gaps and source excerpts selected
+ *       for THIS chapter by {@link KnowledgeChapterContext} from the author's
+ *       BookKnowledge + blueprint.</li>
+ * </ul>
  */
 @Slf4j
 @Service
@@ -41,6 +55,9 @@ public class ChapterGenerationService {
     private final EbookRepository ebookRepository;
     private final EbookChapterRepository chapterRepository;
     private final EbookImageRepository imageRepository;
+    private final BookBlueprintService blueprintService;
+    private final KnowledgeDocumentStore documentStore;
+    private final KnowledgeWritingProperties writingProperties;
 
     /** Write a chapter at its planned length (no credit pressure). */
     @Transactional
@@ -75,17 +92,34 @@ public class ChapterGenerationService {
         int targetWords = Math.max(WritingBudget.MIN_CHAPTER_WORDS, directive.targetWords());
         long maxTokens = outputTokenBudget(targetWords);
 
-        String system = ChapterPrompts.system(ebook.getLanguage());
-        String userPrompt = ChapterPrompts.user(
-                ebook,
-                ManuscriptContext.outline(inBook),
-                chapter,
-                ManuscriptContext.previousSummaries(inBook, chapter.getChapterNumber()),
-                directive,
-                availableImages(chapterId),
-                positionOf(inBook, chapter),
-                inBook.size()
-        );
+        String system;
+        String userPrompt;
+        if (ebook.isKnowledgeBased()) {
+            BookGenerationInput input = blueprintService.getGenerationInput(ebookId)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "The book's knowledge or blueprint is no longer available for writing."));
+            KnowledgeChapterContext.Context ctx = KnowledgeChapterContext.build(
+                    input, chapter.getBlueprintChapterId(), documentStore.documentsByRef(ebookId), writingProperties);
+            system = KnowledgeChapterPrompts.system(ebook.getLanguage());
+            userPrompt = KnowledgeChapterPrompts.user(ebook, ManuscriptContext.outline(inBook), chapter,
+                    ManuscriptContext.previousSummaries(inBook, chapter.getChapterNumber()), ctx, directive,
+                    availableImages(chapterId), positionOf(inBook, chapter), inBook.size());
+            log.info("Chapter {} of ebook {}: knowledge context {} chars ({} knowledge items, sources {}), prompt {} chars",
+                    chapter.getChapterNumber(), ebookId, ctx.totalChars(), ctx.itemCount(), ctx.excerptRefs(),
+                    userPrompt.length());
+        } else {
+            system = ChapterPrompts.system(ebook.getLanguage());
+            userPrompt = ChapterPrompts.user(
+                    ebook,
+                    ManuscriptContext.outline(inBook),
+                    chapter,
+                    ManuscriptContext.previousSummaries(inBook, chapter.getChapterNumber()),
+                    directive,
+                    availableImages(chapterId),
+                    positionOf(inBook, chapter),
+                    inBook.size()
+            );
+        }
 
         AnthropicService.Completion completion =
                 anthropicService.completeDetailed(system, userPrompt, maxTokens);
@@ -111,6 +145,7 @@ public class ChapterGenerationService {
         chapter.setContent(content);
         chapter.setSummary(summary);
         chapter.setStatus(ChapterStatus.WRITTEN);
+        chapter.setGenerationError(null);
         chapterRepository.save(chapter);
 
         log.info("Wrote chapter {}/{} of ebook {} ({} chars)",

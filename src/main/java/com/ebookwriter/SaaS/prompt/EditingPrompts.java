@@ -54,6 +54,16 @@ public final class EditingPrompts {
                               EbookChapter chapter,
                               String otherSummaries,
                               boolean finalChapter) {
+        return user(e, fullOutline, chapter, otherSummaries, finalChapter, null);
+    }
+
+    /** As above; {@code knowledgeAddendum} (knowledge-based books) is appended before the chapter text. */
+    public static String user(Ebook e,
+                              String fullOutline,
+                              EbookChapter chapter,
+                              String otherSummaries,
+                              boolean finalChapter,
+                              String knowledgeAddendum) {
         String endingSection = finalChapter
                 ? "\nTHIS IS THE BOOK'S FINAL CHAPTER. Keep (or, if missing, strengthen) a "
                         + "deliberate ending that fits the book, and never weaken or remove it:\n"
@@ -85,7 +95,7 @@ public final class EditingPrompts {
                 chapter.getChapterNumber(),
                 nz(chapter.getTitle()),
                 nz(chapter.getDescription()),
-                endingSection,
+                endingSection + (knowledgeAddendum == null ? "" : knowledgeAddendum),
                 nz(chapter.getContent())
         );
     }

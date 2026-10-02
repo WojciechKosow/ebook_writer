@@ -55,6 +55,17 @@ public class EbookChapter {
     private ChapterStatus status = ChapterStatus.PENDING;
 
     /**
+     * Knowledge-based books: the {@code BlueprintData.Chapter#id} this chapter was
+     * planned from — the link to the chapter's knowledge references, source refs,
+     * key points, gaps and the author's answers. Null for legacy books.
+     */
+    private String blueprintChapterId;
+
+    /** Why the last attempt to write this chapter failed (cleared once written). */
+    @Column(columnDefinition = "text")
+    private String generationError;
+
+    /**
      * Whether this chapter's current content was produced by the AI pipeline or
      * edited by the user. Set to {@link ContentSource#USER} when the editor saves
      * changes, so a future regeneration can preserve manual edits.

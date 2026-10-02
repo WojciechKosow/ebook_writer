@@ -15,6 +15,7 @@ import com.ebookwriter.SaaS.entity.BookBlueprint;
 import com.ebookwriter.SaaS.entity.BookKnowledge;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookStatus;
+import com.ebookwriter.SaaS.entity.GenerationMode;
 import com.ebookwriter.SaaS.entity.KnowledgeStatus;
 import com.ebookwriter.SaaS.entity.QuestionStatus;
 import com.ebookwriter.SaaS.prompt.BlueprintPrompts;
@@ -22,6 +23,7 @@ import com.ebookwriter.SaaS.repository.BlueprintQuestionRepository;
 import com.ebookwriter.SaaS.repository.BookBlueprintRepository;
 import com.ebookwriter.SaaS.repository.BookKnowledgeRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.repository.KnowledgeSourceRepository;
 import com.ebookwriter.SaaS.request.BlueprintUpdateRequest;
 import com.ebookwriter.SaaS.service.ai.OpenAiTextClient;
 import com.ebookwriter.SaaS.service.ai.OpenAiTextException;
@@ -81,11 +83,14 @@ public class BookBlueprintService {
     private final BlueprintProperties limits;
     private final TransactionTemplate tx;
     private final BlueprintBuildWorker worker;
+    private final KnowledgeSourceRepository sourceRepository;
 
     public BookBlueprintService(EbookRepository ebookRepository, BookKnowledgeRepository knowledgeRepository,
                                 BookBlueprintRepository blueprintRepository, BlueprintQuestionRepository questionRepository,
                                 OpenAiTextClient openAi, OpenAiProperties openAiProperties, BlueprintProperties limits,
-                                TransactionTemplate tx, @Lazy BlueprintBuildWorker worker) {
+                                TransactionTemplate tx, @Lazy BlueprintBuildWorker worker,
+                                KnowledgeSourceRepository sourceRepository) {
+        this.sourceRepository = sourceRepository;
         this.ebookRepository = ebookRepository;
         this.knowledgeRepository = knowledgeRepository;
         this.blueprintRepository = blueprintRepository;
@@ -135,6 +140,50 @@ public class BookBlueprintService {
                 .filter(g -> !BlueprintAssembler.GAP_ANSWERED.equals(g.status())).toList();
         return Optional.of(new BookGenerationInput(ebookId, KnowledgeAssembler.read(knowledge.get().getKnowledgeJson()),
                 blueprint, answers, unresolved));
+    }
+
+    /**
+     * Which generation flow a book may start with, or why it cannot start yet.
+     * {@code blockedReason} is null when generation may start.
+     */
+    public record GenerationReadiness(GenerationMode mode, String blockedReason) {
+        public boolean blocked() {
+            return blockedReason != null;
+        }
+    }
+
+    /**
+     * Decide how a book is generated:
+     * <ul>
+     *   <li>a BLUEPRINT_READY blueprint on current knowledge → KNOWLEDGE;</li>
+     *   <li>materials or a blueprint exist but are not finished → blocked (the
+     *       author's materials must never be silently ignored by a legacy run);</li>
+     *   <li>no materials at all → LEGACY (the original brief-only flow).</li>
+     * </ul>
+     */
+    public GenerationReadiness readiness(UUID ebookId) {
+        if (getGenerationInput(ebookId).isPresent()) {
+            return new GenerationReadiness(GenerationMode.KNOWLEDGE, null);
+        }
+        Optional<BookBlueprint> row = blueprintRepository.findByEbookId(ebookId);
+        if (row.isPresent() && row.get().getStatus() != BlueprintStatus.NOT_STARTED) {
+            String reason = switch (row.get().getStatus()) {
+                case BUILDING_BLUEPRINT -> "Scrivetta is still building your book blueprint.";
+                case QUESTIONS_REQUIRED -> "Answer or skip the remaining questions in your blueprint first.";
+                case BLUEPRINT_REVIEW -> "Approve your book blueprint first.";
+                case BLUEPRINT_READY -> "Your materials changed since the blueprint was built — rebuild it first.";
+                default -> "Rebuild your book blueprint first.";
+            };
+            return new GenerationReadiness(GenerationMode.KNOWLEDGE, reason);
+        }
+        if (sourceRepository.countByEbookId(ebookId) > 0) {
+            boolean knowledgeReady = knowledgeRepository.findByEbookId(ebookId)
+                    .map(k -> k.getStatus().hasKnowledge()).orElse(false);
+            return new GenerationReadiness(GenerationMode.KNOWLEDGE, knowledgeReady
+                    ? "Build your book blueprint first."
+                    : "Let Scrivetta learn from your materials first.");
+        }
+        return new GenerationReadiness(GenerationMode.LEGACY, null);
     }
 
     // =====================================================================

@@ -89,6 +89,18 @@ class KnowledgeAssemblerTest {
     }
 
     @Test
+    void duplicatesWithinOneBatchAreMergedToo() {
+        BookKnowledgeData one = new BookKnowledgeData(1, null, null, "s",
+                List.of(new BookKnowledgeData.Topic("JWT authentication", "a", "high", List.of("SecurityConfig.java")),
+                        new BookKnowledgeData.Topic("JWT Authentication", "longer text", "medium", List.of("user-notes"))),
+                null, null, null, null, null, null, null, null, null, null, null);
+        BookKnowledgeData m = KnowledgeAssembler.merge(List.of(one));
+        assertEquals(1, m.topics().size());
+        assertEquals(List.of("SecurityConfig.java", "user-notes"), m.topics().get(0).sources());
+        assertEquals("longer text", m.topics().get(0).description());
+    }
+
+    @Test
     void roundTripsThroughJson() {
         BookKnowledgeData d = new BookKnowledgeData(1, new BookKnowledgeData.BookInfo("T", "English", "A", "G", null, 30),
                 null, "s", List.of(new BookKnowledgeData.Topic("x", "y", "low", List.of("README.md"))),

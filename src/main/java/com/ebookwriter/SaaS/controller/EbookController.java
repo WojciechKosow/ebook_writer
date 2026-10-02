@@ -64,6 +64,18 @@ public class EbookController {
                 .body(ebookService.getStatus(id, user.getId()));
     }
 
+    /**
+     * Resume a generation that failed part-way: written chapters are kept, the
+     * missing ones are written, and a new credit hold is reserved (the failed run
+     * was refunded). {@code 409} when the book is not resumable.
+     */
+    @PostMapping("/{id}/resume")
+    public ResponseEntity<EbookStatusResponse> resume(@PathVariable UUID id, Authentication authentication) {
+        User user = currentUser(authentication);
+        ebookService.resume(id, user.getId());
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(ebookService.getStatus(id, user.getId()));
+    }
+
     /** Poll generation status / progress. */
     @GetMapping("/{id}")
     public ResponseEntity<EbookStatusResponse> status(@PathVariable UUID id,

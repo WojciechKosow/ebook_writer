@@ -12,25 +12,25 @@ import java.util.List;
  * {@link #withoutOrders()} is the same project without an orders module — the
  * blueprint must not invent one.
  */
-final class ShopKnowledgeFixture {
+public final class ShopKnowledgeFixture {
 
-    static final String SECURITY = "src/main/java/com/shop/security/SecurityConfig.java";
-    static final String JWT_SERVICE = "src/main/java/com/shop/security/JwtService.java";
-    static final String USER = "src/main/java/com/shop/user/User.java";
-    static final String PRODUCT = "src/main/java/com/shop/product/Product.java";
-    static final String ORDER = "src/main/java/com/shop/order/Order.java";
-    static final String ORDER_SERVICE = "src/main/java/com/shop/order/OrderService.java";
-    static final String PROPS = "src/main/resources/application.properties";
-    static final String NOTES = "user-notes";
+    public static final String SECURITY = "src/main/java/com/shop/security/SecurityConfig.java";
+    public static final String JWT_SERVICE = "src/main/java/com/shop/security/JwtService.java";
+    public static final String USER = "src/main/java/com/shop/user/User.java";
+    public static final String PRODUCT = "src/main/java/com/shop/product/Product.java";
+    public static final String ORDER = "src/main/java/com/shop/order/Order.java";
+    public static final String ORDER_SERVICE = "src/main/java/com/shop/order/OrderService.java";
+    public static final String PROPS = "src/main/resources/application.properties";
+    public static final String NOTES = "user-notes";
 
     private ShopKnowledgeFixture() {
     }
 
-    static BookKnowledgeData full() {
+    public static BookKnowledgeData full() {
         return build(true);
     }
 
-    static BookKnowledgeData withoutOrders() {
+    public static BookKnowledgeData withoutOrders() {
         return build(false);
     }
 

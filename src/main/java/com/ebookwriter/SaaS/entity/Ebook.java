@@ -63,6 +63,14 @@ public class Ebook {
 
     // ---- Generation state ---------------------------------------------------
 
+    /**
+     * Which generation flow produced this book. Null = {@link GenerationMode#LEGACY}
+     * (every book created before the knowledge-based flow), so the column needs no
+     * default for {@code ddl-auto=update}.
+     */
+    @Enumerated(EnumType.STRING)
+    private GenerationMode generationMode;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     @Builder.Default
@@ -169,6 +177,11 @@ public class Ebook {
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    /** True when this book is written from the author's knowledge + blueprint. */
+    public boolean isKnowledgeBased() {
+        return generationMode == GenerationMode.KNOWLEDGE;
+    }
 
     @PrePersist
     void onCreate() {

@@ -14,9 +14,9 @@ import java.util.zip.ZipOutputStream;
  * real archive carries (build output, .git, node_modules, an IDE folder, a .env
  * with secrets, a screenshot, a duplicated README) that ingestion must skip.
  */
-final class MyShopFixture {
+public final class MyShopFixture {
 
-    static final String NOTES = """
+    public static final String NOTES = """
             First create the project.
             Then dependencies.
             Then database.
@@ -26,9 +26,9 @@ final class MyShopFixture {
             Need to explain why we use JWT.
             """;
 
-    static final String TITLE = "Building an Online Shop with Spring Boot";
-    static final String AUDIENCE = "Beginner Java developers";
-    static final String GOAL = "Teach beginners how to build the project from scratch.";
+    public static final String TITLE = "Building an Online Shop with Spring Boot";
+    public static final String AUDIENCE = "Beginner Java developers";
+    public static final String GOAL = "Teach beginners how to build the project from scratch.";
 
     private MyShopFixture() {
     }
@@ -216,7 +216,7 @@ final class MyShopFixture {
         return f;
     }
 
-    static byte[] zip() throws IOException {
+    public static byte[] zip() throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (ZipOutputStream zos = new ZipOutputStream(bos)) {
             zos.putNextEntry(new ZipEntry("my-shop/"));
