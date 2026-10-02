@@ -104,6 +104,24 @@ public class OpenAiProperties {
     private double knowledgeInputUsdPerMillion = 0.25;
     private double knowledgeOutputUsdPerMillion = 2.00;
 
+    // ---- Book Blueprint (planning model) -------------------------------------
+
+    /**
+     * Model for building the Book Blueprint ({@code OPENAI_BLUEPRINT_MODEL}).
+     * Blank = same as {@link #knowledgeModel}, so one setting switches both.
+     */
+    private String blueprintModel;
+
+    /** Reasoning effort for blueprint planning — structuring a book benefits from a bit more thought. */
+    private String blueprintReasoningEffort = "medium";
+
+    /** Output ceiling for the blueprint call (reasoning tokens count towards it). */
+    private int blueprintMaxOutputTokens = 24_000;
+
+    public String resolveBlueprintModel() {
+        return (blueprintModel == null || blueprintModel.isBlank()) ? knowledgeModel : blueprintModel.strip();
+    }
+
     /** True once an API key is present and the pipeline is enabled. */
     public boolean isConfigured() {
         return enabled && hasApiKey();

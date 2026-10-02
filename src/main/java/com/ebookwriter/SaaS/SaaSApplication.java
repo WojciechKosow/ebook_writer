@@ -1,6 +1,7 @@
 package com.ebookwriter.SaaS;
 
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
+import com.ebookwriter.SaaS.config.properties.BlueprintProperties;
 import com.ebookwriter.SaaS.config.properties.CreditProperties;
 import com.ebookwriter.SaaS.config.properties.GoogleOAuthProperties;
 import com.ebookwriter.SaaS.config.properties.KnowledgeProperties;
@@ -23,7 +24,8 @@ import org.springframework.scheduling.annotation.EnableAsync;
 		R2Properties.class,
 		OpenAiProperties.class,
 		GoogleOAuthProperties.class,
-		KnowledgeProperties.class
+		KnowledgeProperties.class,
+		BlueprintProperties.class
 })
 public class SaaSApplication {
 

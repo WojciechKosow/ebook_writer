@@ -61,12 +61,32 @@ public class OpenAiTextClient {
         return properties.getKnowledgeModel();
     }
 
+    /**
+     * Which model / reasoning effort / output ceiling a call uses. Knowledge
+     * ingestion uses {@link #knowledge(OpenAiProperties)}; blueprint planning has
+     * its own settings.
+     */
+    public record CallOptions(String model, String reasoningEffort, int maxOutputTokens) {
+        public static CallOptions knowledge(OpenAiProperties p) {
+            return new CallOptions(p.getKnowledgeModel(), p.getKnowledgeReasoningEffort(), p.getKnowledgeMaxOutputTokens());
+        }
+
+        public static CallOptions blueprint(OpenAiProperties p) {
+            return new CallOptions(p.resolveBlueprintModel(), p.getBlueprintReasoningEffort(), p.getBlueprintMaxOutputTokens());
+        }
+    }
+
     /** Ask the knowledge model for a JSON object. Throws {@link OpenAiTextException} on failure. */
     public JsonCompletion completeJson(String systemPrompt, String userPrompt) {
+        return completeJson(systemPrompt, userPrompt, CallOptions.knowledge(properties));
+    }
+
+    /** Ask for a JSON object with explicit call options. Throws {@link OpenAiTextException} on failure. */
+    public JsonCompletion completeJson(String systemPrompt, String userPrompt, CallOptions options) {
         if (!isConfigured()) {
             throw new OpenAiTextException("OpenAI is not configured (set OPENAI_API_KEY).", false);
         }
-        String body = requestBody(systemPrompt, userPrompt);
+        String body = requestBody(systemPrompt, userPrompt, options);
         int attempts = Math.max(1, properties.getMaxRetries() + 1);
         OpenAiTextException last = null;
 
@@ -98,15 +118,15 @@ public class OpenAiTextClient {
         throw last;
     }
 
-    String requestBody(String systemPrompt, String userPrompt) {
+    String requestBody(String systemPrompt, String userPrompt, CallOptions options) {
         ObjectNode node = MAPPER.createObjectNode();
-        node.put("model", properties.getKnowledgeModel());
+        node.put("model", options.model());
         ArrayNode messages = node.putArray("messages");
         messages.addObject().put("role", "system").put("content", systemPrompt);
         messages.addObject().put("role", "user").put("content", userPrompt);
         node.putObject("response_format").put("type", "json_object");
-        node.put("max_completion_tokens", properties.getKnowledgeMaxOutputTokens());
-        String effort = properties.getKnowledgeReasoningEffort();
+        node.put("max_completion_tokens", options.maxOutputTokens());
+        String effort = options.reasoningEffort();
         if (effort != null && !effort.isBlank()) {
             node.put("reasoning_effort", effort.strip());
         }

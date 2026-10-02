@@ -13,7 +13,8 @@ class KnowledgeAssemblerTest {
 
     private static final List<String> REFS = List.of(
             "user-notes", "README.md", "src/main/java/com/shop/security/SecurityConfig.java",
-            "src/main/java/com/shop/security/JwtService.java", "a.zip!/pom.xml", "b.zip!/pom.xml");
+            "src/main/java/com/shop/security/JwtService.java", "a.zip!/pom.xml", "b.zip!/pom.xml",
+            "my-shop.zip (structure)");
 
     private final KnowledgeAssembler.SourceResolver resolver = new KnowledgeAssembler.SourceResolver(REFS);
 
@@ -30,6 +31,8 @@ class KnowledgeAssemblerTest {
         assertNull(resolver.resolve("pom.xml"), "ambiguous bare name is not guessed");
         assertNull(resolver.resolve("src/Invented.java"));
         assertNull(resolver.resolve(""));
+        assertEquals("my-shop.zip (structure)", resolver.resolve("my-shop.zip (structure)"));
+        assertEquals("my-shop.zip (structure)", resolver.resolve("\"my-shop.zip (structure)\""));
     }
 
     @Test

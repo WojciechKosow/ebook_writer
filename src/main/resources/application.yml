@@ -151,6 +151,12 @@ openai:
   # record the cost of each run. Update together with the model.
   knowledge-input-usd-per-million: ${OPENAI_KNOWLEDGE_INPUT_USD_PER_MILLION:0.25}
   knowledge-output-usd-per-million: ${OPENAI_KNOWLEDGE_OUTPUT_USD_PER_MILLION:2.00}
+  # ---- Book Blueprint (planning the book from BookKnowledge) ----------------
+  # Blank = same model as knowledge-model (one switch for both). The same
+  # per-token prices above are used for cost estimates.
+  blueprint-model: ${OPENAI_BLUEPRINT_MODEL:}
+  blueprint-reasoning-effort: ${OPENAI_BLUEPRINT_REASONING_EFFORT:medium}
+  blueprint-max-output-tokens: ${OPENAI_BLUEPRINT_MAX_OUTPUT_TOKENS:24000}
 
 # Knowledge ingestion limits — bound server work and OpenAI cost per book. A huge
 # ZIP is read only up to these limits; whatever does not fit one analysis run is
@@ -174,6 +180,15 @@ knowledge:
   max-processing-runs: ${KNOWLEDGE_MAX_PROCESSING_RUNS:10}
   notes-context-chars: ${KNOWLEDGE_NOTES_CONTEXT_CHARS:4000}
   stale-processing-minutes: ${KNOWLEDGE_STALE_PROCESSING_MINUTES:30}
+
+# Book Blueprint limits — "a few details", never a form; bounded (re)build cost.
+blueprint:
+  max-questions: ${BLUEPRINT_MAX_QUESTIONS:8}
+  max-chapters: ${BLUEPRINT_MAX_CHAPTERS:30}
+  max-generations: ${BLUEPRINT_MAX_GENERATIONS:10}
+  max-knowledge-chars: ${BLUEPRINT_MAX_KNOWLEDGE_CHARS:120000}
+  stale-building-minutes: ${BLUEPRINT_STALE_BUILDING_MINUTES:30}
+  max-answer-chars: ${BLUEPRINT_MAX_ANSWER_CHARS:5000}
 
 # Payments (Stripe) + credits. The $ amounts live in Stripe; credit grants here.
 stripe:

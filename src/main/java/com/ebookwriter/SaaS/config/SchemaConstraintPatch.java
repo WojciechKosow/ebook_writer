@@ -52,7 +52,9 @@ public class SchemaConstraintPatch implements ApplicationRunner {
             // Knowledge ingestion enums (pre-emptive: they will grow).
             new String[]{"book_knowledge", "book_knowledge_status_check"},
             new String[]{"knowledge_sources", "knowledge_sources_source_type_check"},
-            new String[]{"knowledge_sources", "knowledge_sources_status_check"});
+            new String[]{"knowledge_sources", "knowledge_sources_status_check"},
+            new String[]{"book_blueprints", "book_blueprints_status_check"},
+            new String[]{"blueprint_questions", "blueprint_questions_status_check"});
 
     @Override
     public void run(ApplicationArguments args) {

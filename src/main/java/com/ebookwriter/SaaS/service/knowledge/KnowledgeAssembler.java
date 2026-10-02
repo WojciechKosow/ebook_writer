@@ -110,7 +110,12 @@ public final class KnowledgeAssembler {
             String c = cited.strip();
             if (c.regionMatches(true, 0, "SOURCE:", 0, 7)) c = c.substring(7).strip();
             c = PART_SUFFIX.matcher(c).replaceAll("");
-            c = c.replaceAll("^[\"'`\\[(]+|[\"'`\\])]+$", "").strip();
+            // Quotes first; brackets only after an exact try, since refs may themselves
+            // end in ")" ("my-shop.zip (structure)").
+            c = c.replaceAll("^[\"'`]+|[\"'`]+$", "").strip();
+            if (exact.containsKey(c)) return exact.get(c);
+            if (lower.containsKey(c.toLowerCase(Locale.ROOT))) return lower.get(c.toLowerCase(Locale.ROOT));
+            c = c.replaceAll("^[\\[(]+|[\\])]+$", "").strip();
             int pipe = c.indexOf(" | ");
             if (pipe > 0) c = c.substring(0, pipe).strip();
             if (c.isEmpty()) return null;
