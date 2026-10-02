@@ -212,6 +212,7 @@ class KnowledgePipelineIntegrationTest {
                 .andExpect(jsonPath("$.summary.processesFound").value(k.processes().size()))
                 .andExpect(jsonPath("$.summary.knowledgeGaps").value(k.knowledgeGaps().size()))
                 .andExpect(jsonPath("$.summary.sourcesAnalyzed").value(2))
+                .andExpect(jsonPath("$.notes").value(MyShopFixture.NOTES.strip()))
                 .andExpect(jsonPath("$.sources.length()").value(2));
         mvc.perform(get("/api/ebooks/" + ebookId + "/knowledge/full").with(auth()))
                 .andExpect(status().isOk())

@@ -146,6 +146,23 @@ public class KnowledgeIngestionService {
         markMaterialsChanged(ebook);
     }
 
+    /** The saved notes text, or null when the book has none. */
+    public String notesText(UUID ebookId) {
+        return sourceRepository.findFirstByEbookIdAndSourceType(ebookId, KnowledgeSourceType.NOTES)
+                .map(KnowledgeSource::getDocumentsJson)
+                .map(json -> {
+                    try {
+                        List<NormalizedDocument> docs = KnowledgeAssembler.MAPPER.readValue(json,
+                                new TypeReference<List<NormalizedDocument>>() {
+                                });
+                        return docs.isEmpty() ? null : docs.get(0).content();
+                    } catch (Exception e) {
+                        return null;
+                    }
+                })
+                .orElse(null);
+    }
+
     public List<KnowledgeSourceDTO> listSources(UUID ebookId) {
         return sourceRepository.findByEbookIdOrderByCreatedAtAsc(ebookId).stream().map(KnowledgeIngestionService::toDto).toList();
     }

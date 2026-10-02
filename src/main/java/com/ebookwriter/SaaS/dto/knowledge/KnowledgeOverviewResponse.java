@@ -20,6 +20,8 @@ public record KnowledgeOverviewResponse(
         boolean readyForBlueprint,
         boolean processingAvailable,
         List<KnowledgeSourceDTO> sources,
+        /** The saved pasted notes (so the editor can show them again), or null. */
+        String notes,
         Summary summary,
         Usage usage,
         Limits limits,

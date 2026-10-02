@@ -91,7 +91,7 @@ public class BookKnowledgeService {
 
         return new KnowledgeOverviewResponse(ebookId, status, knowledge.map(BookKnowledge::getErrorMessage).orElse(null),
                 status.hasKnowledge(), status == KnowledgeStatus.READY_FOR_BLUEPRINT, openAi.isConfigured(),
-                ingestionService.listSources(ebookId), summary, usage,
+                ingestionService.listSources(ebookId), ingestionService.notesText(ebookId), summary, usage,
                 new KnowledgeOverviewResponse.Limits(limits.getMaxUploadBytes(), limits.getMaxSourcesPerBook(),
                         limits.getMaxNotesChars(), KnowledgeIngestionService.ACCEPTED_FORMATS),
                 warnings, knowledge.map(BookKnowledge::getStartedAt).orElse(null),
