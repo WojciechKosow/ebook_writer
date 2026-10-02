@@ -59,4 +59,30 @@ public class OpenAiConfig {
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(MAX_IN_MEMORY_BYTES))
                 .build();
     }
+
+    /**
+     * WebClient for the text (chat completions) API used by knowledge ingestion.
+     * Separate from the image client only for its longer read timeout — a large
+     * batch of the author's materials can take minutes to analyse.
+     */
+    @Bean(name = "openAiTextWebClient")
+    public WebClient openAiTextWebClient(OpenAiProperties properties) {
+        String key = properties.getApiKey() == null ? "" : properties.getApiKey().trim();
+        long readTimeout = properties.getKnowledgeReadTimeoutMs();
+
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) properties.getConnectTimeoutMs())
+                .responseTimeout(Duration.ofMillis(readTimeout))
+                .doOnConnected(conn -> conn.addHandlerLast(
+                        new ReadTimeoutHandler(readTimeout, TimeUnit.MILLISECONDS)));
+
+        return WebClient.builder()
+                .baseUrl(properties.getBaseUrl())
+                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + (key.isBlank() ? "not-configured" : key))
+                .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(MAX_IN_MEMORY_BYTES))
+                .build();
+    }
 }

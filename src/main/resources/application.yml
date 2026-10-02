@@ -111,8 +111,8 @@ r2:
   # create the bucket in the Cloudflare dashboard.
   auto-create-bucket: ${R2_AUTO_CREATE_BUCKET:false}
 
-# OpenAI — AI-generated ebook images. After the manuscript is written and
-# edited, the Image Planner decides where images add value and the Image
+# OpenAI — AI-generated ebook images (and knowledge ingestion, see below). After
+# the manuscript is written and edited, the Image Planner decides where images add value and the Image
 # Generation service creates them via the OpenAI Image API, storing the bytes in
 # the same private R2 bucket as uploaded assets. Leave OPENAI_API_KEY blank for
 # local dev — the app boots and books are simply produced text-only until a key
@@ -135,6 +135,71 @@ openai:
   # Quality for the cover visual (gpt-image: low|medium|high|auto; blank = provider
   # default). The cover is the most visible asset, so it defaults to high.
   cover-quality: ${OPENAI_COVER_QUALITY:high}
+  # ---- Knowledge ingestion ("Tell Scrivetta what you know") -----------------
+  # OpenAI is the cheap KNOWLEDGE PROCESSING layer: it reads the author's
+  # materials (ZIP / PDF / DOCX / TXT / MD / notes) and stores structured
+  # BookKnowledge. Claude is NOT used here — it only writes the book later.
+  # The single place to choose the model:
+  knowledge-model: ${OPENAI_KNOWLEDGE_MODEL:gpt-5-mini}
+  # minimal|low|medium|high for reasoning models; blank for models without
+  # reasoning (e.g. gpt-4.1-mini), which reject the parameter.
+  knowledge-reasoning-effort: ${OPENAI_KNOWLEDGE_REASONING_EFFORT:low}
+  knowledge-max-output-tokens: ${OPENAI_KNOWLEDGE_MAX_OUTPUT_TOKENS:16000}
+  knowledge-read-timeout-ms: ${OPENAI_KNOWLEDGE_READ_TIMEOUT_MS:240000}
+  knowledge-enabled: ${OPENAI_KNOWLEDGE_ENABLED:true}
+  # Prices of the knowledge model (USD per 1M tokens) — only used to estimate and
+  # record the cost of each run. Update together with the model.
+  knowledge-input-usd-per-million: ${OPENAI_KNOWLEDGE_INPUT_USD_PER_MILLION:0.25}
+  knowledge-output-usd-per-million: ${OPENAI_KNOWLEDGE_OUTPUT_USD_PER_MILLION:2.00}
+  # ---- Book Blueprint (planning the book from BookKnowledge) ----------------
+  # Blank = same model as knowledge-model (one switch for both). The same
+  # per-token prices above are used for cost estimates.
+  blueprint-model: ${OPENAI_BLUEPRINT_MODEL:}
+  blueprint-reasoning-effort: ${OPENAI_BLUEPRINT_REASONING_EFFORT:medium}
+  blueprint-max-output-tokens: ${OPENAI_BLUEPRINT_MAX_OUTPUT_TOKENS:24000}
+
+# Knowledge ingestion limits — bound server work and OpenAI cost per book. A huge
+# ZIP is read only up to these limits; whatever does not fit one analysis run is
+# recorded as "not analysed" (never silently sent).
+knowledge:
+  max-upload-bytes: ${KNOWLEDGE_MAX_UPLOAD_BYTES:26214400}          # 25 MB (≤ multipart limit)
+  max-sources-per-book: ${KNOWLEDGE_MAX_SOURCES_PER_BOOK:20}
+  max-notes-chars: ${KNOWLEDGE_MAX_NOTES_CHARS:100000}
+  zip-max-entries: ${KNOWLEDGE_ZIP_MAX_ENTRIES:5000}
+  zip-max-total-uncompressed-bytes: ${KNOWLEDGE_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES:209715200}  # 200 MB
+  zip-max-compression-ratio: ${KNOWLEDGE_ZIP_MAX_COMPRESSION_RATIO:100}
+  extraction-timeout-ms: ${KNOWLEDGE_EXTRACTION_TIMEOUT_MS:60000}
+  max-file-bytes: ${KNOWLEDGE_MAX_FILE_BYTES:5242880}               # 5 MB per file inside a ZIP
+  max-pdf-pages: ${KNOWLEDGE_MAX_PDF_PAGES:500}
+  max-document-chars: ${KNOWLEDGE_MAX_DOCUMENT_CHARS:100000}
+  max-stored-chars-per-book: ${KNOWLEDGE_MAX_STORED_CHARS_PER_BOOK:3000000}
+  # Per run: ~4 chars/token → 60k chars ≈ 15k tokens per request, 600k ≈ 150k tokens per run.
+  max-chars-per-chunk: ${KNOWLEDGE_MAX_CHARS_PER_CHUNK:60000}
+  max-analysis-chars: ${KNOWLEDGE_MAX_ANALYSIS_CHARS:600000}
+  max-chunks: ${KNOWLEDGE_MAX_CHUNKS:15}
+  max-processing-runs: ${KNOWLEDGE_MAX_PROCESSING_RUNS:10}
+  notes-context-chars: ${KNOWLEDGE_NOTES_CONTEXT_CHARS:4000}
+  stale-processing-minutes: ${KNOWLEDGE_STALE_PROCESSING_MINUTES:30}
+
+# Knowledge-based writing: what each Claude chapter request may receive. Small but
+# sufficient — book context + this chapter's knowledge, answers, gaps and a few
+# excerpts of its own source files (never the whole upload).
+knowledge-writing:
+  max-book-context-chars: ${KNOWLEDGE_WRITING_MAX_BOOK_CONTEXT_CHARS:6000}
+  max-chapter-knowledge-chars: ${KNOWLEDGE_WRITING_MAX_CHAPTER_KNOWLEDGE_CHARS:12000}
+  max-answers-chars: ${KNOWLEDGE_WRITING_MAX_ANSWERS_CHARS:6000}
+  max-excerpts: ${KNOWLEDGE_WRITING_MAX_EXCERPTS:3}
+  max-excerpt-chars: ${KNOWLEDGE_WRITING_MAX_EXCERPT_CHARS:3500}
+  max-excerpt-total-chars: ${KNOWLEDGE_WRITING_MAX_EXCERPT_TOTAL_CHARS:9000}
+
+# Book Blueprint limits — "a few details", never a form; bounded (re)build cost.
+blueprint:
+  max-questions: ${BLUEPRINT_MAX_QUESTIONS:8}
+  max-chapters: ${BLUEPRINT_MAX_CHAPTERS:30}
+  max-generations: ${BLUEPRINT_MAX_GENERATIONS:10}
+  max-knowledge-chars: ${BLUEPRINT_MAX_KNOWLEDGE_CHARS:120000}
+  stale-building-minutes: ${BLUEPRINT_STALE_BUILDING_MINUTES:30}
+  max-answer-chars: ${BLUEPRINT_MAX_ANSWER_CHARS:5000}
 
 # Payments (Stripe) + credits. The $ amounts live in Stripe; credit grants here.
 stripe:

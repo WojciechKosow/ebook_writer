@@ -39,6 +39,15 @@ public interface EbookRepository extends JpaRepository<Ebook, UUID> {
                       @Param("pending") EbookStatus pending);
 
     /**
+     * Atomically move an ebook from one status to another (e.g. FAILED → PENDING
+     * to resume). Returns 1 for the single caller that wins, 0 otherwise.
+     */
+    @Modifying
+    @Transactional
+    @Query("update Ebook e set e.status = :to where e.id = :id and e.status = :from")
+    int claimStatus(@Param("id") UUID id, @Param("from") EbookStatus from, @Param("to") EbookStatus to);
+
+    /**
      * Atomically claim the final billing (true-up) for an ebook. Returns 1 the
      * first time and 0 afterwards, so the charge/refund is applied exactly once
      * however many times settlement is attempted (a retried async worker, a

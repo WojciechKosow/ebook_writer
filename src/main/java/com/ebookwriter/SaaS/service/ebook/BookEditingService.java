@@ -5,6 +5,8 @@ import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.prompt.EditingPrompts;
+import com.ebookwriter.SaaS.prompt.KnowledgeChapterPrompts;
+import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
@@ -31,6 +33,7 @@ public class BookEditingService {
     private final AnthropicProperties anthropicProperties;
     private final EbookRepository ebookRepository;
     private final EbookChapterRepository chapterRepository;
+    private final BookBlueprintService blueprintService;
 
     @Transactional
     public void edit(UUID ebookId, UUID chapterId) {
@@ -63,7 +66,8 @@ public class BookEditingService {
                 ManuscriptContext.outline(inBook),
                 chapter,
                 ManuscriptContext.otherSummaries(inBook, chapter.getChapterNumber()),
-                finalChapter
+                finalChapter,
+                knowledgeAddendum(ebook)
         );
 
         AnthropicService.Completion completion = anthropicService
@@ -83,5 +87,14 @@ public class BookEditingService {
 
         log.info("Edited chapter {}/{} of ebook {}",
                 chapter.getChapterNumber(), chapters.size(), ebookId);
+    }
+
+    /** Knowledge-based books: keep the author's specifics through the editorial pass. */
+    private String knowledgeAddendum(Ebook ebook) {
+        if (!ebook.isKnowledgeBased()) return null;
+        return blueprintService.getGenerationInput(ebook.getId())
+                .map(in -> KnowledgeChapterPrompts.editingAddendum(
+                        KnowledgeChapterContext.bookContext(in.knowledge(), in.blueprint())))
+                .orElse(null);
     }
 }

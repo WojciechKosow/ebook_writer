@@ -10,6 +10,7 @@ import com.ebookwriter.SaaS.prompt.ImagePlanningPrompts;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
+import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -58,6 +59,7 @@ public class ImagePlanningService {
     private final EbookRepository ebookRepository;
     private final EbookChapterRepository chapterRepository;
     private final OpenAiProperties openAiProperties;
+    private final BookBlueprintService blueprintService;
 
     /**
      * Produce the validated image plan for a book. Returns an empty list when the
@@ -90,7 +92,7 @@ public class ImagePlanningService {
 
         try {
             String system = ImagePlanningPrompts.system(ebook.getLanguage(), maxPerBook, maxPerChapter);
-            String user = ImagePlanningPrompts.user(ebook, chapters);
+            String user = ImagePlanningPrompts.user(ebook, chapters, projectContext(ebook));
             String raw = anthropicService.complete(system, user, PLAN_MAX_TOKENS);
 
             RawPlan parsed = parse(raw);
@@ -109,6 +111,18 @@ public class ImagePlanningService {
                     ebookId, e.getMessage());
             return List.of();
         }
+    }
+
+    /** Knowledge-based books: what the author's project is, for contextual image prompts. */
+    private String projectContext(Ebook ebook) {
+        if (!ebook.isKnowledgeBased() || blueprintService == null) return null;
+        return blueprintService.getGenerationInput(ebook.getId())
+                .map(in -> in.knowledge().project())
+                .filter(p -> p != null && p.name() != null)
+                .map(p -> p.name() + (p.type() != null ? " — " + p.type() : "")
+                        + (p.description() != null ? ". " + p.description() : "")
+                        + (p.technologies().isEmpty() ? "" : " Technologies: " + String.join(", ", p.technologies()) + "."))
+                .orElse(null);
     }
 
     /**

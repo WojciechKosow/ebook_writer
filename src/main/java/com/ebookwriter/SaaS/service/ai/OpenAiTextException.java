@@ -1,0 +1,21 @@
+package com.ebookwriter.SaaS.service.ai;
+
+/** A failed OpenAI text (chat completions) call. */
+public class OpenAiTextException extends RuntimeException {
+
+    private final boolean retryable;
+
+    public OpenAiTextException(String message, boolean retryable) {
+        super(message);
+        this.retryable = retryable;
+    }
+
+    public OpenAiTextException(String message, boolean retryable, Throwable cause) {
+        super(message, cause);
+        this.retryable = retryable;
+    }
+
+    public boolean isRetryable() {
+        return retryable;
+    }
+}

@@ -129,52 +129,8 @@ public final class ChapterPrompts {
                 ? ""
                 : "\nIMAGES AVAILABLE FOR THIS CHAPTER (use where they fit, or not at all)\n"
                         + availableImages.strip() + "\n";
-        int total = Math.max(totalChapters, position);
-        String positionSection;
-        if (directive.finalChapter()) {
-            positionSection = """
-
-                    POSITION IN THE BOOK
-                    This is the FINAL chapter (chapter %d of %d) — the book ends here.
-                    Cover this chapter's own scope, then bring the book to a natural,
-                    satisfying close. Do NOT open large new topics or promise further
-                    chapters.
-
-                    %s""".formatted(position, total, ENDING_ARCHITECTURE);
-            if (directive.windDown()) {
-                positionSection += """
-
-                        SCOPE OF THIS EDITION
-                        To keep this book complete within its length, the following planned
-                        chapters are NOT part of this book: %s.
-                        Do not mention, promise or allude to them, and do not say the book
-                        was shortened. Synthesise what the book HAS established, make the
-                        practical next step build only on that material, and close the book
-                        as a finished whole.
-                        """.formatted(String.join("; ", directive.omittedChapters()));
-            }
-        } else {
-            positionSection = """
-
-                    POSITION IN THE BOOK
-                    This is chapter %d of %d. Cover this chapter's scope fully and end it
-                    at a clean boundary (a finished section, not a cliff-hanger), but do
-                    not try to conclude the whole book — later chapters continue it. Only
-                    refer forward to chapters that appear in the outline above.
-                    """.formatted(position, total);
-        }
-        String lengthGuidance = directive.tight()
-                ? """
-                  Length: about %d words. The book is close to its length budget, so
-                  treat this as a real limit — plan the chapter to fit, keep the most
-                  valuable material, and still finish every section, exercise and
-                  sentence you start. Never stop mid-thought.""".formatted(directive.targetWords())
-                : """
-                  Length: aim for about %d words. This is a guide, not a hard stop —
-                  finish every thought, section and exercise naturally even if that
-                  runs a little over, and do not pad to reach the number. Do not
-                  expand far beyond it either: the book is planned to this scale."""
-                        .formatted(directive.targetWords());
+        String positionSection = positionSection(directive, position, totalChapters);
+        String lengthGuidance = lengthGuidance(directive);
         return """
                 BOOK BRIEF
                 Topic: %s
@@ -218,6 +174,62 @@ public final class ChapterPrompts {
                 nz(chapter.getDescription()),
                 lengthGuidance.strip()
         );
+    }
+
+    /** The "POSITION IN THE BOOK" section (shared by the legacy and knowledge-based writers). */
+    public static String positionSection(ChapterDirective directive, int position, int totalChapters) {
+        int total = Math.max(totalChapters, position);
+        String positionSection;
+        if (directive.finalChapter()) {
+            positionSection = """
+
+                    POSITION IN THE BOOK
+                    This is the FINAL chapter (chapter %d of %d) — the book ends here.
+                    Cover this chapter's own scope, then bring the book to a natural,
+                    satisfying close. Do NOT open large new topics or promise further
+                    chapters.
+
+                    %s""".formatted(position, total, ENDING_ARCHITECTURE);
+            if (directive.windDown()) {
+                positionSection += """
+
+                        SCOPE OF THIS EDITION
+                        To keep this book complete within its length, the following planned
+                        chapters are NOT part of this book: %s.
+                        Do not mention, promise or allude to them, and do not say the book
+                        was shortened. Synthesise what the book HAS established, make the
+                        practical next step build only on that material, and close the book
+                        as a finished whole.
+                        """.formatted(String.join("; ", directive.omittedChapters()));
+            }
+        } else {
+            positionSection = """
+
+                    POSITION IN THE BOOK
+                    This is chapter %d of %d. Cover this chapter's scope fully and end it
+                    at a clean boundary (a finished section, not a cliff-hanger), but do
+                    not try to conclude the whole book — later chapters continue it. Only
+                    refer forward to chapters that appear in the outline above.
+                    """.formatted(position, total);
+        }
+        return positionSection;
+    }
+
+    /** The length guidance line (shared by the legacy and knowledge-based writers). */
+    public static String lengthGuidance(ChapterDirective directive) {
+        String lengthGuidance = directive.tight()
+                ? """
+                  Length: about %d words. The book is close to its length budget, so
+                  treat this as a real limit — plan the chapter to fit, keep the most
+                  valuable material, and still finish every section, exercise and
+                  sentence you start. Never stop mid-thought.""".formatted(directive.targetWords())
+                : """
+                  Length: aim for about %d words. This is a guide, not a hard stop —
+                  finish every thought, section and exercise naturally even if that
+                  runs a little over, and do not pad to reach the number. Do not
+                  expand far beyond it either: the book is planned to this scale."""
+                        .formatted(directive.targetWords());
+        return lengthGuidance;
     }
 
     private static String nz(String s) {

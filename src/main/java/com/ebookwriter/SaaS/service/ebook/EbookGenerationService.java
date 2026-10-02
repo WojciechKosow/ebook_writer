@@ -7,7 +7,9 @@ import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.config.properties.OpenAiProperties;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
+import com.ebookwriter.SaaS.entity.EbookImageRole;
 import com.ebookwriter.SaaS.entity.EbookStatus;
+import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.service.credit.CreditService;
@@ -18,7 +20,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -30,6 +34,18 @@ import java.util.UUID;
  * Each step is a transactional call to a dedicated service, and results are
  * persisted as they are produced so a failure preserves everything written so
  * far. On any failure the ebook is moved to FAILED with the error recorded.
+ *
+ * <p><b>Two flows, one pipeline.</b> Legacy books are planned by Claude from the
+ * brief ({@link BookPlanningService}); knowledge-based books take their chapters
+ * from the author's approved blueprint ({@link KnowledgeBookPlanner}, no Claude
+ * call) and each chapter is written from the author's knowledge (see
+ * {@link ChapterGenerationService}). Everything after planning — credit pacing,
+ * editing, images, cover, rendering, validation, billing — is shared.
+ *
+ * <p><b>Failure isolation.</b> A chapter that fails (after the client's own
+ * retries) is marked FAILED and the book continues; failed chapters get one more
+ * attempt at the end. Only if one still fails is the book FAILED — with every
+ * written chapter kept, so {@link #resume} can finish it later.
  */
 @Slf4j
 @Service
@@ -54,19 +70,51 @@ public class EbookGenerationService {
     private final AnthropicProperties anthropicProperties;
     private final CreditService creditService;
     private final OpenAiProperties openAiProperties;
+    private final KnowledgeBookPlanner knowledgeBookPlanner;
+    private final EbookImageRepository imageRepository;
 
     @Async("ebookExecutor")
     public void generate(UUID ebookId) {
-        log.info("Starting generation for ebook {}", ebookId);
-        try {
-            // Step 1 — plan
-            updateStatus(ebookId, EbookStatus.PLANNING, 10);
-            planningService.plan(ebookId);
+        run(ebookId, false);
+    }
 
-            // Step 1.5 — decide how any user-uploaded assets should be used
-            // (cover / specific chapter / unused). No-op when nothing was
-            // uploaded; best-effort so it never fails the book.
-            assetPlacementService.plan(ebookId);
+    /**
+     * Continue a generation that failed part-way: keep the plan and every written
+     * chapter, write the missing ones, then finish the book as usual.
+     */
+    @Async("ebookExecutor")
+    public void resume(UUID ebookId) {
+        run(ebookId, true);
+    }
+
+    private void run(UUID ebookId, boolean resume) {
+        log.info("{} generation for ebook {}", resume ? "Resuming" : "Starting", ebookId);
+        try {
+            boolean knowledgeBased = ebookRepository.findById(ebookId).map(Ebook::isKnowledgeBased).orElse(false);
+            boolean planned = resume && !chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).isEmpty();
+
+            if (!planned) {
+                // Step 1 — plan: from the author's blueprint, or (legacy) by Claude from the brief.
+                updateStatus(ebookId, EbookStatus.PLANNING, 10);
+                if (knowledgeBased) {
+                    knowledgeBookPlanner.plan(ebookId);
+                } else {
+                    planningService.plan(ebookId);
+                }
+
+                // Step 1.5 — decide how any user-uploaded assets should be used
+                // (cover / specific chapter / unused). No-op when nothing was
+                // uploaded; best-effort so it never fails the book.
+                assetPlacementService.plan(ebookId);
+            } else {
+                // A resumed run re-decides chapters that were deferred for credits.
+                for (EbookChapter c : chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId)) {
+                    if (c.getStatus() == ChapterStatus.DEFERRED) {
+                        c.setStatus(ChapterStatus.PENDING);
+                        chapterRepository.save(c);
+                    }
+                }
+            }
 
             List<EbookChapter> chapters =
                     chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
@@ -85,6 +133,7 @@ public class EbookGenerationService {
             if (anthropicProperties.isEditingEnabled()) {
                 updateStatus(ebookId, EbookStatus.EDITING, 85);
                 for (EbookChapter chapter : chapters) {
+                    if (chapter.getStatus() == ChapterStatus.EDITED) continue; // edited before a resume
                     editingService.edit(ebookId, chapter.getId());
                 }
             } else {
@@ -98,7 +147,8 @@ public class EbookGenerationService {
             // and a book with no plan (or with images disabled) passes straight
             // through to rendering.
             updateStatus(ebookId, EbookStatus.PLANNING_IMAGES, 88);
-            List<ImagePlan> imagePlan = imagePlanningService.plan(ebookId);
+            List<ImagePlan> imagePlan = resume && hasGeneratedIllustrations(ebookId)
+                    ? List.of() : imagePlanningService.plan(ebookId);
             if (!imagePlan.isEmpty()) {
                 updateStatus(ebookId, EbookStatus.GENERATING_IMAGES, 90);
                 imageGenerationService.generate(ebookId, imagePlan);
@@ -165,12 +215,19 @@ public class EbookGenerationService {
 
         Set<Integer> deferred = new HashSet<>();
         List<String> omittedTitles = new ArrayList<>();
+        Map<EbookChapter, ChapterDirective> failed = new LinkedHashMap<>();
         int wordsWritten = 0;
         int done = 0;
 
         for (int i = 0; i < chapters.size(); i++) {
             EbookChapter chapter = chapters.get(i);
             if (deferred.contains(chapter.getChapterNumber())) {
+                continue;
+            }
+            if (chapter.getStatus() == ChapterStatus.WRITTEN || chapter.getStatus() == ChapterStatus.EDITED) {
+                // Already written by an earlier (resumed) run: keep it, count its length.
+                wordsWritten += wordCount(chapter.getContent());
+                done++;
                 continue;
             }
 
@@ -211,7 +268,10 @@ public class EbookGenerationService {
                     isFinal,
                     isFinal ? omittedTitles : List.of());
 
-            chapterGenerationService.generate(ebookId, chapter.getId(), directive);
+            if (!writeOrMarkFailed(ebookId, chapter, directive)) {
+                failed.put(chapter, directive);
+                continue;
+            }
             wordsWritten += chapterRepository.findById(chapter.getId())
                     .map(c -> wordCount(c.getContent())).orElse(0);
 
@@ -220,9 +280,48 @@ public class EbookGenerationService {
             updateProgress(ebookId,
                     WRITING_START + (int) Math.round((double) WRITING_SPAN * done / Math.max(1, inBook)));
         }
+        // One more attempt for chapters that failed (a transient outage often passes).
+        for (Map.Entry<EbookChapter, ChapterDirective> f : failed.entrySet()) {
+            EbookChapter chapter = f.getKey();
+            log.info("Retrying chapter {} of ebook {}", chapter.getChapterNumber(), ebookId);
+            if (!writeOrMarkFailed(ebookId, chapter, f.getValue())) {
+                throw new ChapterGenerationException("Chapter " + chapter.getChapterNumber() + " (\"" + chapter.getTitle()
+                        + "\") could not be written. The chapters already written are kept — you can resume the generation.");
+            }
+            wordsWritten += chapterRepository.findById(chapter.getId()).map(c -> wordCount(c.getContent())).orElse(0);
+            done++;
+        }
         log.info("Wrote ebook {}: {} words across {} chapters ({} deferred, credit capacity {} words)",
                 ebookId, wordsWritten, done, deferred.size(),
                 capacity == Integer.MAX_VALUE ? "unbounded" : capacity);
+    }
+
+    /** Write one chapter; on failure mark it FAILED (keeping the reason) instead of failing the book. */
+    private boolean writeOrMarkFailed(UUID ebookId, EbookChapter chapter, ChapterDirective directive) {
+        try {
+            chapterGenerationService.generate(ebookId, chapter.getId(), directive);
+            return true;
+        } catch (RuntimeException e) {
+            log.warn("Chapter {} of ebook {} failed: {}", chapter.getChapterNumber(), ebookId, e.getMessage());
+            chapterRepository.findById(chapter.getId()).ifPresent(c -> {
+                c.setStatus(ChapterStatus.FAILED);
+                c.setGenerationError(truncate(e.getMessage()));
+                chapterRepository.save(c);
+            });
+            return false;
+        }
+    }
+
+    /** Thrown when a chapter still fails after its retry; the book fails but stays resumable. */
+    static class ChapterGenerationException extends RuntimeException {
+        ChapterGenerationException(String message) {
+            super(message);
+        }
+    }
+
+    private boolean hasGeneratedIllustrations(UUID ebookId) {
+        return imageRepository.findByEbookIdOrderByCreatedAtAsc(ebookId).stream()
+                .anyMatch(i -> i.getRole() == EbookImageRole.ILLUSTRATION && i.getPlacedBy() == ContentSource.AI);
     }
 
     private void markDeferred(EbookChapter chapter) {

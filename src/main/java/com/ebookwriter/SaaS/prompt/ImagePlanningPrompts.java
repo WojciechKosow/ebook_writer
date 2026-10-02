@@ -90,6 +90,14 @@ public final class ImagePlanningPrompts {
     }
 
     public static String user(Ebook e, List<EbookChapter> chapters) {
+        return user(e, chapters, null);
+    }
+
+    /**
+     * As above, with the author's project described (knowledge-based books) so
+     * images depict THIS project's concepts instead of generic stock scenes.
+     */
+    public static String user(Ebook e, List<EbookChapter> chapters, String projectContext) {
         StringBuilder chaptersText = new StringBuilder();
         for (EbookChapter c : chapters) {
             if (c.getContent() == null || c.getContent().isBlank()) {
@@ -112,7 +120,7 @@ public final class ImagePlanningPrompts {
                 Language: %s
                 Description: %s
 
-                CHAPTERS (with content excerpts)
+                %sCHAPTERS (with content excerpts)
                 %s
                 Produce the image plan JSON now.
                 """.formatted(
@@ -122,7 +130,19 @@ public final class ImagePlanningPrompts {
                 nz(e.getStyle()),
                 blankToEnglish(e.getLanguage()),
                 nz(e.getDescription()),
+                projectContext == null || projectContext.isBlank() ? "" : projectSection(projectContext),
                 chaptersText.toString().strip());
+    }
+
+    private static String projectSection(String projectContext) {
+        return """
+                THE AUTHOR'S PROJECT (this book teaches it)
+                %s
+                Images must show THIS project's concepts, structure and flows as described in the
+                chapters (e.g. how its parts connect), in a clean technical-editorial style. Never
+                propose generic stock scenes (laptops, people typing, abstract "technology" art).
+
+                """.formatted(projectContext.strip());
     }
 
     /** A bounded excerpt of a chapter body so the whole plan prompt stays small. */

@@ -40,6 +40,14 @@ public class Ebook {
     @Column(columnDefinition = "text")
     private String targetAudience;
 
+    /**
+     * What the book should achieve for its reader ("teach beginners to build the
+     * project from scratch"). Part of the knowledge-based brief; nullable so older
+     * briefs (and {@code ddl-auto=update}) are unaffected.
+     */
+    @Column(columnDefinition = "text")
+    private String bookGoal;
+
     @Column(columnDefinition = "text")
     private String style;
 
@@ -54,6 +62,14 @@ public class Ebook {
     private String sourceMaterial;
 
     // ---- Generation state ---------------------------------------------------
+
+    /**
+     * Which generation flow produced this book. Null = {@link GenerationMode#LEGACY}
+     * (every book created before the knowledge-based flow), so the column needs no
+     * default for {@code ddl-auto=update}.
+     */
+    @Enumerated(EnumType.STRING)
+    private GenerationMode generationMode;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -161,6 +177,11 @@ public class Ebook {
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    /** True when this book is written from the author's knowledge + blueprint. */
+    public boolean isKnowledgeBased() {
+        return generationMode == GenerationMode.KNOWLEDGE;
+    }
 
     @PrePersist
     void onCreate() {
