@@ -48,7 +48,11 @@ public class SchemaConstraintPatch implements ApplicationRunner {
             new String[]{"ebook_chapters", "ebook_chapters_status_check"},
             new String[]{"ebook_chapters", "ebook_chapters_content_source_check"},
             // TokenType grew OAUTH_LOGIN (Google sign-in handoff codes).
-            new String[]{"user_tokens", "user_tokens_type_check"});
+            new String[]{"user_tokens", "user_tokens_type_check"},
+            // Knowledge ingestion enums (pre-emptive: they will grow).
+            new String[]{"book_knowledge", "book_knowledge_status_check"},
+            new String[]{"knowledge_sources", "knowledge_sources_source_type_check"},
+            new String[]{"knowledge_sources", "knowledge_sources_status_check"});
 
     @Override
     public void run(ApplicationArguments args) {

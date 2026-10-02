@@ -40,6 +40,14 @@ public class Ebook {
     @Column(columnDefinition = "text")
     private String targetAudience;
 
+    /**
+     * What the book should achieve for its reader ("teach beginners to build the
+     * project from scratch"). Part of the knowledge-based brief; nullable so older
+     * briefs (and {@code ddl-auto=update}) are unaffected.
+     */
+    @Column(columnDefinition = "text")
+    private String bookGoal;
+
     @Column(columnDefinition = "text")
     private String style;
 

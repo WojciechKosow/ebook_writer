@@ -5,10 +5,14 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * OpenAI configuration — used by the AI image pipeline (planner + generator).
- * The provider (OpenAI Image API) is isolated behind
- * {@code com.ebookwriter.SaaS.service.image.OpenAiImageClient}; nothing else
- * talks to OpenAI directly.
+ * OpenAI configuration. Two independent uses, each isolated behind one client:
+ * <ul>
+ *   <li>the AI image pipeline (planner + generator) —
+ *       {@code com.ebookwriter.SaaS.service.image.OpenAiImageClient};</li>
+ *   <li>knowledge ingestion (reading the author's materials into structured
+ *       BookKnowledge) — {@code com.ebookwriter.SaaS.service.ai.OpenAiTextClient}.
+ *       This is the cheap processing layer; Claude only writes the book.</li>
+ * </ul>
  *
  * <p>Mirrors the Anthropic/R2 placeholder pattern: the app boots with the key
  * blank (only image generation is skipped, gracefully, until a key is set), so a
@@ -67,8 +71,50 @@ public class OpenAiProperties {
      */
     private String coverQuality = "high";
 
+    // ---- Knowledge ingestion (text model) ----------------------------------
+
+    /**
+     * The single place the knowledge-processing model is chosen
+     * ({@code OPENAI_KNOWLEDGE_MODEL}). A small, cheap model is enough: the job is
+     * reading and organising the author's materials, not writing prose.
+     */
+    private String knowledgeModel = "gpt-5-mini";
+
+    /**
+     * Reasoning effort sent with knowledge calls ({@code minimal|low|medium|high}
+     * for reasoning models). Blank omits the parameter — required when the model
+     * is a non-reasoning one (e.g. gpt-4.1-mini) that rejects it.
+     */
+    private String knowledgeReasoningEffort = "low";
+
+    /** Output ceiling per knowledge call (reasoning tokens count towards it). */
+    private int knowledgeMaxOutputTokens = 16_000;
+
+    /** Read timeout for one knowledge call (ms) — a large batch takes a while. */
+    private long knowledgeReadTimeoutMs = 240_000;
+
+    /** Master switch for knowledge processing (independent of the image switch). */
+    private boolean knowledgeEnabled = true;
+
+    /**
+     * Price per 1M input / output tokens of {@link #knowledgeModel}, in USD. Used
+     * only to <em>estimate</em> and record what a processing run cost; update it
+     * together with the model.
+     */
+    private double knowledgeInputUsdPerMillion = 0.25;
+    private double knowledgeOutputUsdPerMillion = 2.00;
+
     /** True once an API key is present and the pipeline is enabled. */
     public boolean isConfigured() {
-        return enabled && apiKey != null && !apiKey.isBlank();
+        return enabled && hasApiKey();
+    }
+
+    /** True once an API key is present and knowledge processing is enabled. */
+    public boolean isKnowledgeConfigured() {
+        return knowledgeEnabled && hasApiKey();
+    }
+
+    private boolean hasApiKey() {
+        return apiKey != null && !apiKey.isBlank();
     }
 }

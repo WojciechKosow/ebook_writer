@@ -68,6 +68,7 @@ public class EbookService {
                 .user(user)
                 .topic(request.getTopic())
                 .targetAudience(request.getTargetAudience())
+                .bookGoal(request.getBookGoal())
                 .style(request.getStyle())
                 .approxPageCount(target)
                 .language(blankToEnglish(request.getLanguage()))

@@ -87,6 +87,9 @@ public final class PlanningPrompts {
                 Topic:
                 %s
 
+                Book goal / purpose:
+                %s
+
                 Target audience:
                 %s
 
@@ -115,6 +118,7 @@ public final class PlanningPrompts {
                 %s
                 """.formatted(
                 nz(e.getTopic()),
+                nz(e.getBookGoal()),
                 nz(e.getTargetAudience()),
                 nz(e.getStyle()),
                 budget.targetPages(),

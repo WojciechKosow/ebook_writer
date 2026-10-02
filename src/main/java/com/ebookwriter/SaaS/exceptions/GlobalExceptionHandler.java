@@ -38,6 +38,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(e.getStatusCode()).body(Map.of("message", reason));
     }
 
+    /** An upload larger than the multipart limit — 413 with a readable message. */
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<?> handleUploadTooLarge(org.springframework.web.multipart.MaxUploadSizeExceededException e) {
+        return ResponseEntity.status(HttpStatus.CONTENT_TOO_LARGE)
+                .body(Map.of("message", "The file is too large."));
+    }
+
     /**
      * Bean-validation failures on @Valid request bodies — return a field->message
      * map so the frontend can highlight the offending inputs.

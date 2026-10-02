@@ -26,6 +26,9 @@ public class EbookRequest {
 
     private String targetAudience;
 
+    /** Optional: what the book should achieve for its reader (its goal / purpose). */
+    private String bookGoal;
+
     private String style;
 
     /** e.g. "English". Defaults to English when blank. */
