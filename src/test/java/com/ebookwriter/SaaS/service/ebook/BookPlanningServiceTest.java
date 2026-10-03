@@ -1,11 +1,14 @@
 package com.ebookwriter.SaaS.service.ebook;
 
 import com.ebookwriter.SaaS.dto.plan.PlannedChapter;
+import com.ebookwriter.SaaS.entity.BookDepth;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -88,38 +91,61 @@ class BookPlanningServiceTest {
                 "the book keeps its ending even under a tight ceiling");
     }
 
-    @Test
-    void aPlanWithinTheSoftLimitIsLeftExactlyAsDesigned() {
-        List<PlannedChapter> plan = List.of(
-                new PlannedChapter("A", "", 12),
-                new PlannedChapter("B", "", 12),
-                new PlannedChapter("C", "", 9));
-
-        // Target 28 content pages, soft limit 35: a 33-page plan is a natural overshoot.
-        assertEquals(plan, BookPlanningService.rebalanceToTarget(plan, 35, 28));
+    private static ScopeEstimate estimate(int low, int high) {
+        return new ScopeEstimate(BookDepth.STANDARD, low, high, 5, 8, ScopeEstimate.Basis.BRIEF, 0, false);
     }
 
     @Test
-    void anExpandedPlanIsRebalancedTowardTheTargetWithoutDroppingChapters() {
-        // Asked for ~30 pages, the model planned 90 — the "keeps expanding" failure.
+    void aPlanLongerThanTheEstimateIsKeptExactlyAsDesigned() {
+        // Estimated 27–41 pages; the planner decided the subject needs 70. The
+        // estimate is orientation, not a limit, so the plan stands.
         List<PlannedChapter> plan = List.of(
-                new PlannedChapter("A", "", 30),
-                new PlannedChapter("B", "", 30),
-                new PlannedChapter("Conclusion", "", 30));
+                new PlannedChapter("A", "", 25),
+                new PlannedChapter("B", "", 25),
+                new PlannedChapter("C", "", 20));
 
-        List<PlannedChapter> rebalanced = BookPlanningService.rebalanceToTarget(plan, 35, 28);
-
-        assertEquals(3, rebalanced.size(), "every planned topic survives");
-        int total = totalPages(rebalanced);
-        assertTrue(total >= 26 && total <= 30, "lands near the target, got " + total);
+        assertEquals(plan, BookPlanningService.limitRunaway(plan, estimate(27, 41)));
     }
 
     @Test
-    void aShortPlanIsNeverPaddedUpToTheTarget() {
+    void onlyAPlannerRunawayIsPulledBackAndNoChapterIsDropped() {
+        // Estimated 27–41 pages, the model planned 300 — the "keeps expanding" failure.
+        List<PlannedChapter> plan = List.of(
+                new PlannedChapter("A", "", 100),
+                new PlannedChapter("B", "", 100),
+                new PlannedChapter("Conclusion", "", 100));
+
+        List<PlannedChapter> limited = BookPlanningService.limitRunaway(plan, estimate(27, 41));
+
+        assertEquals(3, limited.size(), "every planned topic survives");
+        int total = totalPages(limited);
+        int landing = (int) Math.ceil((41 - EbookHtmlBuilder.FRONT_MATTER_PAGES) * BookPlanningService.RUNAWAY_LANDING);
+        assertTrue(Math.abs(total - landing) <= 2, "pulled back to ~" + landing + ", got " + total);
+        assertTrue(total > 41, "still allowed past the estimate");
+    }
+
+    @Test
+    void aShortPlanIsNeverPadded() {
         List<PlannedChapter> plan = List.of(
                 new PlannedChapter("A", "", 5),
                 new PlannedChapter("B", "", 5));
 
-        assertEquals(10, totalPages(BookPlanningService.rebalanceToTarget(plan, 35, 28)));
+        assertEquals(10, totalPages(BookPlanningService.limitRunaway(plan, estimate(27, 41))));
+    }
+
+    @Test
+    void aPlanTheCreditsCannotCoverIsRefusedNotTrimmed() {
+        PlanExceedsCreditsException ex = assertThrows(PlanExceedsCreditsException.class,
+                () -> BookPlanningService.requireAffordable(java.util.UUID.randomUUID(), 95, 60));
+
+        assertEquals(95, ex.getPlannedPages());
+        assertTrue(ex.getMessage().contains("about 95 pages"), ex.getMessage());
+    }
+
+    @Test
+    void aPlanWithinTheHoldIncludingOverdraftIsAccepted() {
+        assertDoesNotThrow(() -> BookPlanningService.requireAffordable(java.util.UUID.randomUUID(), 60, 60));
+        assertDoesNotThrow(() -> BookPlanningService.requireAffordable(java.util.UUID.randomUUID(), 500, 0),
+                "legacy rows without a hold are not checked");
     }
 }

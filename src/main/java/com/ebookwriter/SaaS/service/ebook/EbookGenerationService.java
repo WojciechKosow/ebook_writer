@@ -119,11 +119,12 @@ public class EbookGenerationService {
             List<EbookChapter> chapters =
                     chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
 
-            // Step 2 — write chapters sequentially, paced by the credit budget. The
-            // selected target already shaped the plan; here credits are permission
-            // to continue, never a reason to stop early or to write more. If the
-            // remaining credits can't cover the rest of the plan, the book is wound
-            // down to its planned ending instead of being cut off.
+            // Step 2 — write chapters sequentially. The depth and the content shaped
+            // the plan; credits are only permission to continue, never a reason to
+            // write more or less. The start was gated on the estimate and the plan
+            // on the hold, so pacing rarely matters; if the writing still runs far
+            // past what the credits cover, the book is wound down to its planned
+            // ending (flagged as creditLimited and shown to the user), never cut off.
             updateStatus(ebookId, EbookStatus.WRITING, WRITING_START);
             writeChapters(ebookId, chapters);
             chapters = ManuscriptContext.inBook(
@@ -165,11 +166,10 @@ public class EbookGenerationService {
             // per-chapter usage (metadata only — rendering reads the Markdown refs).
             assetUsageService.sync(ebookId, ContentSource.AI);
 
-            // Step 4 — render PDF and learn the real page count. The soft target is
-            // never enforced here: a book past its target renders in full. Only the
-            // credit ceiling (min(balance, cap) + overdraft) is a hard limit; writing
-            // is paced to stay inside it, and if a render still overshoots, whole
-            // sections are removed before the book's ending — the conclusion is kept.
+            // Step 4 — render PDF and learn the real page count — a result, not a
+            // goal: no estimate or plan size is enforced here. Only the credit
+            // ceiling (min(balance, cap) + overdraft) bounds the render, because the
+            // user can't be billed past it; writing is paced to stay inside it.
             updateStatus(ebookId, EbookStatus.RENDERING, 96);
             int pageBudget = ebookRepository.findById(ebookId).map(Ebook::getPageBudget).orElse(0);
             int actualPages = pdfGenerationService.renderAndStore(ebookId, pageBudget);
@@ -188,8 +188,50 @@ public class EbookGenerationService {
             updateStatus(ebookId, EbookStatus.COMPLETED, 100);
             log.info("Finished generation for ebook {}", ebookId);
 
+        } catch (PlanExceedsCreditsException e) {
+            // The planned book is larger than the user's credits cover. Never cut it
+            // down to fit: refund the hold and hand the draft back with the reason.
+            returnToDraft(ebookId, e);
         } catch (Exception e) {
             log.error("Generation failed for ebook {}", ebookId, e);
+            fail(ebookId, e);
+        }
+    }
+
+    /**
+     * Put a book whose plan needs more credits than the user holds back into
+     * {@link EbookStatus#DRAFT}: the whole hold is refunded (nothing was written),
+     * the planned size is kept so the draft shows how many credits it needs, and
+     * the message explains what to do. Materials, blueprint and assets are kept.
+     */
+    private void returnToDraft(UUID ebookId, PlanExceedsCreditsException e) {
+        log.info("Ebook {}: plan needs ~{} pages, more than the user's credits cover; back to draft",
+                ebookId, e.getPlannedPages());
+        try {
+            // Planning is transactional, so a bounced plan saved no chapters; clear
+            // any left from an earlier attempt all the same.
+            List<EbookChapter> stale = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+            if (!stale.isEmpty()) {
+                chapterRepository.deleteAll(stale);
+            }
+            ebookRepository.findById(ebookId).ifPresent(ebook -> {
+                if (ebook.getCreditsCharged() > 0 && !ebook.isCreditsRefunded() && !ebook.isCreditsReconciled()) {
+                    int held = ebook.getCreditsCharged();
+                    ebookRepository.findUserIdById(ebookId).ifPresent(userId ->
+                            creditService.refundGeneration(userId, held, ebookId));
+                }
+                ebook.setStatus(EbookStatus.DRAFT);
+                ebook.setProgress(0);
+                ebook.setPageBudget(0);
+                ebook.setCreditsCharged(0);
+                ebook.setCreditsRefunded(false);
+                ebook.setGenerationMode(null);
+                ebook.setPlannedPages(e.getPlannedPages());
+                ebook.setErrorMessage(e.getMessage());
+                ebookRepository.save(ebook);
+            });
+        } catch (Exception inner) {
+            log.error("Could not return ebook {} to draft; failing it instead", ebookId, inner);
             fail(ebookId, e);
         }
     }
@@ -198,8 +240,8 @@ public class EbookGenerationService {
      * Write every planned chapter in order, asking {@link WritingBudget} before
      * each one whether the remaining credits still cover the rest of the plan:
      * <ul>
-     *   <li>they do — the chapter is written at its planned depth (a book that has
-     *       already passed its soft target keeps going: the target never stops it);</li>
+     *   <li>they do — the chapter is written at its planned depth (a book that runs
+     *       past its estimate keeps going: the estimate never stops it);</li>
      *   <li>they nearly do — the remaining chapters are written a little tighter;</li>
      *   <li>they don't — the book is wound down: chapters that no longer fit are
      *       marked {@link ChapterStatus#DEFERRED} (kept in the outline, never
@@ -250,6 +292,7 @@ public class EbookGenerationService {
                 log.warn("Ebook {}: credits cover {} more words but the plan needs more; winding down — "
                                 + "deferred chapters {} so the book ends at its planned conclusion",
                         ebookId, Math.max(0, capacity - wordsWritten), decision.deferred());
+                markCreditLimited(ebookId);
                 if (deferred.contains(chapter.getChapterNumber())) {
                     continue;
                 }
@@ -324,6 +367,16 @@ public class EbookGenerationService {
                 .anyMatch(i -> i.getRole() == EbookImageRole.ILLUSTRATION && i.getPlacedBy() == ContentSource.AI);
     }
 
+    /** Record that the book was brought to an early ending by the credits, so the user is told. */
+    private void markCreditLimited(UUID ebookId) {
+        ebookRepository.findById(ebookId).ifPresent(ebook -> {
+            if (!ebook.isCreditLimited()) {
+                ebook.setCreditLimited(true);
+                ebookRepository.save(ebook);
+            }
+        });
+    }
+
     private void markDeferred(EbookChapter chapter) {
         chapter.setStatus(ChapterStatus.DEFERRED);
         chapter.setContent(null);
@@ -389,9 +442,7 @@ public class EbookGenerationService {
      * The credits a finished book is billed: the real page count (1 credit =
      * 1 final page), never more than the reserved ceiling (which was sized so the
      * balance cannot fall below {@code -maxOverdraft}) and never less than 1
-     * (a produced book always costs at least one credit). Because the ceiling is
-     * {@code target + overdraft}, this charges the true length even when it
-     * exceeds the requested target.
+     * (a produced book always costs at least one credit).
      */
     static int reconciledCharge(int actualPages, int budget) {
         return Math.max(1, Math.min(actualPages, budget));

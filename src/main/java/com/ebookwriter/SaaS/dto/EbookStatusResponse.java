@@ -1,5 +1,6 @@
 package com.ebookwriter.SaaS.dto;
 
+import com.ebookwriter.SaaS.entity.BookDepth;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookStatus;
 import lombok.AllArgsConstructor;
@@ -29,12 +30,26 @@ public class EbookStatusResponse {
     private String errorMessage;
     private boolean downloadReady;
 
+    /** The depth the user selected — the user's control over scope. */
+    private BookDepth depth;
+
     /**
-     * The target length the user selected (soft content budget). The finished
-     * book lands around it but may be shorter or longer — see
-     * {@link #actualPageCount} for the real result.
+     * Scrivetta's length estimate taken when generation started (whole-book
+     * pages). An estimate, never a target; null for drafts — a draft's live
+     * estimate is served by {@code GET /api/ebooks/{id}/scope}.
      */
-    private int targetPages;
+    private Integer estimatedPagesLow;
+    private Integer estimatedPagesHigh;
+
+    /** Pages of the actual plan once the book is planned (still a plan, not a promise). */
+    private Integer plannedPages;
+
+    /**
+     * True when the writing ran past what the user's credits cover and the book
+     * was brought to its planned ending early (see the DEFERRED chapters). Shown
+     * to the user — never silent.
+     */
+    private boolean creditLimited;
 
     /**
      * The <b>final</b> number of pages in the rendered PDF, set once generation
@@ -46,8 +61,7 @@ public class EbookStatusResponse {
 
     /**
      * Credits charged for this generation, known once complete. Equal to
-     * {@link #actualPageCount} (billed on the real final length, which may be a
-     * little above or below the target).
+     * {@link #actualPageCount} (billed on the real final length).
      */
     private int creditsCharged;
 
@@ -75,7 +89,11 @@ public class EbookStatusResponse {
                 .description(ebook.getDescription())
                 .errorMessage(ebook.getErrorMessage())
                 .downloadReady(ebook.getStatus() == EbookStatus.COMPLETED)
-                .targetPages(ebook.getApproxPageCount())
+                .depth(ebook.effectiveDepth())
+                .estimatedPagesLow(ebook.getEstimatedPagesLow())
+                .estimatedPagesHigh(ebook.getEstimatedPagesHigh())
+                .plannedPages(ebook.getPlannedPages())
+                .creditLimited(ebook.isCreditLimited())
                 .actualPageCount(ebook.getActualPageCount())
                 .creditsCharged(ebook.getCreditsCharged())
                 .generationMode(ebook.getGenerationMode() == null

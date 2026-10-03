@@ -72,12 +72,14 @@ public class PdfGenerationService {
      * in it. The page count is what the user is billed for, so it is read back
      * from the rendered bytes rather than estimated from word targets.
      *
-     * <p>{@code maxPages} is a hard ceiling: if the rendered book comes out
-     * longer (the model overshot its word targets), trailing content is trimmed
+     * <p>{@code maxPages} is the <b>credit</b> ceiling (what the user can be
+     * billed), never a length the user chose: if the rendered book comes out
+     * longer (the model overshot far past its plan), trailing content is trimmed
      * and the book re-rendered — a cheap, API-free loop — until it fits. Any
      * chapter whose content was trimmed is persisted so the stored manuscript
-     * matches the delivered PDF. Pass a non-positive {@code maxPages} to render
-     * as-is with no ceiling.
+     * matches the delivered PDF, and the book is flagged {@code creditLimited} so
+     * the user is told. Pass a non-positive {@code maxPages} to render as-is with
+     * no ceiling (editor saves do).
      */
     @Transactional
     public int renderAndStore(UUID ebookId, int maxPages) {
@@ -105,7 +107,8 @@ public class PdfGenerationService {
 
         if (passes > 0) {
             chapterRepository.saveAll(chapters); // persist the trimmed manuscript
-            log.info("Trimmed ebook {} to {} pages in {} pass(es) to fit the credit ceiling {}",
+            ebook.setCreditLimited(true); // surfaced to the user, never silent
+            log.warn("Trimmed ebook {} to {} pages in {} pass(es) to fit the credit ceiling {}",
                     ebookId, pageCount, passes, maxPages);
         }
 

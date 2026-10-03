@@ -142,7 +142,8 @@ class KnowledgeChapterContextTest {
 
     @Test
     void blueprintChaptersAreSizedByTheirKnowledge() {
-        var planned = KnowledgeBookPlanner.distribute(List.of(intro, jwt, products), 26);
+        var planned = KnowledgeBookPlanner.size(List.of(intro, jwt, products),
+                com.ebookwriter.SaaS.entity.BookDepth.STANDARD, 26);
         assertEquals(List.of("What We're Building", "JWT Security", "Products"), planned.stream().map(p -> p.title()).toList());
         assertTrue(planned.get(1).approxPages() > planned.get(0).approxPages(), "the knowledge-rich chapter gets more room");
         assertTrue(planned.stream().allMatch(p -> p.approxPages() >= 1));

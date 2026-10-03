@@ -51,7 +51,22 @@ public class Ebook {
     @Column(columnDefinition = "text")
     private String style;
 
+    /**
+     * Legacy column: the page count older clients asked for. The page count is no
+     * longer an input to generation (see {@link #depth}); the column is kept only
+     * because existing databases have it as {@code NOT NULL}. Always 0 for new books.
+     */
+    @Deprecated
     private int approxPageCount;
+
+    /**
+     * How deep the book should go — the user's control over scope. Scrivetta
+     * derives the length from the depth plus the topic and materials; the page
+     * count is a result, never an input. Null (older books) means
+     * {@link BookDepth#STANDARD}.
+     */
+    @Enumerated(EnumType.STRING)
+    private BookDepth depth;
 
     private String language;
 
@@ -86,19 +101,46 @@ public class Ebook {
      * Credits the user ultimately pays for this generation. Starts equal to the
      * reserved {@link #pageBudget} (the up-front hold) and is trued up to the
      * real rendered page count once generation finishes — because 1 credit =
-     * 1 <em>final</em> page, this is the actual page count, not the target.
+     * 1 <em>final</em> page, this is the actual page count, not the estimate.
      */
     private int creditsCharged;
 
     /**
      * The generation ceiling reserved as the up-front hold: the most pages this
      * book may render and the most credits it may cost. Computed as
-     * {@code min(targetPages, balance) + maxOverdraft}, so it lets the book run a
-     * little past the target (the allowed overdraft) while guaranteeing the
-     * balance can never drop below {@code -maxOverdraft}. NOT the target — the
-     * user's requested {@link #approxPageCount} is only the expected length.
+     * {@code min(balance, maxGenerationBudget) + maxOverdraft}: a safety ceiling
+     * on what the user can pay for, guaranteeing the balance can never drop below
+     * {@code -maxOverdraft}. Never a length target — the book is as long as its
+     * content.
      */
     private int pageBudget;
+
+    /**
+     * Scrivetta's length estimate (whole-book pages) taken when generation
+     * started — what the user was shown and what the start was gated on. An
+     * estimate, never a target: generation follows the content. Null until started.
+     */
+    private Integer estimatedPagesLow;
+
+    /** High end of {@link #estimatedPagesLow}'s range. */
+    private Integer estimatedPagesHigh;
+
+    /**
+     * Whole-book pages of the actual plan (the chapters' planned sizes plus front
+     * matter), set once the book is planned. Still a plan, not a promise: the
+     * real length is {@link #actualPageCount}. Null until planned.
+     */
+    private Integer plannedPages;
+
+    /**
+     * True when the book ran past what the user's credits cover and was brought
+     * to its planned ending early (later chapters deferred). Surfaced to the user;
+     * never silent. The start gate makes this rare: it only happens when the
+     * writing ran far beyond the estimate.
+     */
+    @Builder.Default
+    @Column(nullable = false, columnDefinition = "boolean not null default false")
+    private boolean creditLimited = false;
 
     /** Real number of pages in the rendered PDF; set once rendering completes. This is what the user is billed. */
     private int actualPageCount;
@@ -177,6 +219,11 @@ public class Ebook {
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    /** The selected depth ({@link BookDepth#STANDARD} for books that predate depth). */
+    public BookDepth effectiveDepth() {
+        return BookDepth.orDefault(depth);
+    }
 
     /** True when this book is written from the author's knowledge + blueprint. */
     public boolean isKnowledgeBased() {

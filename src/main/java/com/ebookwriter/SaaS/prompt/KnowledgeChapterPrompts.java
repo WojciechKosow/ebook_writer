@@ -138,7 +138,7 @@ public final class KnowledgeChapterPrompts {
                 ctx.gaps().isBlank() ? "(nothing open for this chapter)" : ctx.gaps(),
                 imagesSection,
                 ChapterPrompts.positionSection(directive, position, totalChapters),
-                ChapterPrompts.lengthGuidance(directive).strip());
+                ChapterPrompts.lengthGuidance(directive, e.getDepth()).strip());
     }
 
     /**

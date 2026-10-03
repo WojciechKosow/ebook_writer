@@ -230,7 +230,7 @@ public class KnowledgeProcessingService {
 
     static BookKnowledgeData.BookInfo bookInfo(Ebook e) {
         return new BookKnowledgeData.BookInfo(e.getTopic(), e.getLanguage(), e.getTargetAudience(), e.getBookGoal(),
-                e.getStyle(), e.getApproxPageCount() > 0 ? e.getApproxPageCount() : null);
+                e.getStyle(), e.effectiveDepth().name());
     }
 
     private static List<NormalizedDocument> readDocuments(KnowledgeSource s) {

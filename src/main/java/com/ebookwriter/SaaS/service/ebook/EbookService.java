@@ -17,8 +17,10 @@ import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookPdfRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.request.EbookRequest;
-import com.ebookwriter.SaaS.config.properties.CreditProperties;
+import com.ebookwriter.SaaS.dto.BookScopeResponse;
 import com.ebookwriter.SaaS.dto.GenerationBudgetResponse;
+import com.ebookwriter.SaaS.dto.ScopeEstimateDTO;
+import com.ebookwriter.SaaS.entity.BookDepth;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
 import lombok.RequiredArgsConstructor;
@@ -50,29 +52,25 @@ public class EbookService {
     private final PdfGenerationService pdfGenerationService;
     private final AssetUsageService assetUsageService;
     private final CreditService creditService;
-    private final CreditProperties creditProperties;
+    private final ScopeEstimationService scopeEstimationService;
     private final BookBlueprintService blueprintService;
 
     /**
      * Create the ebook as a {@link EbookStatus#DRAFT}: the row exists so the user
-     * can upload assets to it, but no credits are held and nothing is generated
-     * yet. Call {@link #start(UUID, UUID)} to reserve credits and begin.
+     * can upload materials and assets to it, but no credits are held and nothing is
+     * generated yet. Call {@link #start(UUID, UUID)} to reserve credits and begin.
      *
-     * <p>The user's selected target length (~20/30/50/75/100 pages) is stored in
-     * {@code approxPageCount}. It is a <b>soft content budget</b>: it shapes the
-     * plan so the book lands around that size, and is never a hard page limit.
-     * When no target is selected the standard target is used.
+     * <p>The user chooses a {@link BookDepth}, never a page count: Scrivetta
+     * determines the length from the topic, the materials and the depth.
      */
     public Ebook createDraft(User user, EbookRequest request) {
-        int target = resolveTargetPages(request.getTargetPages());
-
         Ebook ebook = Ebook.builder()
                 .user(user)
                 .topic(request.getTopic())
                 .targetAudience(request.getTargetAudience())
                 .bookGoal(request.getBookGoal())
                 .style(request.getStyle())
-                .approxPageCount(target)
+                .depth(BookDepth.orDefault(request.getDepth()))
                 .language(blankToEnglish(request.getLanguage()))
                 .additionalInstructions(request.getAdditionalInstructions())
                 .sourceMaterial(request.getSourceMaterial())
@@ -85,27 +83,56 @@ public class EbookService {
     }
 
     /**
-     * Normalise a selected target length: absent → the standard target; out of
-     * range → clamped to {@code [ContentBudget.MIN_TARGET_PAGES, maxTargetPages]}.
-     * Clamped rather than rejected, because the target is only a planning signal.
+     * Change a draft's depth. The estimate (and the credits needed) follow; an
+     * earlier plan that bounced for lack of credits no longer applies.
      */
-    int resolveTargetPages(Integer requested) {
-        int max = Math.max(ContentBudget.MIN_TARGET_PAGES, creditProperties.getMaxTargetPages());
-        int fallback = Math.max(ContentBudget.MIN_TARGET_PAGES, creditProperties.getStandardTargetPages());
-        if (requested == null || requested <= 0) {
-            return Math.min(fallback, max);
+    public BookScopeResponse updateDepth(UUID ebookId, UUID userId, BookDepth depth) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        if (ebook.getStatus() != EbookStatus.DRAFT) {
+            throw new IllegalStateException("The depth can only be changed before generation starts.");
         }
-        return Math.max(ContentBudget.MIN_TARGET_PAGES, Math.min(requested, max));
+        ebook.setDepth(BookDepth.orDefault(depth));
+        ebook.setPlannedPages(null);
+        ebook.setErrorMessage(null);
+        ebookRepository.save(ebook);
+        return scope(ebook, creditService.getBalance(userId));
     }
 
     /**
-     * The balance needed to start a book with this target: the standard minimum
-     * budget, but never more than the target itself — a user who asks for a short
-     * ~20-page book only needs enough credits for that book.
+     * The draft's scope: Scrivetta's length and credit estimate for the selected
+     * depth (and the other depths), from the brief, the materials and the
+     * blueprint, plus whether the user can start.
      */
-    int minimumToStart(int targetPages) {
-        int minBudget = Math.max(1, creditProperties.getMinGenerationBudget());
-        return Math.max(1, Math.min(minBudget, targetPages));
+    @Transactional(readOnly = true)
+    public BookScopeResponse getScope(UUID ebookId, UUID userId) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        return scope(ebook, creditService.getBalance(userId));
+    }
+
+    private BookScopeResponse scope(Ebook ebook, int balance) {
+        List<ScopeEstimate> all = scopeEstimationService.estimateAllDepths(ebook);
+        ScopeEstimate selected = all.stream().filter(e -> e.depth() == ebook.effectiveDepth()).findFirst()
+                .orElseGet(() -> scopeEstimationService.estimate(ebook));
+        int required = requiredCredits(ebook, selected);
+        return new BookScopeResponse(ebook.effectiveDepth(), ScopeEstimateDTO.from(selected),
+                all.stream().map(ScopeEstimateDTO::from).toList(), balance, required, balance >= required,
+                ebook.getStatus() == EbookStatus.DRAFT ? ebook.getPlannedPages() : null,
+                scopeEstimationService.maxPages());
+    }
+
+    /**
+     * Credits needed to start: enough for the high end of the estimate, so the
+     * expected book is never wound down early for lack of credits — or, if an
+     * earlier attempt already planned the book larger than that, the plan's size.
+     */
+    static int requiredCredits(Ebook ebook, ScopeEstimate estimate) {
+        int required = estimate.requiredCredits();
+        if (ebook.getStatus() == EbookStatus.DRAFT && ebook.getPlannedPages() != null) {
+            required = Math.max(required, ebook.getPlannedPages());
+        }
+        return Math.max(1, required);
     }
 
     /**
@@ -113,27 +140,24 @@ public class EbookService {
      * background. Only a {@link EbookStatus#DRAFT} may be started; starting an
      * already-started book is a {@link IllegalStateException} (→ 409).
      *
-     * <p>Billing is <b>final-page-count based</b>: 1 credit = 1 rendered page, and
-     * the length is a <em>result</em> of generation, never a size the user ordered.
-     * Credits are the generation <b>budget</b>: a user must hold at least the
-     * standard {@code minGenerationBudget} (e.g. 30 credits) — or the selected
-     * target, if that is smaller — to begin. This is the smallest budget needed to
-     * produce a complete book at that scale, not a promise of that many pages. We reserve a ceiling — {@code min(target,
-     * balance) + maxOverdraft} — as an up-front hold (see
-     * {@link CreditService#reserveGenerationHold}). That ceiling both caps how many
-     * pages may be rendered and guarantees the balance can never fall below
-     * {@code -maxOverdraft}, while still allowing the small overdraft that lets a
-     * book wind down to a natural ending. Once the PDF is rendered the hold is
-     * trued up to the real page count and the unused credits are returned (see
-     * {@link EbookGenerationService}), so a book that naturally finishes early
-     * leaves the rest of the budget on the account.
+     * <p><b>Scope first, then credits.</b> Scrivetta estimates the book's length
+     * from the selected depth, the brief and the materials ({@link ScopeEstimationService}).
+     * The user must hold enough credits for the <em>high end</em> of that estimate
+     * (1 credit ≈ 1 page) — otherwise this throws {@link InsufficientCreditsException}
+     * (→ 402) explaining how many credits the book needs. A book is never planned
+     * smaller to fit the balance: the user is told instead.
+     *
+     * <p><b>Billing is final-page-count based</b>: we reserve a ceiling —
+     * {@code min(balance, maxGenerationBudget) + maxOverdraft} — as an up-front hold
+     * (see {@link CreditService#reserveGenerationHold}); once the PDF is rendered the
+     * hold is trued up to the real page count and the unused credits are returned
+     * (see {@link EbookGenerationService}).
      *
      * <p>The DRAFT → PENDING transition is claimed atomically, so concurrent or
      * duplicated start requests (double click, retry, refresh) can never both
-     * reserve a hold. Throws {@link InsufficientCreditsException} (→ 402) when the
-     * balance is below the standard generation budget; if a concurrent request left
-     * too little, the ebook is returned to a DRAFT (its uploaded assets are kept)
-     * so the user can top up and retry.
+     * reserve a hold. If a concurrent request left too little, the ebook is
+     * returned to a DRAFT (its uploaded assets are kept) so the user can top up
+     * and retry.
      */
     public Ebook start(UUID ebookId, UUID userId) {
         Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
@@ -151,15 +175,15 @@ public class EbookService {
             throw new IllegalStateException(readiness.blockedReason());
         }
 
-        int minBudget = minimumToStart(ebook.getApproxPageCount() > 0
-                ? ebook.getApproxPageCount() : resolveTargetPages(null));
+        // Analyse the scope before anything is reserved: depth + brief + materials.
+        ScopeEstimate estimate = scopeEstimationService.estimate(ebook);
+        int required = requiredCredits(ebook, estimate);
 
-        // Friendly early gate before we mutate any state: a user below the standard
-        // generation budget cannot start. The authoritative, race-safe check is in
-        // reserveGenerationHold below (same wallet lock as the reservation).
+        // Friendly early gate before we mutate any state. The authoritative,
+        // race-safe check is in reserveGenerationHold below (same wallet lock).
         int balance = creditService.getBalance(userId);
-        if (balance < minBudget) {
-            throw new InsufficientCreditsException(minBudget, balance);
+        if (balance < required) {
+            throw notEnoughCredits(ebook, estimate, required, balance);
         }
 
         // Atomic claim: exactly one caller wins DRAFT -> PENDING, so a retried or
@@ -170,31 +194,28 @@ public class EbookService {
         }
         ebook.setStatus(EbookStatus.PENDING);
 
-        // Two separate concepts: the TARGET (approxPageCount) shapes the plan; the
-        // CEILING reserved here is what the user may actually generate. Reserve
-        // against the absolute safety cap so the hold becomes
-        // min(balance, maxGenerationBudget) + overdraft: a book that genuinely needs
-        // to run past its soft target may continue while credits allow, and is only
-        // wound down to a natural ending when it approaches the user's real budget.
-        // Unused credits are refunded after render.
-        int targetPages = Math.max(1, creditProperties.getMaxGenerationBudget());
-
-        // Reserve the overdraft-aware hold under the wallet lock, gated on the
-        // standard generation budget.
+        // The hold is a credit ceiling, not a length: min(balance, safety cap) +
+        // overdraft. It is trued up to the real page count after rendering.
         int pageBudget;
         try {
-            pageBudget = creditService.reserveGenerationHold(userId, ebookId, targetPages, minBudget);
+            pageBudget = creditService.reserveGenerationHold(userId, ebookId,
+                    scopeEstimationService.maxPages(), required);
         } catch (InsufficientCreditsException e) {
             // Release the claim so the user can top up and retry (assets kept).
             ebook.setStatus(EbookStatus.DRAFT);
             ebook.setPageBudget(0);
             ebook.setCreditsCharged(0);
             ebookRepository.save(ebook);
-            throw e;
+            throw notEnoughCredits(ebook, estimate, required, e.getAvailable());
         }
 
         ebook.setPageBudget(pageBudget);
         ebook.setCreditsCharged(pageBudget);
+        ebook.setCreditsRefunded(false);
+        ebook.setErrorMessage(null);
+        ebook.setEstimatedPagesLow(estimate.pagesLow());
+        ebook.setEstimatedPagesHigh(estimate.pagesHigh());
+        ebook.setPlannedPages(null);
         ebook.setGenerationMode(readiness.mode());
         ebook = ebookRepository.save(ebook);
 
@@ -203,12 +224,24 @@ public class EbookService {
         return ebook;
     }
 
+    private static InsufficientCreditsException notEnoughCredits(Ebook ebook, ScopeEstimate estimate,
+                                                                 int required, int balance) {
+        String why = ebook.getPlannedPages() != null && ebook.getPlannedPages() >= required
+                ? "Scrivetta planned this book at about %d pages".formatted(ebook.getPlannedPages())
+                : "At %s depth, Scrivetta estimates this book at about %d–%d pages"
+                        .formatted(estimate.depth().label(), estimate.pagesLow(), estimate.pagesHigh());
+        return new InsufficientCreditsException(
+                "%s, so it needs up to %d credits to generate — you have %d. Add credits or choose a lighter depth."
+                        .formatted(why, required, balance), required, balance);
+    }
+
     /**
      * Resume a generation that FAILED part-way (e.g. one chapter could not be
      * written): chapters already written are kept and only the missing ones are
      * written, then the book is finished as usual. The failed run refunded its
-     * whole hold, so a new hold is reserved exactly as {@link #start} does (same
-     * minimum, same ceiling, same overdraft rule) and trued up after rendering.
+     * whole hold, so a new hold is reserved like {@link #start} does (the minimum is
+     * the planned book's size; same ceiling and overdraft rule) and trued up after
+     * rendering.
      * Throws {@link IllegalStateException} (→ 409) when the book is not resumable.
      */
     public Ebook resume(UUID ebookId, UUID userId) {
@@ -220,10 +253,13 @@ public class EbookService {
         if (ebook.isKnowledgeBased() && blueprintService.getGenerationInput(ebookId).isEmpty()) {
             throw new IllegalStateException("The book's knowledge or blueprint changed; it can't be resumed.");
         }
-        int minBudget = minimumToStart(ebook.getApproxPageCount() > 0 ? ebook.getApproxPageCount() : resolveTargetPages(null));
+        // The whole book is billed at the end, so the new hold must cover the plan.
+        int required = Math.max(1, ebook.getPlannedPages() != null ? ebook.getPlannedPages()
+                : ebook.getEstimatedPagesHigh() != null ? ebook.getEstimatedPagesHigh() : 1);
         int balance = creditService.getBalance(userId);
-        if (balance < minBudget) {
-            throw new InsufficientCreditsException(minBudget, balance);
+        if (balance < required) {
+            throw new InsufficientCreditsException(("This book is planned at about %d pages, so resuming needs "
+                    + "up to %d credits — you have %d.").formatted(required, required, balance), required, balance);
         }
         if (ebookRepository.claimStatus(ebookId, EbookStatus.FAILED, EbookStatus.PENDING) == 0) {
             throw new IllegalStateException("This ebook cannot be resumed.");
@@ -231,7 +267,7 @@ public class EbookService {
         int pageBudget;
         try {
             pageBudget = creditService.reserveGenerationHold(userId, ebookId,
-                    Math.max(1, creditProperties.getMaxGenerationBudget()), minBudget);
+                    scopeEstimationService.maxPages(), required);
         } catch (InsufficientCreditsException e) {
             ebookRepository.claimStatus(ebookId, EbookStatus.PENDING, EbookStatus.FAILED);
             throw e;
@@ -268,27 +304,21 @@ public class EbookService {
     }
 
     /**
-     * Describe the generation budget for the creation UI: how many credits are
-     * needed to start, the orientational page range for a standard ebook, the
-     * user's current balance, and whether they can generate now. The frontend uses
-     * this to show "Estimated usage ~20–30 credits", "Your balance: N credits" and
-     * either "Enough credits to generate this ebook" or "You need at least N
-     * credits" — communicating a budget, never a guaranteed page count.
+     * What the creation form shows before a draft exists: each depth with a
+     * preliminary, brief-based length and credit estimate, and the balance. The
+     * estimate is refined once materials are added ({@link #getScope}).
+     *
+     * @param briefChars  length of the brief typed so far (topic, goal, instructions)
+     * @param sourceChars length of any pasted source text
      */
     @Transactional(readOnly = true)
-    public GenerationBudgetResponse getGenerationBudget(UUID userId) {
+    public GenerationBudgetResponse getGenerationBudget(UUID userId, int briefChars, long sourceChars) {
         int balance = creditService.getBalance(userId);
-        int low = Math.max(1, creditProperties.getStandardTargetMinPages());
-        int high = Math.max(low, creditProperties.getStandardTargetPages());
-        int defaultTarget = resolveTargetPages(null);
-        int minCredits = minimumToStart(defaultTarget);
-        int maxTarget = Math.max(ContentBudget.MIN_TARGET_PAGES, creditProperties.getMaxTargetPages());
-        int affordable = Math.max(0, Math.min(balance, creditProperties.getMaxGenerationBudget()));
-        List<Integer> options = GenerationBudgetResponse.TARGET_OPTIONS.stream()
-                .filter(t -> t <= maxTarget)
+        List<ScopeEstimateDTO> options = java.util.Arrays.stream(BookDepth.values())
+                .map(d -> ScopeEstimateDTO.from(scopeEstimationService.estimateBrief(d,
+                        Math.max(0, briefChars), Math.max(0, sourceChars))))
                 .toList();
-        return new GenerationBudgetResponse(minCredits, low, high, balance, balance >= minCredits,
-                options, defaultTarget, maxTarget, affordable);
+        return new GenerationBudgetResponse(balance, BookDepth.STANDARD, options, scopeEstimationService.maxPages());
     }
 
     @Transactional(readOnly = true)

@@ -153,7 +153,7 @@ class EbookBillingScenarioTest {
         return ebookRepository.save(Ebook.builder()
                 .user(user)
                 .topic("Topic")
-                .approxPageCount(target)
+                .depth(com.ebookwriter.SaaS.entity.BookDepth.STANDARD)
                 .status(EbookStatus.DRAFT)
                 .build());
     }

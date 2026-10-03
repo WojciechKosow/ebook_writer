@@ -81,6 +81,8 @@ public final class EditingPrompts {
 
                 CHAPTER %d: %s
                 Intended scope: %s
+                Book depth: %s Keep the chapter at this depth — remove filler and
+                repetition, but never shorten substantive content to make the book shorter.
 
                 %s
                 CURRENT CHAPTER TEXT
@@ -95,6 +97,7 @@ public final class EditingPrompts {
                 chapter.getChapterNumber(),
                 nz(chapter.getTitle()),
                 nz(chapter.getDescription()),
+                e.effectiveDepth().label() + ".",
                 endingSection + (knowledgeAddendum == null ? "" : knowledgeAddendum),
                 nz(chapter.getContent())
         );

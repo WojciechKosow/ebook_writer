@@ -1,5 +1,6 @@
 package com.ebookwriter.SaaS.prompt;
 
+import com.ebookwriter.SaaS.entity.BookDepth;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.service.ebook.ChapterDirective;
@@ -130,7 +131,7 @@ public final class ChapterPrompts {
                 : "\nIMAGES AVAILABLE FOR THIS CHAPTER (use where they fit, or not at all)\n"
                         + availableImages.strip() + "\n";
         String positionSection = positionSection(directive, position, totalChapters);
-        String lengthGuidance = lengthGuidance(directive);
+        String lengthGuidance = lengthGuidance(directive, e.getDepth());
         return """
                 BOOK BRIEF
                 Topic: %s
@@ -194,7 +195,7 @@ public final class ChapterPrompts {
                 positionSection += """
 
                         SCOPE OF THIS EDITION
-                        To keep this book complete within its length, the following planned
+                        To keep this book complete within the available credits, the following planned
                         chapters are NOT part of this book: %s.
                         Do not mention, promise or allude to them, and do not say the book
                         was shortened. Synthesise what the book HAS established, make the
@@ -215,21 +216,28 @@ public final class ChapterPrompts {
         return positionSection;
     }
 
-    /** The length guidance line (shared by the legacy and knowledge-based writers). */
-    public static String lengthGuidance(ChapterDirective directive) {
-        String lengthGuidance = directive.tight()
+    /**
+     * The depth + length guidance (shared by the legacy and knowledge-based
+     * writers). Depth decides what the chapter covers; the word figure is only the
+     * room the plan gave it — never a target to hit or a reason to cut content.
+     * The one real limit is the user's credits, and only when they run short.
+     */
+    public static String lengthGuidance(ChapterDirective directive, BookDepth depth) {
+        String length = directive.tight()
                 ? """
-                  Length: about %d words. The book is close to its length budget, so
-                  treat this as a real limit — plan the chapter to fit, keep the most
-                  valuable material, and still finish every section, exercise and
-                  sentence you start. Never stop mid-thought.""".formatted(directive.targetWords())
+                  Length: about %d words. The credits available for this book are
+                  nearly used up, so treat this as a real limit — plan the chapter to
+                  fit, keep the most valuable material, and still finish every section,
+                  exercise and sentence you start. Never stop mid-thought, and never
+                  mention this limit to the reader.""".formatted(directive.targetWords())
                 : """
-                  Length: aim for about %d words. This is a guide, not a hard stop —
-                  finish every thought, section and exercise naturally even if that
-                  runs a little over, and do not pad to reach the number. Do not
-                  expand far beyond it either: the book is planned to this scale."""
+                  Planned size: about %d words — the room this chapter was given when the
+                  book was planned. It is orientation, not a target or a limit: cover
+                  this chapter's scope completely at the book's depth and let the length
+                  follow the content. Do not pad to reach the number, and do not drop
+                  important material to stay under it."""
                         .formatted(directive.targetWords());
-        return lengthGuidance;
+        return BookDepth.orDefault(depth).writerGuidance() + "\n" + length;
     }
 
     private static String nz(String s) {

@@ -48,6 +48,8 @@ final class FakeClaude {
 
     final List<Call> calls = new CopyOnWriteArrayList<>();
     volatile Predicate<Call> failWhen = c -> false;
+    /** What the legacy planner answers; a test may swap in a larger plan. */
+    volatile String legacyPlan = LEGACY_PLAN;
 
     String respond(String system, String user) {
         Call call = new Call(system, user);
@@ -57,7 +59,7 @@ final class FakeClaude {
         }
         if (call.isKnowledgeChapter()) return knowledgeChapter(call);
         if (call.isLegacyChapter()) return legacyChapter(call);
-        if (call.isLegacyPlanning()) return LEGACY_PLAN;
+        if (call.isLegacyPlanning()) return legacyPlan;
         if (call.isEditing()) return between(user, "CURRENT CHAPTER TEXT\n", "\n\nReturn the improved chapter now.");
         if (call.isImagePlanning()) return imagePlan(user);
         return "{}";

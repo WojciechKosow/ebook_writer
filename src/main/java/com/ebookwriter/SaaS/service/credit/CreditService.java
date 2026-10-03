@@ -83,17 +83,17 @@ public class CreditService {
     /**
      * Reserve the up-front credit hold for a generation, with overdraft.
      *
-     * <p>The requested page count is only a <b>target</b>: the model can't
-     * guarantee an exact length, and 1 credit = 1 <em>final</em> page, so the real
-     * cost is only known once the PDF is rendered. We therefore reserve a
-     * <b>ceiling</b> — the most pages this book may render and the most credits it
-     * may cost — computed as {@code min(targetPages, balance) + maxOverdraft}:
+     * <p>The length of a book is a result of generation: 1 credit = 1 <em>final</em>
+     * page, so the real cost is only known once the PDF is rendered. We therefore
+     * reserve a <b>ceiling</b> — the most pages this book may render and the most
+     * credits it may cost — computed as {@code min(ceilingPages, balance) + maxOverdraft}
+     * (the ebook flow passes the per-book safety maximum as {@code ceilingPages}):
      * <ul>
      *   <li>it lets the book run up to {@code maxOverdraft} pages past what the
      *       user can strictly afford (the allowed overdraft), so a natural ending
-     *       a little over target is honoured rather than cut short;</li>
-     *   <li>it is target-bounded, so a large balance is not drained by one book
-     *       (a user can still run several generations at once);</li>
+     *       a little over the estimate is honoured rather than cut short;</li>
+     *   <li>it is bounded by {@code ceilingPages}, so a large balance is never
+     *       reserved without limit by one book;</li>
      *   <li>and it can never drive the balance below {@code -maxOverdraft}: since
      *       the reserved amount never exceeds {@code balance + maxOverdraft}, the
      *       post-hold balance is always {@code >= -maxOverdraft}.</li>
@@ -108,8 +108,8 @@ public class CreditService {
      * @throws InsufficientCreditsException if the balance is below {@link #MIN_BALANCE_TO_START}
      */
     @Transactional
-    public int reserveGenerationHold(UUID userId, UUID ebookId, int targetPages) {
-        return reserveGenerationHold(userId, ebookId, targetPages, MIN_BALANCE_TO_START);
+    public int reserveGenerationHold(UUID userId, UUID ebookId, int ceilingPages) {
+        return reserveGenerationHold(userId, ebookId, ceilingPages, MIN_BALANCE_TO_START);
     }
 
     /**
@@ -125,8 +125,8 @@ public class CreditService {
      * @throws InsufficientCreditsException if the balance is below {@code minBalanceToStart}
      */
     @Transactional
-    public int reserveGenerationHold(UUID userId, UUID ebookId, int targetPages, int minBalanceToStart) {
-        int target = Math.max(1, targetPages);
+    public int reserveGenerationHold(UUID userId, UUID ebookId, int ceilingPages, int minBalanceToStart) {
+        int cap = Math.max(1, ceilingPages);
         int minToStart = Math.max(MIN_BALANCE_TO_START, minBalanceToStart);
         int maxOverdraft = Math.max(0, creditProperties.getMaxOverdraft());
         CreditBalance wallet = lockOrCreateWallet(userId);
@@ -136,16 +136,16 @@ public class CreditService {
             throw new InsufficientCreditsException(minToStart, balance);
         }
 
-        // Ceiling = min(target, balance) + overdraft. Guarantees balance - hold >=
+        // Ceiling = min(cap, balance) + overdraft. Guarantees balance - hold >=
         // -maxOverdraft, so the floor is never breached however long the book runs.
-        int hold = Math.min(target, balance) + maxOverdraft;
+        int hold = Math.min(cap, balance) + maxOverdraft;
         wallet.setBalance(balance - hold);
         balanceRepository.save(wallet);
         writeLedger(userId, CreditTransactionType.GENERATION, -hold, wallet.getBalance(), ebookId, null, null,
-                "Ebook generation hold (target " + target + " pages, ceiling " + hold
+                "Ebook generation hold (safety cap " + cap + " pages, ceiling " + hold
                         + ", overdraft " + maxOverdraft + ")");
-        log.info("Reserved generation hold of {} credits for user {} (target {}, balance {} -> {})",
-                hold, userId, target, balance, wallet.getBalance());
+        log.info("Reserved generation hold of {} credits for user {} (cap {}, balance {} -> {})",
+                hold, userId, cap, balance, wallet.getBalance());
         return hold;
     }
 

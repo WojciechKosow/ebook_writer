@@ -13,11 +13,11 @@ import java.util.Set;
  * can the rest of the planned book still be written — and if not, how does it end
  * naturally?</em>
  *
- * <p>The selected target length only shaped the plan. Here the only thing that
+ * <p>The depth and the content shaped the plan. Here the only thing that
  * matters is the credit ceiling, and it acts as <b>permission</b>, not as a goal:
  * <ul>
  *   <li><b>Enough credits</b> — every remaining chapter is written at its planned
- *       depth. A chapter that ran long (the book is now past its soft target) is
+ *       depth. A chapter that ran long (the book is now past its estimate) is
  *       never cut; generation simply continues while credits allow.</li>
  *   <li><b>Slightly short</b> — the remaining chapters are written a little
  *       tighter (never below {@link #MIN_COMPRESSION} of their plan) so the whole

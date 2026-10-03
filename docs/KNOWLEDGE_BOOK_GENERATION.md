@@ -25,9 +25,13 @@ There is no Claude planning call:
 
 - Each blueprint chapter becomes an `EbookChapter` with `blueprintChapterId`.
 - The scope is the chapter's purpose plus its topics.
-- Page sizes are spread over chapters by how much knowledge each one carries.
-- The existing `clampToBudget` enforces the credit ceiling and keeps the final
-  chapter.
+- Each chapter is sized by how much knowledge it carries (topics, key points,
+  knowledge and source references) at the book's depth (`ScopeEstimator.chapterPages`),
+  scaled toward the scope estimate; the sum is the planned length. There is no
+  page target.
+- If the credits don't cover the planned length, the book returns to `DRAFT`
+  (hold refunded) instead of losing chapters; only the per-book safety maximum
+  can shrink a plan (`clampToBudget` keeps the final chapter).
 
 ## Per-chapter context (`KnowledgeChapterContext`)
 
@@ -75,7 +79,7 @@ The editorial pass and image planning get the project context.
 - Failed chapters get one more attempt at the end.
 - If a chapter still fails, the book is marked `FAILED` and the hold is
   refunded. Written chapters are kept and `resumable=true`.
-- `POST /api/ebooks/{id}/resume` reserves a new hold (same rules as `start`),
+- `POST /api/ebooks/{id}/resume` reserves a new hold (it needs credits for the planned length),
   writes only the missing chapters, and finishes and bills the book.
 
 ## Configuration
