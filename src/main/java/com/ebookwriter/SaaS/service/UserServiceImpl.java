@@ -134,7 +134,7 @@ public class UserServiceImpl implements UserService {
                                     .userId(user.getId())
                                     .balance(0)
                                     .build()));
-            creditBalance.setBalance(20);
+            creditBalance.setBalance(1000);
             creditBalanceRepository.save(creditBalance);
         }
 
