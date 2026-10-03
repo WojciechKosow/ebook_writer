@@ -57,6 +57,10 @@ dependencies {
 	implementation 'org.jsoup:jsoup:1.18.1'
 	implementation 'com.openhtmltopdf:openhtmltopdf-pdfbox:1.0.10'
 
+	// Knowledge ingestion: RAR archives (RAR4 + RAR5), pure Java — no native
+	// code or unrar binary in the image. ZIP uses java.util.zip.
+	implementation 'com.github.junrar:junrar:8.1.1'
+
 	// Payments.
 	implementation 'com.stripe:stripe-java:33.1.1'
 

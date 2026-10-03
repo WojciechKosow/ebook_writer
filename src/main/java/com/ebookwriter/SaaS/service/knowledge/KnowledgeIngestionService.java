@@ -47,16 +47,16 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class KnowledgeIngestionService {
 
-    public static final List<String> ACCEPTED_FORMATS = List.of("zip", "pdf", "docx", "txt", "md");
+    public static final List<String> ACCEPTED_FORMATS = List.of("zip", "rar", "pdf", "docx", "txt", "md");
 
     private final EbookRepository ebookRepository;
     private final KnowledgeSourceRepository sourceRepository;
     private final BookKnowledgeRepository knowledgeRepository;
-    private final ZipKnowledgeExtractor zipExtractor;
+    private final ArchiveKnowledgeExtractor archiveExtractor;
     private final DocumentTextExtractor documentExtractor;
     private final KnowledgeProperties limits;
 
-    /** Upload one file (ZIP / PDF / DOCX / TXT / MD). */
+    /** Upload one file (ZIP / RAR / PDF / DOCX / TXT / MD). */
     public KnowledgeSourceDTO addFile(UUID ebookId, UUID userId, MultipartFile file) {
         Ebook ebook = requireEditableDraft(ebookId, userId);
         if (file == null || file.isEmpty()) {
@@ -70,7 +70,7 @@ public class KnowledgeIngestionService {
         KnowledgeSourceType type = KnowledgeSourceType.fromFilename(filename);
         if (type == null) {
             throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
-                    "Unsupported file type. Upload ZIP, PDF, DOCX, TXT or MD files, or paste your notes.");
+                    "Unsupported file type. Upload ZIP, RAR, PDF, DOCX, TXT or MD files, or paste your notes.");
         }
         requireRoomForSource(ebookId);
 
@@ -171,8 +171,9 @@ public class KnowledgeIngestionService {
 
     ExtractionResult extract(KnowledgeSourceType type, String filename, byte[] bytes) {
         try {
-            if (type == KnowledgeSourceType.ZIP) {
-                return zipExtractor.extract(filename, bytes);
+            if (archiveExtractor.supports(type)) {
+                // ZIP and RAR share one extraction path into the same documents.
+                return archiveExtractor.extract(filename, bytes);
             }
             NormalizedDocument doc = documentExtractor.extract(filename, bytes, NormalizedDocument.Kind.DOCUMENT);
             return new ExtractionResult(List.of(doc), List.of(), null);
@@ -244,7 +245,7 @@ public class KnowledgeIngestionService {
     private void requireRoomForSource(UUID ebookId) {
         if (sourceRepository.countByEbookId(ebookId) >= limits.getMaxSourcesPerBook()) {
             throw new IllegalStateException("A book can hold at most " + limits.getMaxSourcesPerBook()
-                    + " sources. Combine files into a ZIP or remove one first.");
+                    + " sources. Combine files into a ZIP or RAR archive, or remove one first.");
         }
     }
 

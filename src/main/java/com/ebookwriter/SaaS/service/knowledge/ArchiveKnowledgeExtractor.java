@@ -3,29 +3,28 @@ package com.ebookwriter.SaaS.service.knowledge;
 import com.ebookwriter.SaaS.config.properties.KnowledgeProperties;
 import com.ebookwriter.SaaS.dto.knowledge.NormalizedDocument;
 import com.ebookwriter.SaaS.dto.knowledge.SkippedFile;
+import com.ebookwriter.SaaS.entity.KnowledgeSourceType;
+import com.ebookwriter.SaaS.service.knowledge.archive.ArchiveEntry;
+import com.ebookwriter.SaaS.service.knowledge.archive.ArchiveReadException;
+import com.ebookwriter.SaaS.service.knowledge.archive.ArchiveReader;
+import com.ebookwriter.SaaS.service.knowledge.archive.OpenedArchive;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipException;
-import java.util.zip.ZipFile;
 
 /**
- * Safely unpacks an uploaded ZIP into normalised documents — <b>in memory, never
- * onto disk paths taken from the archive</b> (the archive itself is spooled to a
- * private temp file so entries can be read randomly and skipped for free).
+ * Safely unpacks an uploaded archive — ZIP or RAR, treated exactly the same —
+ * into normalised documents, <b>in memory, never onto disk paths taken from the
+ * archive</b>. Each format is only an {@link ArchiveReader} (open, list, read an
+ * entry); everything below is shared, so both formats get the same limits, the
+ * same path safety and the same documents for the analysis that follows.
  *
  * <p>Universal by design: the archive may be a software project, course
  * material, documentation, notes or anything else. For each entry it:
@@ -39,89 +38,111 @@ import java.util.zip.ZipFile;
  *       folder still says something about the project).</li>
  * </ol>
  *
- * <p>Zip-bomb / abuse guards: a cap on entries, on bytes per file, on total
- * inflated bytes, on the per-entry compression ratio and on wall-clock time.
- * Nested archives are not unpacked. A bad entry is skipped, never fatal; only an
- * unreadable archive fails the source.
+ * <p>Path safety: entry names are normalised to relative display paths; names
+ * that try to leave the archive ({@code ../}) are ignored, links are never
+ * followed. Bomb / abuse guards: a cap on entries, on bytes per file, on total
+ * unpacked bytes (for solid RAR archives including what must be decoded to
+ * reach a file), on the per-entry compression ratio and on wall-clock time.
+ * Nested archives are not unpacked. A bad entry is skipped, never fatal; only
+ * an unreadable archive fails the source.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class ZipKnowledgeExtractor {
+public class ArchiveKnowledgeExtractor {
 
     static final int MAX_STRUCTURE_LINES = 1_500;
 
     private final KnowledgeProperties limits;
     private final DocumentTextExtractor documentExtractor;
+    private final List<ArchiveReader> readers;
 
+    /** Whether uploads of this type are archives handled here. */
+    public boolean supports(KnowledgeSourceType type) {
+        return type != null && readers.stream().anyMatch(r -> r.type() == type);
+    }
+
+    /**
+     * Extract an archive. The format is recognised from the content's signature
+     * (a RAR renamed to ".zip" still works), falling back to the file extension
+     * so a damaged file gets that format's own error message.
+     */
     public ExtractionResult extract(String archiveName, byte[] bytes) {
-        Path temp = null;
-        try {
-            temp = Files.createTempFile("scrivetta-knowledge-", ".zip");
-            Files.write(temp, bytes);
-            try (ZipFile zip = open(temp)) {
-                return extract(archiveName, zip);
-            }
-        } catch (ZipException e) {
-            return ExtractionResult.failed("Not a valid ZIP archive (the file may be damaged).");
-        } catch (IOException e) {
-            log.warn("ZIP extraction failed for {}: {}", archiveName, e.getMessage());
-            return ExtractionResult.failed("Could not read the ZIP archive.");
-        } finally {
-            if (temp != null) {
-                try {
-                    Files.deleteIfExists(temp);
-                } catch (IOException ignored) {
-                    // temp dir cleanup will get it
-                }
-            }
+        Optional<ArchiveReader> reader = readers.stream().filter(r -> r.matches(bytes)).findFirst()
+                .or(() -> readers.stream().filter(r -> r.type() == KnowledgeSourceType.fromFilename(archiveName)).findFirst());
+        if (reader.isEmpty()) {
+            return ExtractionResult.failed("Unsupported archive format. Upload a ZIP or RAR file.");
+        }
+        try (OpenedArchive archive = reader.get().open(bytes)) {
+            return extract(archiveName, reader.get().formatName(), archive);
+        } catch (ArchiveReadException e) {
+            return ExtractionResult.failed(e.getMessage());
+        } catch (RuntimeException e) {
+            log.warn("{} extraction failed for {}", reader.get().formatName(), archiveName, e);
+            return ExtractionResult.failed("Could not read the " + reader.get().formatName()
+                    + " archive (the file may be damaged).");
         }
     }
 
-    /** Open with UTF-8 names, falling back to the legacy CP437 encoding some tools still write. */
-    private static ZipFile open(Path file) throws IOException {
-        try {
-            ZipFile zip = new ZipFile(file.toFile(), StandardCharsets.UTF_8);
-            // Force name decoding now so a bad encoding surfaces here.
-            zip.stream().forEach(ZipEntry::getName);
-            return zip;
-        } catch (IllegalArgumentException e) {
-            return new ZipFile(file.toFile(), Charset.forName("IBM437"));
-        }
-    }
-
-    private ExtractionResult extract(String archiveName, ZipFile zip) {
+    private ExtractionResult extract(String archiveName, String format, OpenedArchive archive) throws ArchiveReadException {
         long deadline = System.currentTimeMillis() + limits.getExtractionTimeoutMs();
         List<SkippedFile> skipped = new ArrayList<>();
         List<NormalizedDocument> documents = new ArrayList<>();
+        boolean solid = archive.solid();
 
-        // 1. Collect file entries (bounded), with safe display paths.
-        List<ZipEntry> files = new ArrayList<>();
+        // 1. Collect file entries (bounded), with safe display paths. For a solid
+        //    archive, remember how many bytes must be decoded to reach each file.
+        List<ArchiveEntry> files = new ArrayList<>();
         List<String> paths = new ArrayList<>();
-        int seen = 0;
-        boolean truncatedListing = false;
-        Enumeration<? extends ZipEntry> entries = zip.entries();
-        while (entries.hasMoreElements()) {
-            ZipEntry entry = entries.nextElement();
-            if (++seen > limits.getZipMaxEntries()) {
-                truncatedListing = true;
-                break;
-            }
-            if (entry.isDirectory()) continue;
-            String path = safePath(entry.getName());
+        Map<String, String> notRead = new TreeMap<>(); // links / encrypted: path -> reason
+        List<Long> decodeCost = new ArrayList<>();
+        int fileEntries = 0;
+        int unsafe = 0;
+        int encrypted = 0;
+        long decoded = 0;
+        List<ArchiveEntry> entries = archive.entries(limits.getArchiveMaxEntries());
+        boolean truncatedListing = entries.size() > limits.getArchiveMaxEntries();
+        if (truncatedListing) entries = entries.subList(0, limits.getArchiveMaxEntries());
+        for (ArchiveEntry entry : entries) {
+            if (entry.directory()) continue;
+            fileEntries++;
+            decoded += entry.size() >= 0 ? entry.size() : limits.getMaxFileBytes();
+            String path = safePath(entry.name());
             if (path == null) {
-                skipped.add(new SkippedFile(entry.getName(), "unsafe path — ignored"));
+                unsafe++;
+                skipped.add(new SkippedFile(displayName(entry.name()), "unsafe path — ignored"));
+                continue;
+            }
+            if (entry.link()) {
+                notRead.put(path, "link — ignored");
+                continue;
+            }
+            if (entry.encrypted()) {
+                encrypted++;
+                notRead.put(path, "password-protected — ignored");
                 continue;
             }
             files.add(entry);
             paths.add(path);
+            decodeCost.add(decoded);
         }
         if (truncatedListing) {
-            skipped.add(new SkippedFile(archiveName, "archive has more than " + limits.getZipMaxEntries()
+            skipped.add(new SkippedFile(archiveName, "archive has more than " + limits.getArchiveMaxEntries()
                     + " entries — the rest was ignored"));
         }
+        if (fileEntries == 0) {
+            return new ExtractionResult(List.of(), skipped, "The " + format + " archive is empty — it contains no files.");
+        }
         if (files.isEmpty()) {
-            return new ExtractionResult(List.of(), skipped, "The ZIP archive is empty.");
+            notRead.forEach((path, reason) -> skipped.add(new SkippedFile(path, reason)));
+            String why = encrypted > 0 && unsafe == 0
+                    ? "The " + format + " archive is password-protected. Upload a copy without a password."
+                    : unsafe == fileEntries
+                    ? "The " + format + " archive has an invalid structure: every entry has an unsafe path"
+                    + " (one pointing outside the archive, such as ../), so nothing was unpacked."
+                    : "The " + format + " archive contains no files that can be read (only links,"
+                    + " password-protected or unsafe entries).";
+            return new ExtractionResult(List.of(), skipped, why);
         }
 
         // A single wrapping folder ("my-shop/src/...") is stripped so paths read
@@ -131,13 +152,17 @@ public class ZipKnowledgeExtractor {
             paths.replaceAll(p -> p.substring(root.length() + 1));
         }
 
-        // 2. Read each useful file.
+        // 2. Read each useful file — in archive order (required for solid archives).
         Map<String, String> structure = new TreeMap<>();
+        notRead.forEach((path, reason) -> record(structure, skipped,
+                root != null && path.startsWith(root + "/") ? path.substring(root.length() + 1) : path, reason));
         Map<String, Integer> skippedDirs = new TreeMap<>();
         long inflated = 0;
         boolean budgetHit = false;
+        int attempted = 0;
+        int unreadable = 0;
         for (int i = 0; i < files.size(); i++) {
-            ZipEntry entry = files.get(i);
+            ArchiveEntry entry = files.get(i);
             String path = paths.get(i);
 
             String reason = FileClassifier.skipReason(path);
@@ -161,30 +186,41 @@ public class ZipKnowledgeExtractor {
                 structure.put(path, "not read — time limit reached");
                 continue;
             }
-            long declared = entry.getSize();
+            long declared = entry.size();
             if (declared > limits.getMaxFileBytes()) {
                 record(structure, skipped, path, "file too large (" + (declared / 1024) + " KB)");
                 continue;
             }
-            long compressed = entry.getCompressedSize();
-            if (declared > 1_000_000 && compressed > 0 && declared / compressed > limits.getZipMaxCompressionRatio()) {
+            if (solid && decodeCost.get(i) > limits.getArchiveMaxTotalUncompressedBytes()) {
+                // Reaching this file would mean decoding everything before it.
+                budgetHit = true;
+                skipped.add(new SkippedFile(archiveName, "archive size limit reached — remaining files not read"));
+                structure.put(path, "not read — archive limit reached");
+                continue;
+            }
+            // In a solid archive the packed size of one entry is meaningless (it
+            // shares a stream with its neighbours); the byte bounds still apply.
+            long compressed = solid ? -1 : entry.compressedSize();
+            if (declared > 1_000_000 && compressed > 0 && declared / compressed > limits.getArchiveMaxCompressionRatio()) {
                 record(structure, skipped, path, "suspicious compression ratio — ignored");
                 continue;
             }
 
             byte[] data;
-            try (InputStream in = zip.getInputStream(entry)) {
-                data = DocumentTextExtractor.readBounded(in, limits.getMaxFileBytes());
+            attempted++;
+            try {
+                data = archive.read(entry, limits.getMaxFileBytes());
             } catch (IOException | RuntimeException e) {
+                unreadable++;
                 record(structure, skipped, path, "could not be read (" + shortMessage(e) + ")");
                 continue;
             }
             inflated += data.length;
-            if (compressed > 0 && data.length > 1_000_000 && data.length / compressed > limits.getZipMaxCompressionRatio()) {
+            if (compressed > 0 && data.length > 1_000_000 && data.length / compressed > limits.getArchiveMaxCompressionRatio()) {
                 record(structure, skipped, path, "suspicious compression ratio — ignored");
                 continue;
             }
-            if (inflated > limits.getZipMaxTotalUncompressedBytes()) {
+            if (inflated > limits.getArchiveMaxTotalUncompressedBytes()) {
                 budgetHit = true;
                 skipped.add(new SkippedFile(archiveName, "archive size limit reached — remaining files not read"));
                 structure.put(path, "not read — archive limit reached");
@@ -201,6 +237,12 @@ public class ZipKnowledgeExtractor {
             }
         }
 
+        if (attempted > 0 && unreadable == attempted) {
+            // Every file we tried to unpack failed: the archive itself is damaged.
+            return new ExtractionResult(List.of(), skipped, "The " + format
+                    + " archive is damaged — none of its files could be unpacked.");
+        }
+
         // 3. The archive's structure, as its own document.
         documents.add(0, documentExtractor.document(
                 archiveName + " (structure)", NormalizedDocument.Kind.STRUCTURE,
@@ -212,9 +254,16 @@ public class ZipKnowledgeExtractor {
 
         if (documents.size() == 1) {
             // Only the structure: nothing readable inside, but the listing is still knowledge.
-            log.info("ZIP {} had no readable files ({} entries)", archiveName, files.size());
+            log.info("{} {} had no readable files ({} entries)", format, archiveName, files.size());
         }
         return new ExtractionResult(documents, skipped, null);
+    }
+
+    /** An entry name as shown in the skipped list — never trusted, only displayed. */
+    private static String displayName(String name) {
+        if (name == null) return "(unnamed entry)";
+        String clean = name.replaceAll("\\p{Cntrl}", "?");
+        return clean.length() > 200 ? clean.substring(0, 200) + "…" : clean;
     }
 
     private static void record(Map<String, String> structure, List<SkippedFile> skipped, String path, String reason) {
@@ -262,7 +311,8 @@ public class ZipKnowledgeExtractor {
     /**
      * Normalise an entry name to a safe relative display path: forward slashes,
      * no leading slash or drive, no "." segments. Returns null for names that try
-     * to escape the archive ("..") — they are ignored rather than trusted.
+     * to escape the archive ("..") or carry control characters — they are
+     * ignored rather than trusted.
      */
     static String safePath(String name) {
         if (name == null) return null;
@@ -273,6 +323,7 @@ public class ZipKnowledgeExtractor {
         for (String part : p.split("/")) {
             if (part.isEmpty() || part.equals(".")) continue;
             if (part.equals("..")) return null;
+            if (part.chars().anyMatch(Character::isISOControl)) return null;
             parts.add(part);
         }
         return parts.isEmpty() ? null : String.join("/", parts);

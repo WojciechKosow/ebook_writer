@@ -4,7 +4,6 @@ import com.ebookwriter.SaaS.config.properties.KnowledgeProperties;
 import com.ebookwriter.SaaS.dto.knowledge.BookKnowledgeData.SourceRef;
 import com.ebookwriter.SaaS.dto.knowledge.NormalizedDocument;
 import com.ebookwriter.SaaS.dto.knowledge.NormalizedDocument.Kind;
-import com.ebookwriter.SaaS.entity.KnowledgeSourceType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -162,7 +161,7 @@ public class KnowledgeChunker {
         Set<String> used = new HashSet<>();
         for (AnalysisDocument d : documents) {
             String ref = basicRef(d);
-            if (pathCounts.get(ref) > 1 && d.sourceType() == KnowledgeSourceType.ZIP
+            if (pathCounts.get(ref) > 1 && d.sourceType().isArchive()
                     && d.document().kind() != Kind.STRUCTURE) {
                 ref = d.origin() + "!/" + ref;
             }
@@ -183,7 +182,7 @@ public class KnowledgeChunker {
         StringBuilder header = new StringBuilder("=== SOURCE: ").append(ref)
                 .append(" | type: ").append(doc.kind().name().toLowerCase());
         if (doc.language() != null) header.append(" | language: ").append(doc.language());
-        if (ad.sourceType() == KnowledgeSourceType.ZIP && doc.kind() != Kind.STRUCTURE) {
+        if (ad.sourceType().isArchive() && doc.kind() != Kind.STRUCTURE) {
             header.append(" | from: ").append(ad.origin());
         }
         if (parts > 1) header.append(" | part ").append(part).append('/').append(parts);

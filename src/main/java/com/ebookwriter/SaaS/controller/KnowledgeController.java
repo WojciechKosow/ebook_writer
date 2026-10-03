@@ -26,7 +26,7 @@ import java.util.UUID;
  * <pre>
  *   GET    /api/ebooks/{id}/knowledge                 status, sources, summary, usage, limits
  *   GET    /api/ebooks/{id}/knowledge/full            the structured BookKnowledge (404 until ready)
- *   POST   /api/ebooks/{id}/knowledge/sources         upload ZIP / PDF / DOCX / TXT / MD (multipart "file")
+ *   POST   /api/ebooks/{id}/knowledge/sources         upload ZIP / RAR / PDF / DOCX / TXT / MD (multipart "file")
  *   PUT    /api/ebooks/{id}/knowledge/notes           set pasted notes ({"text": "..."}; blank removes)
  *   DELETE /api/ebooks/{id}/knowledge/sources/{sid}   remove a source
  *   POST   /api/ebooks/{id}/knowledge/process         start processing (202; poll GET)
