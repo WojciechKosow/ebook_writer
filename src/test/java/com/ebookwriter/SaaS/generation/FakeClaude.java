@@ -50,6 +50,8 @@ final class FakeClaude {
     volatile Predicate<Call> failWhen = c -> false;
     /** What the legacy planner answers; a test may swap in a larger plan. */
     volatile String legacyPlan = LEGACY_PLAN;
+    /** Extra words appended to every legacy chapter (a chapter that runs far longer than planned). */
+    volatile int legacyExtraWords = 0;
 
     String respond(String system, String user) {
         Call call = new Call(system, user);
@@ -58,7 +60,7 @@ final class FakeClaude {
             throw new RuntimeException("simulated Claude outage");
         }
         if (call.isKnowledgeChapter()) return knowledgeChapter(call);
-        if (call.isLegacyChapter()) return legacyChapter(call);
+        if (call.isLegacyChapter()) return legacyChapter(call, legacyExtraWords);
         if (call.isLegacyPlanning()) return legacyPlan;
         if (call.isEditing()) return between(user, "CURRENT CHAPTER TEXT\n", "\n\nReturn the improved chapter now.");
         if (call.isImagePlanning()) return imagePlan(user);
@@ -102,10 +104,12 @@ final class FakeClaude {
                 + (file.find(0) ? file.group(1) : "none");
     }
 
-    private static String legacyChapter(Call c) {
+    private static String legacyChapter(Call c, int extraWords) {
         String title = c.chapterTitle();
+        String extra = extraWords <= 0 ? "" : "## Going further\n\n" + "More detail here. ".repeat(extraWords / 3) + "\n\n";
         return "Authentication is an important part of modern web applications, and online shops are no exception.\n\n"
-                + "## Why it matters\n\n" + filler(title) + "\n" + ChapterPrompts.SUMMARY_DELIMITER + "\nGeneric chapter on " + title + ".";
+                + "## Why it matters\n\n" + filler(title) + "\n" + extra + ChapterPrompts.SUMMARY_DELIMITER
+                + "\nGeneric chapter on " + title + ".";
     }
 
     private static String filler(String title) {

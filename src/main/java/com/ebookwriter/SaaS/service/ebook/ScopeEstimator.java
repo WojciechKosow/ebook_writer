@@ -151,7 +151,7 @@ public final class ScopeEstimator {
             case BLUEPRINT -> 0.12;
         };
 
-        int cap = Math.max(frontMatter + 1, maxPages);
+        int cap = Math.max(frontMatter + 1, Math.min(maxPages, depthCap(s.depth())));
         boolean capped = book * (1 + spread) > cap;
         int high = Math.min(cap, nice(book * (1 + spread)));
         int low = Math.min(high, Math.max(frontMatter + 1, nice(book * (1 - spread))));
@@ -169,7 +169,49 @@ public final class ScopeEstimator {
             chaptersHigh = Math.max(chaptersLow + 1, (int) Math.round(chapters * 1.2));
         }
         return new ScopeEstimate(s.depth(), low, high, chaptersLow, chaptersHigh, basis,
-                (int) Math.round(sourcePages), capped);
+                (int) Math.round(sourcePages), capped, false);
+    }
+
+    /**
+     * The most pages a book at this depth may ever be planned or estimated at,
+     * however much material there is. A Quick book stays a quick read; only a
+     * Comprehensive book may reach the per-book safety maximum.
+     */
+    public static int depthCap(BookDepth depth) {
+        return switch (BookDepth.orDefault(depth)) {
+            case QUICK -> 90;
+            case STANDARD -> 250;
+            case COMPREHENSIVE -> 400;
+        };
+    }
+
+    /** How far OpenAI's judgement may move the estimate away from the material-based one. */
+    static final double AI_MIN_FACTOR = 0.6;
+    static final double AI_MAX_FACTOR = 1.8;
+
+    /**
+     * Combine the material-based estimate with OpenAI's scope assessment. The AI
+     * judges the content (how much there really is to explain); the material-based
+     * estimate keeps it honest: the AI's midpoint may move the estimate only within
+     * {@link #AI_MIN_FACTOR}–{@link #AI_MAX_FACTOR}× of it, never past the depth's cap
+     * ({@link #depthCap}) or the per-book maximum. So a generous guess can never turn
+     * a few pages of notes into a 500-page book. An invalid AI range is ignored.
+     */
+    public static ScopeEstimate combine(ScopeEstimate heuristic, AiScopeAssessment.Range ai, int maxPages) {
+        if (ai == null || ai.pagesLow() <= 0 || ai.pagesHigh() < ai.pagesLow()) {
+            return heuristic;
+        }
+        int frontMatter = EbookHtmlBuilder.FRONT_MATTER_PAGES;
+        int cap = Math.max(frontMatter + 1, Math.min(maxPages, depthCap(heuristic.depth())));
+        double hMid = (heuristic.pagesLow() + heuristic.pagesHigh()) / 2.0;
+        double aMid = (ai.pagesLow() + ai.pagesHigh()) / 2.0;
+        double mid = Math.max(hMid * AI_MIN_FACTOR, Math.min(hMid * AI_MAX_FACTOR, aMid));
+        double spread = Math.max(0.08, Math.min(0.25, (ai.pagesHigh() - ai.pagesLow()) / (2.0 * aMid)));
+        boolean capped = heuristic.capped() || mid * (1 + spread) > cap;
+        int high = Math.min(cap, nice(mid * (1 + spread)));
+        int low = Math.min(high, Math.max(frontMatter + 1, nice(mid * (1 - spread))));
+        return new ScopeEstimate(heuristic.depth(), low, high, heuristic.chaptersLow(), heuristic.chaptersHigh(),
+                heuristic.basis(), heuristic.sourcePages(), capped, true);
     }
 
     /**

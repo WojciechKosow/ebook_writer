@@ -106,6 +106,21 @@ public class EbookGenerationService {
                 // (cover / specific chapter / unused). No-op when nothing was
                 // uploaded; best-effort so it never fails the book.
                 assetPlacementService.plan(ebookId);
+
+                // Step 1.6 — the plan is a result of the content. If it came out
+                // clearly longer than what the user agreed to (or than their credits
+                // cover), pause and ask instead of either cutting it or silently
+                // writing a much longer (more expensive) book.
+                Ebook plannedBook = ebookRepository.findById(ebookId).orElseThrow();
+                int plannedPages = plannedBook.getPlannedPages() == null ? 0 : plannedBook.getPlannedPages();
+                List<EbookChapter> outline = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+                int holdNeeded = WritingBudget.holdFor(
+                        outline.stream().mapToLong(ChapterGenerationService::plannedWords).sum(),
+                        outline.size(), imageReservePages());
+                if (ScopeApproval.planNeedsApproval(plannedPages, holdNeeded, plannedBook)) {
+                    pauseForApproval(ebookId, plannedPages, holdNeeded, ScopeApproval.STAGE_PLAN);
+                    return;
+                }
             } else {
                 // A resumed run re-decides chapters that were deferred for credits.
                 for (EbookChapter c : chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId)) {
@@ -120,13 +135,17 @@ public class EbookGenerationService {
                     chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
 
             // Step 2 — write chapters sequentially. The depth and the content shaped
-            // the plan; credits are only permission to continue, never a reason to
-            // write more or less. The start was gated on the estimate and the plan
-            // on the hold, so pacing rarely matters; if the writing still runs far
-            // past what the credits cover, the book is wound down to its planned
-            // ending (flagged as creditLimited and shown to the user), never cut off.
+            // the plan; the writing follows it. If the book grows clearly past what
+            // the user agreed to, or the credits genuinely run short, writing pauses
+            // for the user's decision (continue / keep it within the agreed length) —
+            // it is never silently cut and never silently grows.
             updateStatus(ebookId, EbookStatus.WRITING, WRITING_START);
-            writeChapters(ebookId, chapters);
+            try {
+                writeChapters(ebookId, chapters);
+            } catch (ApprovalRequired pause) {
+                pauseForApproval(ebookId, pause.proposedPages, pause.holdNeeded, ScopeApproval.STAGE_WRITING);
+                return;
+            }
             chapters = ManuscriptContext.inBook(
                     chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId));
 
@@ -188,52 +207,72 @@ public class EbookGenerationService {
             updateStatus(ebookId, EbookStatus.COMPLETED, 100);
             log.info("Finished generation for ebook {}", ebookId);
 
-        } catch (PlanExceedsCreditsException e) {
-            // The planned book is larger than the user's credits cover. Never cut it
-            // down to fit: refund the hold and hand the draft back with the reason.
-            returnToDraft(ebookId, e);
         } catch (Exception e) {
             log.error("Generation failed for ebook {}", ebookId, e);
             fail(ebookId, e);
         }
     }
 
-    /**
-     * Put a book whose plan needs more credits than the user holds back into
-     * {@link EbookStatus#DRAFT}: the whole hold is refunded (nothing was written),
-     * the planned size is kept so the draft shows how many credits it needs, and
-     * the message explains what to do. Materials, blueprint and assets are kept.
-     */
-    private void returnToDraft(UUID ebookId, PlanExceedsCreditsException e) {
-        log.info("Ebook {}: plan needs ~{} pages, more than the user's credits cover; back to draft",
-                ebookId, e.getPlannedPages());
-        try {
-            // Planning is transactional, so a bounced plan saved no chapters; clear
-            // any left from an earlier attempt all the same.
-            List<EbookChapter> stale = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
-            if (!stale.isEmpty()) {
-                chapterRepository.deleteAll(stale);
-            }
-            ebookRepository.findById(ebookId).ifPresent(ebook -> {
-                if (ebook.getCreditsCharged() > 0 && !ebook.isCreditsRefunded() && !ebook.isCreditsReconciled()) {
-                    int held = ebook.getCreditsCharged();
-                    ebookRepository.findUserIdById(ebookId).ifPresent(userId ->
-                            creditService.refundGeneration(userId, held, ebookId));
-                }
-                ebook.setStatus(EbookStatus.DRAFT);
-                ebook.setProgress(0);
-                ebook.setPageBudget(0);
-                ebook.setCreditsCharged(0);
-                ebook.setCreditsRefunded(false);
-                ebook.setGenerationMode(null);
-                ebook.setPlannedPages(e.getPlannedPages());
-                ebook.setErrorMessage(e.getMessage());
-                ebookRepository.save(ebook);
-            });
-        } catch (Exception inner) {
-            log.error("Could not return ebook {} to draft; failing it instead", ebookId, inner);
-            fail(ebookId, e);
+    /** Thrown inside the writing loop when the user's decision is needed before continuing. */
+    static final class ApprovalRequired extends RuntimeException {
+        final int proposedPages;
+        final int holdNeeded;
+
+        ApprovalRequired(int proposedPages, int holdNeeded) {
+            super("User approval needed for ~" + proposedPages + " pages", null, false, false);
+            this.proposedPages = proposedPages;
+            this.holdNeeded = holdNeeded;
         }
+    }
+
+    /**
+     * Pause the book in {@link EbookStatus#AWAITING_APPROVAL}: the credit hold
+     * stays reserved, everything written so far is kept, and nothing continues
+     * until the user decides (see {@code EbookService.decideScope}).
+     */
+    private void pauseForApproval(UUID ebookId, int proposedPages, int holdNeeded, String stage) {
+        ebookRepository.findById(ebookId).ifPresent(ebook -> {
+            log.info("Ebook {}: now expected at ~{} pages (agreed {}, credit hold {}); pausing at {} for the user",
+                    ebookId, proposedPages, ebook.getApprovedPages(), ebook.getPageBudget(), stage);
+            ebook.setStatus(EbookStatus.AWAITING_APPROVAL);
+            ebook.setProposedPages(proposedPages);
+            ebook.setProposedHold(holdNeeded);
+            ebook.setApprovalStage(stage);
+            ebookRepository.save(ebook);
+        });
+    }
+
+    /**
+     * The user cancelled a book paused after planning: refund the whole hold
+     * (nothing was written), drop the plan and return it to {@link EbookStatus#DRAFT}.
+     * Materials, blueprint and assets are kept.
+     */
+    public void cancelToDraft(UUID ebookId) {
+        List<EbookChapter> planned = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+        if (!planned.isEmpty()) {
+            chapterRepository.deleteAll(planned);
+        }
+        ebookRepository.findById(ebookId).ifPresent(ebook -> {
+            if (ebook.getCreditsCharged() > 0 && !ebook.isCreditsRefunded() && !ebook.isCreditsReconciled()) {
+                int held = ebook.getCreditsCharged();
+                ebookRepository.findUserIdById(ebookId).ifPresent(userId ->
+                        creditService.refundGeneration(userId, held, ebookId));
+            }
+            ebook.setStatus(EbookStatus.DRAFT);
+            ebook.setProgress(0);
+            ebook.setPageBudget(0);
+            ebook.setCreditsCharged(0);
+            ebook.setCreditsRefunded(false);
+            ebook.setGenerationMode(null);
+            ebook.setProposedPages(null);
+            ebook.setProposedHold(null);
+            ebook.setApprovalStage(null);
+            ebook.setApprovedPages(null);
+            ebook.setFitToBudget(false);
+            ebook.setErrorMessage(null);
+            ebookRepository.save(ebook);
+            log.info("Ebook {}: cancelled after planning; hold refunded, back to draft", ebookId);
+        });
     }
 
     /**
@@ -249,11 +288,18 @@ public class EbookGenerationService {
      *       which topics are out of scope so it never references them.</li>
      * </ul>
      * The decision is re-taken before every chapter from the words actually
-     * written, so a chapter that ran long or short is accounted for.
+     * written, so a chapter that ran long or short is accounted for. Unless the
+     * user chose to keep the book within the agreed length, a wind-down — or a
+     * projection clearly past the agreed length — throws {@link ApprovalRequired}
+     * so the user decides first.
      */
     private void writeChapters(UUID ebookId, List<EbookChapter> chapters) {
-        int pageBudget = ebookRepository.findById(ebookId).map(Ebook::getPageBudget).orElse(0);
+        Ebook book = ebookRepository.findById(ebookId).orElseThrow();
+        int pageBudget = book.getPageBudget();
         int capacity = WritingBudget.capacityWords(pageBudget, chapters.size(), imageReservePages());
+        // Until the user says "keep it within the agreed length", growth past the
+        // agreement or a real credit shortfall pauses instead of shrinking the book.
+        boolean mayFit = book.isFitToBudget();
 
         Set<Integer> deferred = new HashSet<>();
         List<String> omittedTitles = new ArrayList<>();
@@ -280,7 +326,17 @@ public class EbookGenerationService {
                             c.getChapterNumber(), ChapterGenerationService.plannedWords(c)));
                 }
             }
+            int remainingWords = remaining.stream().mapToInt(WritingBudget.PlannedWords::words).sum();
             WritingBudget.Decision decision = WritingBudget.decide(remaining, wordsWritten, capacity);
+            if (!mayFit) {
+                int projected = ScopeApproval.projectedPages(wordsWritten, remainingWords);
+                // Growing clearly past the agreed length, or credits genuinely short
+                // for the rest of the book: ask first, never shrink or grow silently.
+                if (ScopeApproval.writingNeedsApproval(projected, book) || decision.windDown()) {
+                    throw new ApprovalRequired(projected, WritingBudget.holdFor(
+                            (long) wordsWritten + remainingWords, chapters.size(), imageReservePages()));
+                }
+            }
 
             if (decision.windDown()) {
                 for (EbookChapter c : chapters) {

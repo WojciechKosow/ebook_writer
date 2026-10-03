@@ -71,6 +71,11 @@ public class OpenAiTextClient {
             return new CallOptions(p.getKnowledgeModel(), p.getKnowledgeReasoningEffort(), p.getKnowledgeMaxOutputTokens());
         }
 
+        /** Scope assessment: a short judgement call, so little reasoning and a small output. */
+        public static CallOptions scope(OpenAiProperties p) {
+            return new CallOptions(p.resolveBlueprintModel(), "low", 4_000);
+        }
+
         public static CallOptions blueprint(OpenAiProperties p) {
             return new CallOptions(p.resolveBlueprintModel(), p.getBlueprintReasoningEffort(), p.getBlueprintMaxOutputTokens());
         }

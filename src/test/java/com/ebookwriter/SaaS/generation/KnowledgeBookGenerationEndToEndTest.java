@@ -125,12 +125,21 @@ class KnowledgeBookGenerationEndToEndTest {
     User user;
     FakeClaude claude;
 
+    /** A deliberately inflated scope guess: Scrivetta must bound it, never write 500+ pages. */
+    static final String WILD_SCOPE_GUESS = """
+            {"quick": {"pagesLow": 400, "pagesHigh": 500}, "standard": {"pagesLow": 600, "pagesHigh": 700},
+             "comprehensive": {"pagesLow": 900, "pagesHigh": 1000}, "contentAmount": "very_large",
+             "rationale": "Inflated on purpose."}
+            """;
+
     @BeforeEach
     void setUp() throws Exception {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
         OPENAI.reset();
         OPENAI.respond(r -> r.system().contains("book planner of Scrivetta")
                 ? FakePlanner.answer(r, FakePlanner.Mode.NORMAL)
+                : r.system().contains("Scrivetta's scope analyst")
+                ? FakeOpenAiServer.Reply.json(WILD_SCOPE_GUESS)
                 : KnowledgePipelineIntegrationTest.modelLikeAnswer(r));
 
         claude = new FakeClaude();
@@ -177,7 +186,7 @@ class KnowledgeBookGenerationEndToEndTest {
         answerQuestions(ebookId);
         assertEquals(BlueprintStatus.BLUEPRINT_READY, blueprintRepository.findByEbookId(ebookId).orElseThrow().getStatus());
         BlueprintData blueprint = blueprintService.getBlueprint(ebookId).orElseThrow();
-        int openAiRequestsBefore = OPENAI.requests().size();
+        long openAiRequestsBefore = OPENAI.requests().stream().filter(r -> !r.system().contains("scope analyst")).count();
         int balanceBefore = creditService.getBalance(user.getId());
 
         // ---- Generate ----
@@ -187,7 +196,8 @@ class KnowledgeBookGenerationEndToEndTest {
         assertEquals(GenerationMode.KNOWLEDGE, ebook.getGenerationMode());
 
         // OpenAI understood the user; it is not used to write the book.
-        assertEquals(openAiRequestsBefore, OPENAI.requests().size(), "no OpenAI text calls during writing");
+        assertEquals(openAiRequestsBefore, OPENAI.requests().stream().filter(r -> !r.system().contains("scope analyst")).count(),
+                "no OpenAI text calls during writing (only the scope assessment before it)");
         // The blueprint is the plan: no Claude planning call.
         assertTrue(claude.calls.stream().noneMatch(FakeClaude.Call::isLegacyPlanning));
 
@@ -379,14 +389,20 @@ class KnowledgeBookGenerationEndToEndTest {
         UUID ebookId = readyKnowledgeBook();
         // Scrivetta estimates the book from its depth, materials and blueprint; the
         // start needs credits for the estimate's high end.
-        String scopeJson = mvc.perform(get("/api/ebooks/" + ebookId + "/scope").with(auth()))
+        mvc.perform(get("/api/ebooks/" + ebookId + "/scope").with(auth()))
+                .andExpect(jsonPath("$.aiAssessment").value("NEEDED"));
+        String scopeJson = mvc.perform(post("/api/ebooks/" + ebookId + "/scope/assess").with(auth()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.depth").value("QUICK"))
+                .andExpect(jsonPath("$.aiAssessment").value("READY"))
+                .andExpect(jsonPath("$.estimate.aiAssessed").value(true))
                 .andExpect(jsonPath("$.estimate.basis").value("BLUEPRINT"))
                 .andExpect(jsonPath("$.options.length()").value(3))
                 .andReturn().getResponse().getContentAsString();
         int required = MAPPER.readTree(scopeJson).path("requiredCredits").asInt();
         assertTrue(required > 0);
+        assertTrue(required <= com.ebookwriter.SaaS.service.ebook.ScopeEstimator.depthCap(
+                com.ebookwriter.SaaS.entity.BookDepth.QUICK), "the wild guess was bounded: " + required);
 
         // One credit short: refused with an explanation, nothing reserved, still a draft.
         int balance = creditService.getBalance(user.getId());
@@ -410,19 +426,21 @@ class KnowledgeBookGenerationEndToEndTest {
         assertTrue(ebook.getEstimatedPagesHigh() != null && ebook.getEstimatedPagesHigh() >= ebook.getEstimatedPagesLow());
     }
 
-    @Test
-    void aPlanTheCreditsCannotCoverReturnsToDraftInsteadOfBeingCut() throws Exception {
-        // A brief-only book at QUICK depth; the user holds exactly what the estimate needs.
+    /**
+     * A brief-only QUICK book whose plan comes out clearly longer than the agreed
+     * estimate, for a user holding exactly what the estimate needs. Returns the id,
+     * paused in AWAITING_APPROVAL after planning.
+     */
+    private UUID pausedAfterPlanning() throws Exception {
         UUID ebookId = createBook();
-        String scopeJson = mvc.perform(get("/api/ebooks/" + ebookId + "/scope").with(auth()))
+        String scopeJson = mvc.perform(post("/api/ebooks/" + ebookId + "/scope/assess").with(auth()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.estimate.basis").value("BRIEF"))
                 .andReturn().getResponse().getContentAsString();
         int required = MAPPER.readTree(scopeJson).path("requiredCredits").asInt();
         int balance = creditService.getBalance(user.getId());
         creditService.spend(user.getId(), balance - required, CreditTransactionType.GENERATION, null, "test spend");
 
-        // The planner decides the subject needs far more than the estimate (but not a
-        // runaway): the planned book is larger than the credits (+ overdraft) cover.
+        // The planner decides the subject needs far more than estimated (not a runaway).
         int perChapter = required + 8;
         claude.legacyPlan = """
                 {"title": "Big Book", "subtitle": "s", "targetAudience": "a", "description": "d",
@@ -431,18 +449,25 @@ class KnowledgeBookGenerationEndToEndTest {
                    {"title": "Conclusion", "description": "y", "approxPages": 4}]}
                 """.formatted(perChapter);
         mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth())).andExpect(status().isAccepted());
-        await(() -> {
-            Ebook e = ebookRepository.findById(ebookId).orElseThrow();
-            return e.getStatus() == EbookStatus.DRAFT && e.getErrorMessage() != null;
-        }, "back to draft");
+        await(() -> ebookRepository.findById(ebookId).orElseThrow().getStatus() == EbookStatus.AWAITING_APPROVAL,
+                "paused for approval");
+        return ebookId;
+    }
 
-        Ebook draft = ebookRepository.findById(ebookId).orElseThrow();
-        int plannedBook = perChapter + 4 + 2;
-        assertEquals(plannedBook, draft.getPlannedPages());
-        assertTrue(draft.getErrorMessage().contains("about " + plannedBook + " pages"), draft.getErrorMessage());
-        assertEquals(required, creditService.getBalance(user.getId()), "the whole hold was refunded");
-        assertTrue(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).isEmpty(), "nothing was written");
-        assertTrue(claude.calls.stream().noneMatch(FakeClaude.Call::isLegacyChapter));
+    @Test
+    void aPlanLongerThanAgreedPausesAndAsksInsteadOfCuttingOrGrowingSilently() throws Exception {
+        UUID ebookId = pausedAfterPlanning();
+        Ebook paused = ebookRepository.findById(ebookId).orElseThrow();
+        int balanceWhilePaused = creditService.getBalance(user.getId());
+
+        // Nothing was written; the status tells the UI what to ask.
+        assertTrue(claude.calls.stream().noneMatch(FakeClaude.Call::isLegacyChapter), "no chapter before the user decides");
+        mvc.perform(get("/api/ebooks/" + ebookId).with(auth()))
+                .andExpect(jsonPath("$.status").value("AWAITING_APPROVAL"))
+                .andExpect(jsonPath("$.approvalStage").value("PLAN"))
+                .andExpect(jsonPath("$.proposedPages").value(paused.getPlannedPages()))
+                .andExpect(jsonPath("$.approvedPages").value(paused.getApprovedPages()));
+        assertTrue(paused.getPlannedPages() > paused.getApprovedPages());
 
         // The planning prompt asked for depth, with the estimate only as orientation.
         String planning = claude.calls.stream().filter(FakeClaude.Call::isLegacyPlanning).findFirst().orElseThrow().user();
@@ -450,12 +475,84 @@ class KnowledgeBookGenerationEndToEndTest {
         assertTrue(planning.contains("not a target, not a limit"));
         assertFalse(planning.contains("must not exceed"));
 
-        // The draft now asks for the planned size; starting again without credits is refused.
-        mvc.perform(get("/api/ebooks/" + ebookId + "/scope").with(auth()))
-                .andExpect(jsonPath("$.requiredCredits").value(plannedBook))
-                .andExpect(jsonPath("$.plannedPages").value(plannedBook))
-                .andExpect(jsonPath("$.canGenerate").value(false));
-        mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth())).andExpect(status().isPaymentRequired());
+        // "Yes, continue" needs more credits reserved than the user has: refused, still paused.
+        mvc.perform(post("/api/ebooks/" + ebookId + "/scope-decision").with(auth())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"decision\": \"CONTINUE\"}"))
+                .andExpect(status().isPaymentRequired());
+        assertEquals(EbookStatus.AWAITING_APPROVAL, ebookRepository.findById(ebookId).orElseThrow().getStatus());
+        assertEquals(balanceWhilePaused, creditService.getBalance(user.getId()));
+
+        // "No, keep it within the agreed length": the plan is scaled, the book is finished.
+        mvc.perform(post("/api/ebooks/" + ebookId + "/scope-decision").with(auth())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"decision\": \"FIT\"}"))
+                .andExpect(status().isOk());
+        Ebook done = awaitFinished(ebookId);
+        assertEquals(EbookStatus.COMPLETED, done.getStatus(), done.getErrorMessage());
+        assertTrue(done.isFitToBudget());
+        assertTrue(done.getPlannedPages() <= done.getApprovedPages(), "planned within the agreed length");
+        assertEquals(2, chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).size(), "no chapter dropped");
+        assertTrue(creditService.getBalance(user.getId()) >= -10);
+    }
+
+    @Test
+    void continuingALongerBookWithEnoughCreditsWritesItInFull() throws Exception {
+        UUID ebookId = pausedAfterPlanning();
+        creditService.grant(user.getId(), 200, CreditTransactionType.CREDIT_PURCHASE, null, null, "top up");
+        Ebook paused = ebookRepository.findById(ebookId).orElseThrow();
+
+        mvc.perform(post("/api/ebooks/" + ebookId + "/scope-decision").with(auth())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"decision\": \"CONTINUE\"}"))
+                .andExpect(status().isOk());
+        Ebook done = awaitFinished(ebookId);
+        assertEquals(EbookStatus.COMPLETED, done.getStatus(), done.getErrorMessage());
+        assertEquals(paused.getPlannedPages(), done.getApprovedPages(), "the user agreed to the longer book");
+        assertTrue(done.getPageBudget() > paused.getPageBudget(), "the hold was extended");
+        assertEquals(done.getActualPageCount(), done.getCreditsCharged(), "billed for the real pages only");
+    }
+
+    @Test
+    void writingThatRunsFarPastTheAgreedLengthPausesMidBookAndContinuesWhenApproved() throws Exception {
+        UUID ebookId = createBook();
+        mvc.perform(post("/api/ebooks/" + ebookId + "/scope/assess").with(auth())).andExpect(status().isOk());
+        // The plan fits (the default 4-chapter plan), but the first chapter runs very long.
+        claude.legacyExtraWords = 12_000;
+        mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth())).andExpect(status().isAccepted());
+        await(() -> ebookRepository.findById(ebookId).orElseThrow().getStatus() == EbookStatus.AWAITING_APPROVAL,
+                "paused while writing");
+
+        Ebook paused = ebookRepository.findById(ebookId).orElseThrow();
+        assertEquals("WRITING", paused.getApprovalStage());
+        assertTrue(paused.getProposedPages() > paused.getApprovedPages());
+        long written = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).stream()
+                .filter(c -> c.getStatus() == ChapterStatus.WRITTEN).count();
+        assertEquals(1, written, "paused right after the chapter that ran long, nothing thrown away");
+        mvc.perform(post("/api/ebooks/" + ebookId + "/scope-decision").with(auth())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"decision\": \"CANCEL\"}"))
+                .andExpect(status().isConflict());
+
+        claude.legacyExtraWords = 0;
+        mvc.perform(post("/api/ebooks/" + ebookId + "/scope-decision").with(auth())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"decision\": \"CONTINUE\"}"))
+                .andExpect(status().isOk());
+        Ebook done = awaitFinished(ebookId);
+        assertEquals(EbookStatus.COMPLETED, done.getStatus(), done.getErrorMessage());
+        assertEquals(paused.getProposedPages(), done.getApprovedPages());
+        assertTrue(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).stream()
+                .noneMatch(c -> c.getStatus() == ChapterStatus.DEFERRED), "nothing cut");
+    }
+
+    @Test
+    void cancellingAfterPlanningRefundsEverythingAndReturnsToDraft() throws Exception {
+        UUID ebookId = pausedAfterPlanning();
+        Ebook paused = ebookRepository.findById(ebookId).orElseThrow();
+        int balanceBeforeStart = creditService.getBalance(user.getId()) + paused.getPageBudget();
+
+        mvc.perform(post("/api/ebooks/" + ebookId + "/scope-decision").with(auth())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"decision\": \"CANCEL\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DRAFT"));
+        assertEquals(balanceBeforeStart, creditService.getBalance(user.getId()), "the whole hold was refunded");
+        assertTrue(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).isEmpty());
     }
 
     @Test

@@ -19,6 +19,12 @@ public enum EbookStatus {
     PENDING,
     PLANNING,
     WRITING,
+    /**
+     * Paused: the book turned out to need clearly more pages than the user agreed
+     * to (or than their credits cover). Nothing continues until the user decides
+     * to continue, keep the book within the agreed length, or cancel.
+     */
+    AWAITING_APPROVAL,
     EDITING,
     PLANNING_IMAGES,
     GENERATING_IMAGES,

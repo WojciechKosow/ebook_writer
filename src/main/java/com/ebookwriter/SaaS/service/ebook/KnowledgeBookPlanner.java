@@ -28,9 +28,10 @@ import java.util.UUID;
  *
  * <p>Sizing follows the content, not a page count: each chapter gets the room
  * its share of the author's knowledge needs at the selected depth (see
- * {@link #size}), and the sum is the planned length. If the user's credits don't
- * cover that, planning stops with {@link PlanExceedsCreditsException} instead of
- * cutting chapters; only the per-book safety maximum can shrink a plan.
+ * {@link #size}), and the sum is the planned length. If that is clearly more than
+ * the user agreed to (or their credits cover), the orchestrator pauses for their
+ * decision instead of cutting chapters; only the depth cap / per-book safety
+ * maximum can shrink a plan.
  */
 @Slf4j
 @Service
@@ -58,9 +59,9 @@ public class KnowledgeBookPlanner {
         List<PlannedChapter> planned = size(bp.chapters(), depth,
                 estimate.midpoint() - EbookHtmlBuilder.FRONT_MATTER_PAGES);
         List<PlannedChapter> kept = BookPlanningService.clampToBudget(planned,
-                scopeEstimationService.maxPages() - EbookHtmlBuilder.FRONT_MATTER_PAGES);
+                Math.min(scopeEstimationService.maxPages(), ScopeEstimator.depthCap(depth))
+                        - EbookHtmlBuilder.FRONT_MATTER_PAGES);
         int plannedBook = BookPlanningService.totalPages(kept) + EbookHtmlBuilder.FRONT_MATTER_PAGES;
-        BookPlanningService.requireAffordable(ebookId, plannedBook, ebook.getPageBudget());
 
         ebook.setTitle(orDefault(bp.workingTitle(), ebook.getTopic()));
         ebook.setSubtitle(blankToNull(bp.subtitle()));

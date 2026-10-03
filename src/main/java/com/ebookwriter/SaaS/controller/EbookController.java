@@ -119,6 +119,38 @@ public class EbookController {
         return ResponseEntity.ok(ebookService.getScope(id, user.getId()));
     }
 
+    /**
+     * Have OpenAI assess the draft's scope (cached until the brief, materials or
+     * blueprint change) and return the refined scope. Without OpenAI the
+     * material-based estimate is returned unchanged.
+     */
+    @PostMapping("/{id}/scope/assess")
+    public ResponseEntity<BookScopeResponse> assessScope(@PathVariable UUID id, Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(ebookService.assessScope(id, user.getId()));
+    }
+
+    /**
+     * Answer a book paused in {@code AWAITING_APPROVAL} because it turned out
+     * longer than agreed (or the credits ran short): {@code CONTINUE}, {@code FIT}
+     * (keep it within the agreed length) or {@code CANCEL} (after planning only).
+     * {@code 402} when continuing needs more credits than the balance holds.
+     */
+    @PostMapping("/{id}/scope-decision")
+    public ResponseEntity<EbookStatusResponse> decideScope(@PathVariable UUID id,
+                                                           @RequestBody Map<String, String> body,
+                                                           Authentication authentication) {
+        User user = currentUser(authentication);
+        EbookService.ScopeDecision decision;
+        try {
+            decision = EbookService.ScopeDecision.valueOf(String.valueOf(body.get("decision")).toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+        ebookService.decideScope(id, user.getId(), decision);
+        return ResponseEntity.ok(ebookService.getStatus(id, user.getId()));
+    }
+
     /** Change a draft's depth; returns the updated scope. {@code 409} once generation has started. */
     @PutMapping("/{id}/depth")
     public ResponseEntity<BookScopeResponse> updateDepth(@PathVariable UUID id,

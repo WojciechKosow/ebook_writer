@@ -22,6 +22,7 @@ import com.ebookwriter.SaaS.entity.BookDepth;
  * @param sourcePages   the provided source material, in pages of source text (0 = none)
  * @param capped        true when the content suggested more than the per-book
  *                      safety maximum, so the range was capped at it
+ * @param aiAssessed    true when OpenAI's scope assessment shaped the range
  */
 public record ScopeEstimate(BookDepth depth,
                             int pagesLow,
@@ -30,7 +31,8 @@ public record ScopeEstimate(BookDepth depth,
                             int chaptersHigh,
                             Basis basis,
                             int sourcePages,
-                            boolean capped) {
+                            boolean capped,
+                            boolean aiAssessed) {
 
     /** What the estimate is based on, from least to most informed. */
     public enum Basis {

@@ -20,6 +20,8 @@ import java.util.List;
  * @param plannedPages    the size of an earlier plan that needed more credits than
  *                        the user had (null when there is none)
  * @param maxPages        the per-book safety maximum
+ * @param aiAssessment    UNAVAILABLE (no OpenAI), NEEDED (call {@code POST /scope/assess}) or READY
+ * @param aiRationale     what OpenAI says drives the length (when READY)
  */
 public record BookScopeResponse(BookDepth depth,
                                 ScopeEstimateDTO estimate,
@@ -28,5 +30,7 @@ public record BookScopeResponse(BookDepth depth,
                                 int requiredCredits,
                                 boolean canGenerate,
                                 Integer plannedPages,
-                                int maxPages) {
+                                int maxPages,
+                                String aiAssessment,
+                                String aiRationale) {
 }
