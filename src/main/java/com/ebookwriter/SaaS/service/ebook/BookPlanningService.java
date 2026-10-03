@@ -73,12 +73,10 @@ public class BookPlanningService {
         // Only two guards, neither derived from user input: a planner that ran away
         // far past any sensible scope, and the per-book safety maximum.
         List<PlannedChapter> planned = limitRunaway(plan.chapters(), estimate);
-        planned = clampToBudget(planned, scopeEstimationService.maxPages() - EbookHtmlBuilder.FRONT_MATTER_PAGES);
+        planned = clampToBudget(planned, maxContentPages(depth));
         int plannedBook = totalPages(planned) + EbookHtmlBuilder.FRONT_MATTER_PAGES;
-
-        // Never cut a planned book down to the balance: if the user's credits can't
-        // cover it, stop here (nothing written, hold refunded) and say so.
-        requireAffordable(ebookId, plannedBook, ebook.getPageBudget());
+        // Whether the plan fits what the user agreed to (and their credits) is the
+        // orchestrator's call: it pauses for the user's decision rather than cutting.
 
         ebook.setTitle(orDefault(plan.title(), ebook.getTopic()));
         ebook.setSubtitle(plan.subtitle());
@@ -120,17 +118,12 @@ public class BookPlanningService {
     }
 
     /**
-     * A planned book must fit what the user's credits cover (the reserved hold,
-     * which includes the small overdraft for a natural overshoot). If it doesn't,
-     * the book is not trimmed to fit — planning stops and the user is told how many
-     * credits the planned book needs. Legacy rows without a hold are not checked.
+     * The most content pages a plan at this depth may have: the depth's cap and
+     * the per-book safety maximum (system limits — never a user-chosen length).
      */
-    static void requireAffordable(UUID ebookId, int plannedBookPages, int pageBudget) {
-        if (pageBudget > 0 && plannedBookPages > pageBudget) {
-            log.info("Ebook {}: planned ~{} pages but the credit hold covers {}; returning to draft",
-                    ebookId, plannedBookPages, pageBudget);
-            throw new PlanExceedsCreditsException(plannedBookPages, pageBudget);
-        }
+    int maxContentPages(BookDepth depth) {
+        return Math.min(scopeEstimationService.maxPages(), ScopeEstimator.depthCap(depth))
+                - EbookHtmlBuilder.FRONT_MATTER_PAGES;
     }
 
     static int totalPages(List<PlannedChapter> chapters) {

@@ -96,6 +96,16 @@ public final class WritingBudget {
     }
 
     /**
+     * The credit hold (pages) needed for {@link #capacityWords} to hold
+     * {@code words} — its inverse. Used to ask the user for exactly the hold a
+     * longer book needs, so continuing never immediately runs short again.
+     */
+    public static int holdFor(long words, int chapterCount, int reservedPages) {
+        return (int) Math.ceil(Math.max(0, words) / (ChapterGenerationService.WORDS_PER_PAGE * SAFETY_FACTOR))
+                + EbookHtmlBuilder.FRONT_MATTER_PAGES + Math.max(0, chapterCount) + Math.max(0, reservedPages);
+    }
+
+    /**
      * Decide how to write the remaining chapters.
      *
      * @param remaining    the chapters not yet written, in book order; the last one

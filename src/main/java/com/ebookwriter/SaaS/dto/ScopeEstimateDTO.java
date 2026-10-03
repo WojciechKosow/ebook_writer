@@ -21,6 +21,7 @@ import com.ebookwriter.SaaS.service.ebook.ScopeEstimate;
  * @param basis           what the estimate is based on (BRIEF, SOURCE_TEXT, KNOWLEDGE, BLUEPRINT)
  * @param sourcePages     the provided material, in pages of source text
  * @param capped          true when the content suggested more than the per-book maximum
+ * @param aiAssessed      true when OpenAI's scope assessment shaped the range
  */
 public record ScopeEstimateDTO(BookDepth depth,
                                String label,
@@ -34,11 +35,12 @@ public record ScopeEstimateDTO(BookDepth depth,
                                int requiredCredits,
                                ScopeEstimate.Basis basis,
                                int sourcePages,
-                               boolean capped) {
+                               boolean capped,
+                               boolean aiAssessed) {
 
     public static ScopeEstimateDTO from(ScopeEstimate e) {
         return new ScopeEstimateDTO(e.depth(), e.depth().label(), e.depth().description(),
                 e.pagesLow(), e.pagesHigh(), e.chaptersLow(), e.chaptersHigh(),
-                e.pagesLow(), e.pagesHigh(), e.requiredCredits(), e.basis(), e.sourcePages(), e.capped());
+                e.pagesLow(), e.pagesHigh(), e.requiredCredits(), e.basis(), e.sourcePages(), e.capped(), e.aiAssessed());
     }
 }

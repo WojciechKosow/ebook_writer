@@ -137,4 +137,52 @@ class ScopeEstimatorTest {
         assertTrue(ScopeEstimator.chapterPages(STANDARD, rich) > ScopeEstimator.chapterPages(STANDARD, thin));
         assertTrue(ScopeEstimator.chapterPages(COMPREHENSIVE, rich) > ScopeEstimator.chapterPages(QUICK, rich));
     }
+
+    // ---- OpenAI assessment, bounded ---------------------------------------------
+
+    @Test
+    void theAiAssessmentRefinesTheEstimateWithinItsBounds() {
+        ScopeEstimate heuristic = brief(STANDARD);
+        ScopeEstimate refined = ScopeEstimator.combine(heuristic, new AiScopeAssessment.Range(40, 50), MAX);
+
+        assertTrue(refined.aiAssessed());
+        assertTrue(refined.pagesLow() >= 36 && refined.pagesHigh() <= 55, refined.toString());
+    }
+
+    @Test
+    void aWildAiGuessCannotTurnABriefIntoA500PageBook() {
+        ScopeEstimate heuristic = brief(STANDARD);
+        ScopeEstimate refined = ScopeEstimator.combine(heuristic, new AiScopeAssessment.Range(450, 550), MAX);
+
+        double heuristicMid = (heuristic.pagesLow() + heuristic.pagesHigh()) / 2.0;
+        assertTrue(refined.pagesHigh() <= heuristicMid * ScopeEstimator.AI_MAX_FACTOR * 1.3, refined.toString());
+        assertTrue(refined.pagesHigh() < 100);
+    }
+
+    @Test
+    void anAiGuessCannotShrinkRichMaterialIntoASummary() {
+        ScopeEstimate heuristic = materials(COMPREHENSIVE, 150, 90, chapters(12, 4, 6, 6));
+        ScopeEstimate refined = ScopeEstimator.combine(heuristic, new AiScopeAssessment.Range(10, 15), MAX);
+
+        double heuristicMid = (heuristic.pagesLow() + heuristic.pagesHigh()) / 2.0;
+        assertTrue(refined.pagesLow() >= heuristicMid * ScopeEstimator.AI_MIN_FACTOR * 0.7, refined.toString());
+    }
+
+    @Test
+    void eachDepthHasAHardCap() {
+        ScopeEstimate quick = materials(QUICK, 3000, 400, chapters(30, 8, 10, 12));
+        ScopeEstimate quickAi = ScopeEstimator.combine(quick, new AiScopeAssessment.Range(300, 400), MAX);
+
+        assertTrue(quick.pagesHigh() <= ScopeEstimator.depthCap(QUICK));
+        assertTrue(quickAi.pagesHigh() <= ScopeEstimator.depthCap(QUICK));
+        assertTrue(ScopeEstimator.depthCap(QUICK) < ScopeEstimator.depthCap(STANDARD));
+    }
+
+    @Test
+    void anInvalidAiRangeIsIgnored() {
+        ScopeEstimate heuristic = brief(STANDARD);
+        assertEquals(heuristic, ScopeEstimator.combine(heuristic, new AiScopeAssessment.Range(0, 0), MAX));
+        assertEquals(heuristic, ScopeEstimator.combine(heuristic, new AiScopeAssessment.Range(50, 20), MAX));
+        assertEquals(heuristic, ScopeEstimator.combine(heuristic, null, MAX));
+    }
 }

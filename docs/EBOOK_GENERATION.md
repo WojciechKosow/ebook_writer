@@ -84,6 +84,8 @@ to the authenticated user.
 | POST   | `/api/ebooks`                 | Create a **draft** (no credits held, not generating); returns `201` with the ebook id and `status: DRAFT`. Upload assets to it, then start. |
 | GET    | `/api/ebooks/generation-budget?briefChars=&sourceChars=` | Creation form: each depth with a preliminary length/credit estimate, plus the balance. |
 | GET    | `/api/ebooks/{id}/scope`      | A draft's length + credit estimate for its depth (and the other depths), `requiredCredits`, `canGenerate`. |
+| POST   | `/api/ebooks/{id}/scope/assess` | Have OpenAI assess the draft's scope (cached until brief/materials/blueprint change); returns the refined scope. |
+| POST   | `/api/ebooks/{id}/scope-decision` | Answer a book paused in `AWAITING_APPROVAL`: `{"decision": "CONTINUE" \| "FIT" \| "CANCEL"}`. `402` if continuing needs more credits than the balance; `CANCEL` only after planning. |
 | PUT    | `/api/ebooks/{id}/depth`      | Change a draft's depth (`{"depth": "QUICK|STANDARD|COMPREHENSIVE"}`); returns the new scope. `409` once started. |
 | POST   | `/api/ebooks/{id}/start`      | Estimate the scope, require credits for it, reserve the credit hold and start; returns `202`. `402` (with `required`/`available`/`message`) if the credits don't cover the estimate; `409` if already started. |
 | GET    | `/api/ebooks/{id}`            | Poll status/progress + per-chapter progress. |
@@ -582,10 +584,12 @@ blueprint (if any) ─┘          │
                                ▼
         plan (Claude, or blueprint sizing) at that depth ─▶ plannedPages
                                │
-               plan ≤ credit hold? ── no ─▶ refund, back to DRAFT, "planned at ~N pages"
-                               │ yes
+      plan clearly > agreed length (+10%) or > credit hold?
+                               │ yes ─▶ AWAITING_APPROVAL: continue / keep within agreed length / cancel
+                               ▼ no
+     write each chapter ── projection > agreed (+15%) or credits short? ─▶ AWAITING_APPROVAL
                                ▼
-     write ─▶ edit ─▶ images ─▶ render ─▶ actualPageCount ─▶ bill the real pages
+              edit ─▶ images ─▶ render ─▶ actualPageCount ─▶ bill the real pages
 ```
 
 | Depth | What changes |
@@ -622,20 +626,39 @@ chapter prompt and the editorial pass (`BookDepth.writerGuidance`).
    plan over 2× the estimate's high end is scaled toward 1.5×, no chapter dropped)
    and the **per-book safety maximum**. Knowledge-based books size each blueprint
    chapter by its knowledge at the depth (`KnowledgeBookPlanner.size`).
-4. **A plan the credits can't cover is never cut.** If `plannedPages` exceeds the
-   reserved hold (balance + overdraft), `PlanExceedsCreditsException` refunds the
-   hold, returns the book to `DRAFT` with `plannedPages` and an explanation, and the
-   next start requires that many credits.
-5. **Writing follows the plan.** The chapter prompt gives the depth and the
-   planned size as *orientation, not a target or a limit*. Credits are only
-   permission: `WritingBudget` still paces against the hold as a safety net and,
-   only if writing runs far past what the credits cover, tightens or winds the book
-   down to its planned ending (chapters `DEFERRED`). That — or a render trimmed to
-   the credit ceiling — sets `creditLimited`, which the UI shows. Never silent.
-6. **Never mid-thought.** Generous output-token headroom; if a response still hits
+4. **AI scope assessment (OpenAI, bounded).** `ScopeEstimationService.assess` asks
+   OpenAI (`ScopePrompts`, blueprint model, low reasoning effort) how many pages a
+   complete book needs at each depth, given the brief and a compact view of the
+   materials (sizes, knowledge counts and topics, blueprint chapters). It is told to
+   be conservative (200+ pages only with genuinely that much material). Its answer is
+   cached on the ebook keyed by a fingerprint of the inputs and **bounded in code**
+   (`ScopeEstimator.combine`): it may move the material-based estimate only within
+   0.6×–1.8×, never past the depth cap (`QUICK` 90, `STANDARD` 250,
+   `COMPREHENSIVE` 400 pages) or the per-book maximum. The draft page calls
+   `POST /scope/assess`; `start` calls it too (best-effort). Without OpenAI the
+   material-based estimate stands.
+5. **The user agrees to a length; the book never grows or shrinks silently.**
+   Starting sets `approvedPages` = the estimate's high end. Generation pauses in
+   `AWAITING_APPROVAL` (`ScopeApproval`) when
+   - the **plan** is more than 10% longer than agreed, or needs a bigger credit hold
+     than reserved (`WritingBudget.holdFor`, the inverse of the writing capacity);
+   - while **writing**, the projected length (words written + planned words left) is
+     more than 15% past the agreed length, or the credits genuinely can't cover the
+     rest of the book.
+   Everything written is kept and the hold stays reserved. The user decides
+   (`POST /scope-decision`): **CONTINUE** (agreed length := new length; the hold is
+   extended by exactly what is missing, `402` if the balance can't cover it),
+   **FIT** (keep it within the agreed length: after planning the outline is scaled
+   down without dropping chapters; while writing the remaining chapters may be
+   tightened or the book brought to its planned ending, flagged `creditLimited`), or
+   **CANCEL** (after planning only: full refund, back to `DRAFT`). The run then
+   resumes from where it stopped.
+6. **Writing follows the plan.** The chapter prompt gives the depth and the
+   planned size as *orientation, not a target or a limit*.
+7. **Never mid-thought.** Generous output-token headroom; if a response still hits
    the limit, `ManuscriptIntegrity.repairTruncated` drops the incomplete tail. A
    truncated *edit* is discarded in favour of the complete original.
-7. **Premium ending architecture.** The final chapter is written (and edited)
+8. **Premium ending architecture.** The final chapter is written (and edited)
    against `ChapterPrompts.ENDING_ARCHITECTURE`.
 
 ## Page-count handling & billing

@@ -60,6 +60,7 @@ class EbookServiceTest {
     @Mock BookBlueprintService blueprintService;
     @Mock KnowledgeSourceRepository sourceRepository;
     @Mock BookKnowledgeRepository knowledgeRepository;
+    @Mock com.ebookwriter.SaaS.service.ai.OpenAiTextClient openAi;
 
     CreditProperties creditProperties;
     ScopeEstimationService scopeEstimationService;
@@ -72,7 +73,8 @@ class EbookServiceTest {
     void setUp() {
         creditProperties = new CreditProperties();
         scopeEstimationService = new ScopeEstimationService(sourceRepository, knowledgeRepository,
-                blueprintService, creditProperties);
+                blueprintService, creditProperties, openAi, new com.ebookwriter.SaaS.config.properties.OpenAiProperties(),
+                ebookRepository);
         ebookService = new EbookService(ebookRepository, chapterRepository, pdfRepository,
                 generationService, pdfGenerationService, assetUsageService, creditService,
                 scopeEstimationService, blueprintService);
@@ -155,6 +157,8 @@ class EbookServiceTest {
         ScopeEstimate estimate = scopeEstimationService.estimate(draft(BookDepth.STANDARD));
         assertEquals(estimate.pagesLow(), started.getEstimatedPagesLow());
         assertEquals(estimate.pagesHigh(), started.getEstimatedPagesHigh());
+        assertEquals(estimate.pagesHigh(), started.getApprovedPages(), "starting agrees to the estimate's high end");
+        assertFalse(started.isFitToBudget());
         verify(generationService).generate(ebookId);
     }
 
@@ -220,5 +224,94 @@ class EbookServiceTest {
             assertTrue(o.pagesLow() <= o.pagesHigh());
             assertEquals(o.pagesHigh(), o.requiredCredits());
         }
+    }
+
+    // ---- Pause & decide ------------------------------------------------------
+
+    private Ebook paused(String stage, int approved, int proposed, int proposedHold, int pageBudget) {
+        Ebook e = draft(BookDepth.STANDARD);
+        e.setStatus(EbookStatus.AWAITING_APPROVAL);
+        e.setApprovalStage(stage);
+        e.setApprovedPages(approved);
+        e.setProposedPages(proposed);
+        e.setProposedHold(proposedHold);
+        e.setPageBudget(pageBudget);
+        e.setCreditsCharged(pageBudget);
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(e));
+        lenient().when(ebookRepository.claimStatus(ebookId, EbookStatus.AWAITING_APPROVAL, EbookStatus.PENDING)).thenReturn(1);
+        lenient().when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
+        return e;
+    }
+
+    @Test
+    void continuingALongerBookExtendsTheHoldAndRaisesTheAgreedLength() {
+        Ebook e = paused(ScopeApproval.STAGE_PLAN, 41, 70, 90, 51);
+
+        ebookService.decideScope(ebookId, userId, EbookService.ScopeDecision.CONTINUE);
+
+        verify(creditService).extendGenerationHold(userId, ebookId, 39);
+        assertEquals(90, e.getPageBudget());
+        assertEquals(70, e.getApprovedPages());
+        assertEquals(EbookStatus.PENDING, e.getStatus());
+        assertNull(e.getProposedPages());
+        verify(generationService).resume(ebookId);
+    }
+
+    @Test
+    void continuingWithoutTheCreditsLeavesTheBookPaused() {
+        paused(ScopeApproval.STAGE_WRITING, 41, 70, 90, 51);
+        doThrow(new InsufficientCreditsException(39, 0)).when(creditService).extendGenerationHold(userId, ebookId, 39);
+
+        assertThrows(InsufficientCreditsException.class,
+                () -> ebookService.decideScope(ebookId, userId, EbookService.ScopeDecision.CONTINUE));
+
+        verify(ebookRepository).claimStatus(ebookId, EbookStatus.PENDING, EbookStatus.AWAITING_APPROVAL);
+        verify(generationService, never()).resume(any());
+    }
+
+    @Test
+    void keepingItWithinTheAgreedLengthScalesThePlanWithoutDroppingChapters() {
+        Ebook e = paused(ScopeApproval.STAGE_PLAN, 42, 82, 95, 51);
+        List<com.ebookwriter.SaaS.entity.EbookChapter> chapters = List.of(
+                com.ebookwriter.SaaS.entity.EbookChapter.builder().chapterNumber(1).approxPages(40).build(),
+                com.ebookwriter.SaaS.entity.EbookChapter.builder().chapterNumber(2).approxPages(40).build());
+        when(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId)).thenReturn(chapters);
+
+        ebookService.decideScope(ebookId, userId, EbookService.ScopeDecision.FIT);
+
+        assertTrue(e.isFitToBudget());
+        assertEquals(42, e.getPlannedPages());
+        assertEquals(2, chapters.size());
+        assertEquals(20, chapters.get(0).getApproxPages());
+        verify(creditService, never()).extendGenerationHold(any(), any(), anyInt());
+        verify(generationService).resume(ebookId);
+    }
+
+    @Test
+    void cancellingIsOnlyPossibleBeforeWritingStarts() {
+        paused(ScopeApproval.STAGE_WRITING, 41, 70, 90, 51);
+
+        assertThrows(IllegalStateException.class,
+                () -> ebookService.decideScope(ebookId, userId, EbookService.ScopeDecision.CANCEL));
+        verify(generationService, never()).cancelToDraft(any());
+    }
+
+    @Test
+    void cancellingAfterPlanningRefundsAndReturnsToDraft() {
+        paused(ScopeApproval.STAGE_PLAN, 41, 70, 90, 51);
+        when(ebookRepository.findById(ebookId)).thenReturn(Optional.of(draft(BookDepth.STANDARD)));
+
+        ebookService.decideScope(ebookId, userId, EbookService.ScopeDecision.CANCEL);
+
+        verify(generationService).cancelToDraft(ebookId);
+        verify(generationService, never()).resume(any());
+    }
+
+    @Test
+    void aBookThatIsNotPausedCannotBeDecided() {
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(draft(BookDepth.STANDARD)));
+
+        assertThrows(IllegalStateException.class,
+                () -> ebookService.decideScope(ebookId, userId, EbookService.ScopeDecision.CONTINUE));
     }
 }

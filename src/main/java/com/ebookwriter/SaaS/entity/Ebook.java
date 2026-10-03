@@ -133,6 +133,39 @@ public class Ebook {
     private Integer plannedPages;
 
     /**
+     * The whole-book length (pages) the user has agreed to: the estimate's high end
+     * at start, raised when they approve a longer book. Generation pauses for the
+     * user's decision when the plan or the writing goes clearly past it.
+     */
+    private Integer approvedPages;
+
+    /** While {@link EbookStatus#AWAITING_APPROVAL}: the length Scrivetta now expects. */
+    private Integer proposedPages;
+
+    /** While awaiting approval: the credit hold (pages) continuing at that length needs. */
+    private Integer proposedHold;
+
+    /** While awaiting approval: {@code PLAN} (after planning) or {@code WRITING} (during writing). */
+    @Column(length = 16)
+    private String approvalStage;
+
+    /**
+     * The user chose to keep the book within the agreed length / their credits:
+     * remaining chapters may be tightened or the book wound down to its ending
+     * instead of pausing again.
+     */
+    @Builder.Default
+    @Column(nullable = false, columnDefinition = "boolean not null default false")
+    private boolean fitToBudget = false;
+
+    /** Cached AI scope assessment (JSON) and the fingerprint of the inputs it was made from. */
+    @Column(columnDefinition = "text")
+    private String scopeAssessmentJson;
+
+    @Column(length = 64)
+    private String scopeAssessmentKey;
+
+    /**
      * True when the book ran past what the user's credits cover and was brought
      * to its planned ending early (later chapters deferred). Surfaced to the user;
      * never silent. The start gate makes this rare: it only happens when the

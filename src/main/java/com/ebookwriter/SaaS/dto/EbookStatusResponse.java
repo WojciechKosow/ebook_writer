@@ -51,6 +51,21 @@ public class EbookStatusResponse {
      */
     private boolean creditLimited;
 
+    /** The whole-book length the user has agreed to (the estimate's high end, or a later approval). */
+    private Integer approvedPages;
+
+    /**
+     * While {@code AWAITING_APPROVAL}: the length Scrivetta now expects, where the
+     * pause happened ({@code PLAN} / {@code WRITING}) and how many more credits must
+     * be reserved to continue at that length (0 when the hold already covers it).
+     */
+    private Integer proposedPages;
+    private String approvalStage;
+    private int extraCreditsToContinue;
+
+    /** The user chose to keep the book within the agreed length. */
+    private boolean fitToBudget;
+
     /**
      * The <b>final</b> number of pages in the rendered PDF, set once generation
      * completes (0 while still generating). Scrivetta decides the length from the
@@ -94,6 +109,13 @@ public class EbookStatusResponse {
                 .estimatedPagesHigh(ebook.getEstimatedPagesHigh())
                 .plannedPages(ebook.getPlannedPages())
                 .creditLimited(ebook.isCreditLimited())
+                .approvedPages(ebook.getApprovedPages())
+                .proposedPages(ebook.getProposedPages())
+                .approvalStage(ebook.getApprovalStage())
+                .extraCreditsToContinue(ebook.getStatus() == EbookStatus.AWAITING_APPROVAL
+                        ? com.ebookwriter.SaaS.service.ebook.ScopeApproval.extraHold(ebook.getProposedHold(),
+                        ebook.getPageBudget()) : 0)
+                .fitToBudget(ebook.isFitToBudget())
                 .actualPageCount(ebook.getActualPageCount())
                 .creditsCharged(ebook.getCreditsCharged())
                 .generationMode(ebook.getGenerationMode() == null

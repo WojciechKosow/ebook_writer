@@ -119,7 +119,9 @@ public class EbookService {
         return new BookScopeResponse(ebook.effectiveDepth(), ScopeEstimateDTO.from(selected),
                 all.stream().map(ScopeEstimateDTO::from).toList(), balance, required, balance >= required,
                 ebook.getStatus() == EbookStatus.DRAFT ? ebook.getPlannedPages() : null,
-                scopeEstimationService.maxPages());
+                scopeEstimationService.maxPages(),
+                scopeEstimationService.assessmentStatus(ebook).name(),
+                scopeEstimationService.assessmentRationale(ebook).orElse(null));
     }
 
     /**
@@ -175,7 +177,9 @@ public class EbookService {
             throw new IllegalStateException(readiness.blockedReason());
         }
 
-        // Analyse the scope before anything is reserved: depth + brief + materials.
+        // Analyse the scope before anything is reserved: depth + brief + materials,
+        // judged by OpenAI when available (cached; best-effort) and bounded in code.
+        scopeEstimationService.assess(ebook);
         ScopeEstimate estimate = scopeEstimationService.estimate(ebook);
         int required = requiredCredits(ebook, estimate);
 
@@ -215,6 +219,13 @@ public class EbookService {
         ebook.setErrorMessage(null);
         ebook.setEstimatedPagesLow(estimate.pagesLow());
         ebook.setEstimatedPagesHigh(estimate.pagesHigh());
+        // What the user agrees to by starting: the estimate's high end. A book that
+        // turns out clearly longer pauses and asks before growing past it.
+        ebook.setApprovedPages(estimate.pagesHigh());
+        ebook.setFitToBudget(false);
+        ebook.setProposedPages(null);
+        ebook.setProposedHold(null);
+        ebook.setApprovalStage(null);
         ebook.setPlannedPages(null);
         ebook.setGenerationMode(readiness.mode());
         ebook = ebookRepository.save(ebook);
@@ -222,6 +233,113 @@ public class EbookService {
         // Credits committed; safe to hand off to the async worker.
         generationService.generate(ebook.getId());
         return ebook;
+    }
+
+    /** What the user decides when a book paused because it turned out longer (or the credits ran short). */
+    public enum ScopeDecision {
+        /** Keep writing at the new length (extends the credit hold if needed). */
+        CONTINUE,
+        /** Keep the book within the agreed length / the credits: tighten or end it naturally. */
+        FIT,
+        /** Only after planning: cancel, refund everything, back to draft. */
+        CANCEL
+    }
+
+    /**
+     * Resolve a book paused in {@link EbookStatus#AWAITING_APPROVAL}.
+     * <ul>
+     *   <li>{@code CONTINUE} — the user accepts the longer book: the agreed length
+     *       becomes the proposed one, and the credit hold is extended if continuing
+     *       needs more (402 when the balance can't cover it — the book stays paused);</li>
+     *   <li>{@code FIT} — keep it within the agreed length: after planning the outline
+     *       is scaled to it (no chapter dropped); while writing, the remaining
+     *       chapters may be tightened or the book brought to its ending;</li>
+     *   <li>{@code CANCEL} — only after planning (nothing written yet): the whole
+     *       hold is refunded and the book returns to a draft.</li>
+     * </ul>
+     */
+    public Ebook decideScope(UUID ebookId, UUID userId, ScopeDecision decision) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        if (ebook.getStatus() != EbookStatus.AWAITING_APPROVAL) {
+            throw new IllegalStateException("This ebook is not waiting for a decision.");
+        }
+        boolean afterPlan = ScopeApproval.STAGE_PLAN.equals(ebook.getApprovalStage());
+        if (decision == ScopeDecision.CANCEL && !afterPlan) {
+            throw new IllegalStateException("Writing has already started — continue, or keep the book within the agreed length.");
+        }
+        // Atomic claim so a double click can't extend the hold twice or resume twice.
+        if (ebookRepository.claimStatus(ebookId, EbookStatus.AWAITING_APPROVAL, EbookStatus.PENDING) == 0) {
+            throw new IllegalStateException("This ebook is not waiting for a decision.");
+        }
+
+        if (decision == ScopeDecision.CANCEL) {
+            generationService.cancelToDraft(ebookId);
+            return ebookRepository.findById(ebookId).orElseThrow();
+        }
+
+        if (decision == ScopeDecision.CONTINUE) {
+            int extra = ScopeApproval.extraHold(ebook.getProposedHold(), ebook.getPageBudget());
+            if (extra > 0) {
+                try {
+                    creditService.extendGenerationHold(userId, ebookId, extra);
+                } catch (InsufficientCreditsException e) {
+                    ebookRepository.claimStatus(ebookId, EbookStatus.PENDING, EbookStatus.AWAITING_APPROVAL);
+                    throw e;
+                }
+                ebook.setPageBudget(ebook.getPageBudget() + extra);
+                ebook.setCreditsCharged(ebook.getCreditsCharged() + extra);
+            }
+            if (ebook.getProposedPages() != null) {
+                ebook.setApprovedPages(ebook.getProposedPages());
+            }
+        } else {
+            ebook.setFitToBudget(true);
+            if (afterPlan && ebook.getApprovedPages() != null) {
+                int fitted = fitPlanTo(ebookId, ebook.getApprovedPages());
+                ebook.setPlannedPages(fitted);
+            }
+        }
+        ebook.setStatus(EbookStatus.PENDING);
+        ebook.setProposedPages(null);
+        ebook.setProposedHold(null);
+        ebook.setApprovalStage(null);
+        ebook = ebookRepository.save(ebook);
+        generationService.resume(ebookId);
+        return ebook;
+    }
+
+    /**
+     * The user chose to keep a just-planned book within {@code bookPages}: scale
+     * the chapters' planned sizes down proportionally — every chapter (and the
+     * ending) stays, each at a tighter depth. Returns the new planned length.
+     */
+    int fitPlanTo(UUID ebookId, int bookPages) {
+        List<EbookChapter> chapters = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+        int total = chapters.stream().mapToInt(c -> Math.max(1, c.getApproxPages())).sum();
+        int target = Math.max(chapters.size(), bookPages - EbookHtmlBuilder.FRONT_MATTER_PAGES);
+        if (total > target) {
+            double factor = (double) target / total;
+            for (EbookChapter c : chapters) {
+                c.setApproxPages(Math.max(1, (int) Math.floor(Math.max(1, c.getApproxPages()) * factor)));
+            }
+            chapterRepository.saveAll(chapters);
+        }
+        return chapters.stream().mapToInt(EbookChapter::getApproxPages).sum() + EbookHtmlBuilder.FRONT_MATTER_PAGES;
+    }
+
+    /**
+     * Ask OpenAI to assess the draft's scope (cached until its inputs change) and
+     * return the refined scope. Best-effort: without OpenAI the material-based
+     * estimate is returned.
+     */
+    public BookScopeResponse assessScope(UUID ebookId, UUID userId) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        if (ebook.getStatus() == EbookStatus.DRAFT) {
+            scopeEstimationService.assess(ebook);
+        }
+        return scope(ebook, creditService.getBalance(userId));
     }
 
     private static InsufficientCreditsException notEnoughCredits(Ebook ebook, ScopeEstimate estimate,

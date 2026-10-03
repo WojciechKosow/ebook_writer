@@ -149,6 +149,32 @@ public class CreditService {
         return hold;
     }
 
+    /**
+     * Add {@code extra} credits to a running generation's hold — when the user
+     * approves a longer book than first reserved for. Same wallet lock as the
+     * original reservation; the balance must cover the extension (no overdraft
+     * beyond the one already in the hold). Trued up with the rest of the hold.
+     *
+     * @throws InsufficientCreditsException if the balance is below {@code extra}
+     */
+    @Transactional
+    public void extendGenerationHold(UUID userId, UUID ebookId, int extra) {
+        requirePositive(extra);
+        CreditBalance wallet = lockOrCreateWallet(userId);
+        int balance = wallet.getBalance();
+        if (balance < extra) {
+            throw new InsufficientCreditsException(("Continuing at this length needs %d more credits reserved "
+                    + "(you only pay for the pages actually produced) — you have %d. Add credits, or keep the "
+                    + "book within the agreed length.").formatted(extra, Math.max(0, balance)), extra, balance);
+        }
+        wallet.setBalance(balance - extra);
+        balanceRepository.save(wallet);
+        writeLedger(userId, CreditTransactionType.GENERATION, -extra, wallet.getBalance(), ebookId, null, null,
+                "Ebook generation hold extension (" + extra + " credits, approved longer book)");
+        log.info("Extended generation hold of ebook {} by {} credits (balance {} -> {})",
+                ebookId, extra, balance, wallet.getBalance());
+    }
+
     /** Grant credits (subscription, purchase, refund, signup bonus). */
     @Transactional
     public void grant(UUID userId, int amount, CreditTransactionType type,

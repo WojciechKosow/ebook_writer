@@ -6,9 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -92,7 +90,7 @@ class BookPlanningServiceTest {
     }
 
     private static ScopeEstimate estimate(int low, int high) {
-        return new ScopeEstimate(BookDepth.STANDARD, low, high, 5, 8, ScopeEstimate.Basis.BRIEF, 0, false);
+        return new ScopeEstimate(BookDepth.STANDARD, low, high, 5, 8, ScopeEstimate.Basis.BRIEF, 0, false, false);
     }
 
     @Test
@@ -131,21 +129,5 @@ class BookPlanningServiceTest {
                 new PlannedChapter("B", "", 5));
 
         assertEquals(10, totalPages(BookPlanningService.limitRunaway(plan, estimate(27, 41))));
-    }
-
-    @Test
-    void aPlanTheCreditsCannotCoverIsRefusedNotTrimmed() {
-        PlanExceedsCreditsException ex = assertThrows(PlanExceedsCreditsException.class,
-                () -> BookPlanningService.requireAffordable(java.util.UUID.randomUUID(), 95, 60));
-
-        assertEquals(95, ex.getPlannedPages());
-        assertTrue(ex.getMessage().contains("about 95 pages"), ex.getMessage());
-    }
-
-    @Test
-    void aPlanWithinTheHoldIncludingOverdraftIsAccepted() {
-        assertDoesNotThrow(() -> BookPlanningService.requireAffordable(java.util.UUID.randomUUID(), 60, 60));
-        assertDoesNotThrow(() -> BookPlanningService.requireAffordable(java.util.UUID.randomUUID(), 500, 0),
-                "legacy rows without a hold are not checked");
     }
 }

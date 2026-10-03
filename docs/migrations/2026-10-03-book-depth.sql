@@ -15,3 +15,14 @@ ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS estimated_pages_high integer;
 ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS planned_pages integer;
 ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS credit_limited boolean NOT NULL DEFAULT false;
 ALTER TABLE ebooks DROP CONSTRAINT IF EXISTS ebooks_depth_check;
+
+-- Approval pauses + AI scope assessment.
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS approved_pages integer;
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS proposed_pages integer;
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS proposed_hold integer;
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS approval_stage varchar(16);
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS fit_to_budget boolean NOT NULL DEFAULT false;
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS scope_assessment_json text;
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS scope_assessment_key varchar(64);
+-- EbookStatus gained AWAITING_APPROVAL (SchemaConstraintPatch drops this on boot too).
+ALTER TABLE ebooks DROP CONSTRAINT IF EXISTS ebooks_status_check;
