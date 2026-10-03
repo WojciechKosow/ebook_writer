@@ -5,6 +5,7 @@ import java.util.Locale;
 /** What kind of material the author provided. */
 public enum KnowledgeSourceType {
     ZIP,
+    RAR,
     PDF,
     DOCX,
     TXT,
@@ -17,10 +18,16 @@ public enum KnowledgeSourceType {
         if (filename == null) return null;
         String lower = filename.toLowerCase(Locale.ROOT).strip();
         if (lower.endsWith(".zip")) return ZIP;
+        if (lower.endsWith(".rar")) return RAR;
         if (lower.endsWith(".pdf")) return PDF;
         if (lower.endsWith(".docx")) return DOCX;
         if (lower.endsWith(".txt")) return TXT;
         if (lower.endsWith(".md") || lower.endsWith(".markdown")) return MD;
         return null;
+    }
+
+    /** An archive of many files (ZIP or RAR) — unpacked, and each file analysed with its path. */
+    public boolean isArchive() {
+        return this == ZIP || this == RAR;
     }
 }

@@ -159,17 +159,19 @@ openai:
   blueprint-max-output-tokens: ${OPENAI_BLUEPRINT_MAX_OUTPUT_TOKENS:24000}
 
 # Knowledge ingestion limits — bound server work and OpenAI cost per book. A huge
-# ZIP is read only up to these limits; whatever does not fit one analysis run is
+# archive is read only up to these limits; whatever does not fit one analysis run is
 # recorded as "not analysed" (never silently sent).
 knowledge:
   max-upload-bytes: ${KNOWLEDGE_MAX_UPLOAD_BYTES:26214400}          # 25 MB (≤ multipart limit)
   max-sources-per-book: ${KNOWLEDGE_MAX_SOURCES_PER_BOOK:20}
   max-notes-chars: ${KNOWLEDGE_MAX_NOTES_CHARS:100000}
-  zip-max-entries: ${KNOWLEDGE_ZIP_MAX_ENTRIES:5000}
-  zip-max-total-uncompressed-bytes: ${KNOWLEDGE_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES:209715200}  # 200 MB
-  zip-max-compression-ratio: ${KNOWLEDGE_ZIP_MAX_COMPRESSION_RATIO:100}
+  # Archive (ZIP / RAR) limits. The old KNOWLEDGE_ZIP_* variables still work as fallbacks.
+  archive-max-entries: ${KNOWLEDGE_ARCHIVE_MAX_ENTRIES:${KNOWLEDGE_ZIP_MAX_ENTRIES:5000}}
+  archive-max-total-uncompressed-bytes: ${KNOWLEDGE_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES:${KNOWLEDGE_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES:209715200}}  # 200 MB
+  archive-max-compression-ratio: ${KNOWLEDGE_ARCHIVE_MAX_COMPRESSION_RATIO:${KNOWLEDGE_ZIP_MAX_COMPRESSION_RATIO:100}}
+  rar-max-dictionary-bytes: ${KNOWLEDGE_RAR_MAX_DICTIONARY_BYTES:134217728}  # 128 MB decoder window cap
   extraction-timeout-ms: ${KNOWLEDGE_EXTRACTION_TIMEOUT_MS:60000}
-  max-file-bytes: ${KNOWLEDGE_MAX_FILE_BYTES:5242880}               # 5 MB per file inside a ZIP
+  max-file-bytes: ${KNOWLEDGE_MAX_FILE_BYTES:5242880}               # 5 MB per file inside an archive
   max-pdf-pages: ${KNOWLEDGE_MAX_PDF_PAGES:500}
   max-document-chars: ${KNOWLEDGE_MAX_DOCUMENT_CHARS:100000}
   max-stored-chars-per-book: ${KNOWLEDGE_MAX_STORED_CHARS_PER_BOOK:3000000}

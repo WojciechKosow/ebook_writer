@@ -24,7 +24,7 @@ import java.util.zip.ZipInputStream;
  * Turns a single document's bytes into normalised text: PDF (PDFBox text
  * layer), DOCX (paragraph text from {@code word/document.xml}, headings kept as
  * Markdown {@code #}), TXT / MD / any text file (decoded as-is). Used for direct
- * uploads and for documents found inside a ZIP.
+ * uploads and for documents found inside an archive.
  *
  * <p>Failures are reported as {@link DocumentExtractionException} with a reason
  * the author can understand; the caller decides whether that fails the source
@@ -199,7 +199,7 @@ public class DocumentTextExtractor {
     }
 
     /** Read at most {@code max} bytes; throws when the stream holds more. */
-    static byte[] readBounded(InputStream in, long max) throws IOException {
+    public static byte[] readBounded(InputStream in, long max) throws IOException {
         byte[] data = in.readNBytes((int) Math.min(Integer.MAX_VALUE - 8, max + 1));
         if (data.length > max) {
             throw new IOException("entry larger than " + max + " bytes");

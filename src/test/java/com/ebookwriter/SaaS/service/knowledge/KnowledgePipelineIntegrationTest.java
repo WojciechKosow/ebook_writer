@@ -234,6 +234,46 @@ public class KnowledgePipelineIntegrationTest {
         verifyNoInteractions(imageClient);
     }
 
+    @Test
+    void rarProjectGoesThroughTheSamePipelineAsZip() throws Exception {
+        OPENAI.respond(KnowledgePipelineIntegrationTest::modelLikeAnswer);
+        UUID ebookId = createBook();
+
+        // The same project as my-shop.zip, packed as a solid RAR5.
+        uploadZip(ebookId, "my-shop.rar", RarKnowledgeExtractionTest.fixture("my-shop.rar"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.sourceType").value("RAR"))
+                .andExpect(jsonPath("$.status").value("PARTIAL"))
+                .andExpect(jsonPath("$.documentCount").value(18));
+        // Damaged / password-protected RARs are stored as FAILED with a clear reason.
+        uploadZip(ebookId, "locked.rar", RarKnowledgeExtractionTest.fixture("password.rar"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.errorMessage").value(org.hamcrest.Matchers.containsString("password-protected")));
+        uploadZip(ebookId, "evil.rar", RarKnowledgeExtractionTest.fixture("traversal.rar"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.errorMessage").value(org.hamcrest.Matchers.containsString("unsafe path")));
+        uploadZip(ebookId, "project.7z", new byte[]{'7', 'z', 1, 2}).andExpect(status().isUnsupportedMediaType());
+
+        mvc.perform(post("/api/ebooks/" + ebookId + "/knowledge/process").with(auth())).andExpect(status().isAccepted());
+        BookKnowledge done = awaitDone(ebookId);
+        assertEquals(KnowledgeStatus.KNOWLEDGE_READY, done.getStatus(), "error: " + done.getErrorMessage());
+
+        String allSent = String.join("\n", OPENAI.requests().stream()
+                .filter(r -> !isConsolidation(r)).map(FakeOpenAiServer.Request::user).toList());
+        assertTrue(allSent.contains("SOURCE: my-shop.rar (structure)"));
+        assertTrue(allSent.contains("SOURCE: src/main/java/com/shop/security/SecurityConfig.java | type: code | language: java | from: my-shop.rar"),
+                "RAR files are labelled like ZIP files");
+        assertTrue(allSent.contains("SessionCreationPolicy.STATELESS"), "real code from the RAR is analysed");
+        assertFalse(allSent.contains("super-secret-value"), ".env secrets never leave the server");
+        assertFalse(allSent.contains("evil"), "nothing from the rejected archive is analysed");
+
+        BookKnowledgeData k = knowledgeService.getBookKnowledge(ebookId).orElseThrow();
+        assertEquals("Online Shop", k.project().name());
+        assertTrue(topic(k, "JWT authentication").sources().contains("src/main/java/com/shop/security/SecurityConfig.java"));
+    }
+
     // ---- persistence & state rules -------------------------------------------------
 
     @Test
@@ -327,7 +367,7 @@ public class KnowledgePipelineIntegrationTest {
         mvc.perform(get("/api/ebooks/" + ebookId + "/knowledge").with(auth()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CREATED"))
-                .andExpect(jsonPath("$.limits.acceptedFormats.length()").value(5));
+                .andExpect(jsonPath("$.limits.acceptedFormats.length()").value(6));
 
         Ebook ebook = ebookRepository.findById(ebookId).orElseThrow();
         ebook.setStatus(EbookStatus.COMPLETED);

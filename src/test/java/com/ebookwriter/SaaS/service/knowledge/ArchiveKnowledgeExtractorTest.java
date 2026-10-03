@@ -4,6 +4,8 @@ import com.ebookwriter.SaaS.config.properties.KnowledgeProperties;
 import com.ebookwriter.SaaS.dto.knowledge.NormalizedDocument;
 import com.ebookwriter.SaaS.dto.knowledge.NormalizedDocument.Kind;
 import com.ebookwriter.SaaS.dto.knowledge.SkippedFile;
+import com.ebookwriter.SaaS.service.knowledge.archive.RarArchiveReader;
+import com.ebookwriter.SaaS.service.knowledge.archive.ZipArchiveReader;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -15,12 +17,12 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** ZIP ingestion: what is read, what is skipped (and why), and the abuse guards. */
-class ZipKnowledgeExtractorTest {
+/** Archive (ZIP) ingestion: what is read, what is skipped (and why), and the abuse guards. RAR: {@link RarKnowledgeExtractionTest}. */
+class ArchiveKnowledgeExtractorTest {
 
     private final KnowledgeProperties limits = new KnowledgeProperties();
-    private final ZipKnowledgeExtractor extractor =
-            new ZipKnowledgeExtractor(limits, new DocumentTextExtractor(limits));
+    private final ArchiveKnowledgeExtractor extractor = new ArchiveKnowledgeExtractor(limits,
+            new DocumentTextExtractor(limits), List.of(new ZipArchiveReader(), new RarArchiveReader(limits)));
 
     @Test
     void readsTheProjectWithPathsAndSkipsNoise() throws Exception {
@@ -102,7 +104,7 @@ class ZipKnowledgeExtractorTest {
 
     @Test
     void entryCountLimitStopsHugeArchives() throws Exception {
-        limits.setZipMaxEntries(10);
+        limits.setArchiveMaxEntries(10);
         Map<String, byte[]> entries = new LinkedHashMap<>();
         for (int i = 0; i < 50; i++) entries.put("notes/n" + i + ".txt", ("note " + i).getBytes(StandardCharsets.UTF_8));
         ExtractionResult result = extractor.extract("many.zip", MyShopFixture.zipOf(entries));
@@ -128,7 +130,7 @@ class ZipKnowledgeExtractorTest {
     @Test
     void oversizedFilesAndTotalBudgetAreEnforced() throws Exception {
         limits.setMaxFileBytes(1_000);
-        limits.setZipMaxTotalUncompressedBytes(1_500);
+        limits.setArchiveMaxTotalUncompressedBytes(1_500);
         Map<String, byte[]> entries = new LinkedHashMap<>();
         entries.put("big.txt", "x".repeat(5_000).getBytes(StandardCharsets.UTF_8));
         entries.put("a.txt", "a".repeat(900).getBytes(StandardCharsets.UTF_8));
@@ -154,12 +156,12 @@ class ZipKnowledgeExtractorTest {
 
     @Test
     void unsafePathsAreNeutralised() {
-        assertNull(ZipKnowledgeExtractor.safePath("../../etc/passwd"));
-        assertEquals("a/b.txt", ZipKnowledgeExtractor.safePath("/a/./b.txt"));
-        assertEquals("dir/file.md", ZipKnowledgeExtractor.safePath("C:\\dir\\file.md"));
-        assertEquals("my-shop", ZipKnowledgeExtractor.commonRoot(List.of("my-shop/a", "my-shop/b/c")));
-        assertNull(ZipKnowledgeExtractor.commonRoot(List.of("a/x", "b/y")));
-        assertNull(ZipKnowledgeExtractor.commonRoot(List.of("README.md")));
+        assertNull(ArchiveKnowledgeExtractor.safePath("../../etc/passwd"));
+        assertEquals("a/b.txt", ArchiveKnowledgeExtractor.safePath("/a/./b.txt"));
+        assertEquals("dir/file.md", ArchiveKnowledgeExtractor.safePath("C:\\dir\\file.md"));
+        assertEquals("my-shop", ArchiveKnowledgeExtractor.commonRoot(List.of("my-shop/a", "my-shop/b/c")));
+        assertNull(ArchiveKnowledgeExtractor.commonRoot(List.of("a/x", "b/y")));
+        assertNull(ArchiveKnowledgeExtractor.commonRoot(List.of("README.md")));
     }
 
     @Test

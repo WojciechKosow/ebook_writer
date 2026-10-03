@@ -8,11 +8,11 @@ import java.util.UUID;
 
 /**
  * One piece of material the author gave Scrivetta for a book: an uploaded file
- * (ZIP / PDF / DOCX / TXT / MD) or the pasted notes.
+ * (ZIP / RAR / PDF / DOCX / TXT / MD) or the pasted notes.
  *
  * <p>The file is extracted and normalised on upload; only the resulting text is
  * kept (the raw bytes are not stored). {@link #documentsJson} holds the
- * normalised documents — for a ZIP one per useful file, each with its path, so
+ * normalised documents — for an archive one per useful file, each with its path, so
  * every later fact can point back to where it came from. {@link #skippedJson}
  * lists what was left out and why (binary, too large, dependency folder, …).
  */

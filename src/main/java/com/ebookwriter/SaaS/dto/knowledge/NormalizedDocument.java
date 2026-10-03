@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 /**
  * One piece of normalised text extracted from an author's source, ready for
- * analysis. A ZIP yields one per useful file (plus a {@link Kind#STRUCTURE}
+ * analysis. An archive (ZIP / RAR) yields one per useful file (plus a {@link Kind#STRUCTURE}
  * listing of the archive); a PDF/DOCX/TXT/MD upload or the notes yield one.
  *
  * @param path        where it came from: the path inside an archive, the
