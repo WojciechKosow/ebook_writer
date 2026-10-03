@@ -377,21 +377,85 @@ class KnowledgeBookGenerationEndToEndTest {
     @Test
     void creditsAreRespected() throws Exception {
         UUID ebookId = readyKnowledgeBook();
-        // Spend down to 15 credits — below the minimum to start this ~20-page book (20).
-        int balance = creditService.getBalance(user.getId());
-        creditService.spend(user.getId(), balance - 15, CreditTransactionType.GENERATION, null, "test spend");
-        mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth()))
-                .andExpect(status().isPaymentRequired());
-        assertEquals(EbookStatus.DRAFT, ebookRepository.findById(ebookId).orElseThrow().getStatus());
+        // Scrivetta estimates the book from its depth, materials and blueprint; the
+        // start needs credits for the estimate's high end.
+        String scopeJson = mvc.perform(get("/api/ebooks/" + ebookId + "/scope").with(auth()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.depth").value("QUICK"))
+                .andExpect(jsonPath("$.estimate.basis").value("BLUEPRINT"))
+                .andExpect(jsonPath("$.options.length()").value(3))
+                .andReturn().getResponse().getContentAsString();
+        int required = MAPPER.readTree(scopeJson).path("requiredCredits").asInt();
+        assertTrue(required > 0);
 
-        // With exactly the minimum the book is still finished, and the balance never goes below the overdraft floor.
-        creditService.grant(user.getId(), 5, CreditTransactionType.CREDIT_PURCHASE, null, null, "top up");
+        // One credit short: refused with an explanation, nothing reserved, still a draft.
+        int balance = creditService.getBalance(user.getId());
+        creditService.spend(user.getId(), balance - (required - 1), CreditTransactionType.GENERATION, null, "test spend");
+        mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth()))
+                .andExpect(status().isPaymentRequired())
+                .andExpect(jsonPath("$.required").value(required))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("Quick depth")));
+        assertEquals(EbookStatus.DRAFT, ebookRepository.findById(ebookId).orElseThrow().getStatus());
+        assertEquals(required - 1, creditService.getBalance(user.getId()));
+
+        // With exactly the required credits the book is finished, and the balance never goes below the overdraft floor.
+        creditService.grant(user.getId(), 1, CreditTransactionType.CREDIT_PURCHASE, null, null, "top up");
         mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth())).andExpect(status().isAccepted());
         Ebook ebook = awaitFinished(ebookId);
         assertEquals(EbookStatus.COMPLETED, ebook.getStatus(), ebook.getErrorMessage());
         assertEquals(ebook.getActualPageCount(), ebook.getCreditsCharged());
         assertTrue(creditService.getBalance(user.getId()) >= -10);
         assertTrue(ebook.getCreditsCharged() <= ebook.getPageBudget(), "never past the reserved ceiling");
+        assertTrue(ebook.getPlannedPages() != null && ebook.getPlannedPages() > 0, "the plan's size is recorded");
+        assertTrue(ebook.getEstimatedPagesHigh() != null && ebook.getEstimatedPagesHigh() >= ebook.getEstimatedPagesLow());
+    }
+
+    @Test
+    void aPlanTheCreditsCannotCoverReturnsToDraftInsteadOfBeingCut() throws Exception {
+        // A brief-only book at QUICK depth; the user holds exactly what the estimate needs.
+        UUID ebookId = createBook();
+        String scopeJson = mvc.perform(get("/api/ebooks/" + ebookId + "/scope").with(auth()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.estimate.basis").value("BRIEF"))
+                .andReturn().getResponse().getContentAsString();
+        int required = MAPPER.readTree(scopeJson).path("requiredCredits").asInt();
+        int balance = creditService.getBalance(user.getId());
+        creditService.spend(user.getId(), balance - required, CreditTransactionType.GENERATION, null, "test spend");
+
+        // The planner decides the subject needs far more than the estimate (but not a
+        // runaway): the planned book is larger than the credits (+ overdraft) cover.
+        int perChapter = required + 8;
+        claude.legacyPlan = """
+                {"title": "Big Book", "subtitle": "s", "targetAudience": "a", "description": "d",
+                 "writingGuidelines": "g", "chapters": [
+                   {"title": "One", "description": "x", "approxPages": %d},
+                   {"title": "Conclusion", "description": "y", "approxPages": 4}]}
+                """.formatted(perChapter);
+        mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth())).andExpect(status().isAccepted());
+        await(() -> {
+            Ebook e = ebookRepository.findById(ebookId).orElseThrow();
+            return e.getStatus() == EbookStatus.DRAFT && e.getErrorMessage() != null;
+        }, "back to draft");
+
+        Ebook draft = ebookRepository.findById(ebookId).orElseThrow();
+        int plannedBook = perChapter + 4 + 2;
+        assertEquals(plannedBook, draft.getPlannedPages());
+        assertTrue(draft.getErrorMessage().contains("about " + plannedBook + " pages"), draft.getErrorMessage());
+        assertEquals(required, creditService.getBalance(user.getId()), "the whole hold was refunded");
+        assertTrue(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).isEmpty(), "nothing was written");
+        assertTrue(claude.calls.stream().noneMatch(FakeClaude.Call::isLegacyChapter));
+
+        // The planning prompt asked for depth, with the estimate only as orientation.
+        String planning = claude.calls.stream().filter(FakeClaude.Call::isLegacyPlanning).findFirst().orElseThrow().user();
+        assertTrue(planning.contains("QUICK — a short, focused book"));
+        assertTrue(planning.contains("not a target, not a limit"));
+        assertFalse(planning.contains("must not exceed"));
+
+        // The draft now asks for the planned size; starting again without credits is refused.
+        mvc.perform(get("/api/ebooks/" + ebookId + "/scope").with(auth()))
+                .andExpect(jsonPath("$.requiredCredits").value(plannedBook))
+                .andExpect(jsonPath("$.plannedPages").value(plannedBook))
+                .andExpect(jsonPath("$.canGenerate").value(false));
+        mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth())).andExpect(status().isPaymentRequired());
     }
 
     @Test
@@ -423,7 +487,7 @@ class KnowledgeBookGenerationEndToEndTest {
 
     private UUID createBook() throws Exception {
         String body = MAPPER.writeValueAsString(Map.of("topic", MyShopFixture.TITLE, "language", "English",
-                "targetAudience", MyShopFixture.AUDIENCE, "bookGoal", MyShopFixture.GOAL, "targetPages", 20));
+                "targetAudience", MyShopFixture.AUDIENCE, "bookGoal", MyShopFixture.GOAL, "depth", "QUICK"));
         String json = mvc.perform(post("/api/ebooks").with(auth()).contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         return UUID.fromString(MAPPER.readTree(json).path("id").asText());

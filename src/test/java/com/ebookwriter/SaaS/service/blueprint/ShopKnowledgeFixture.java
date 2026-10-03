@@ -60,7 +60,7 @@ public final class ShopKnowledgeFixture {
 
         return new BookKnowledgeData(1,
                 new BookInfo("Building an Online Shop with Spring Boot", "English", "Beginner Java developers",
-                        "Teach beginners how to build the project from scratch.", null, 30),
+                        "Teach beginners how to build the project from scratch.", null, "STANDARD"),
                 new ProjectInfo("Online Shop", "web application backend", "A Spring Boot online-shop backend.", "e-commerce",
                         List.of("Java 21", "Spring Boot", "PostgreSQL", "JWT"), List.of("pom.xml", "README.md")),
                 "An online shop backend built step by step.",

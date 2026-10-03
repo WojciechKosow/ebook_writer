@@ -1,11 +1,13 @@
 package com.ebookwriter.SaaS.controller;
 
+import com.ebookwriter.SaaS.dto.BookScopeResponse;
 import com.ebookwriter.SaaS.dto.EbookContentResponse;
 import com.ebookwriter.SaaS.dto.EbookStatusResponse;
 import com.ebookwriter.SaaS.dto.GenerationBudgetResponse;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.UserRepository;
+import com.ebookwriter.SaaS.request.DepthUpdateRequest;
 import com.ebookwriter.SaaS.request.EbookContentUpdateRequest;
 import com.ebookwriter.SaaS.request.EbookRequest;
 import com.ebookwriter.SaaS.service.ebook.EbookPreviewService;
@@ -92,15 +94,38 @@ public class EbookController {
     }
 
     /**
-     * Describe the generation budget for the creation form: minimum credits to
-     * start, the orientational page range, the current balance and whether the
-     * user can generate now. Lets the UI show "Estimated usage ~20–30 credits",
-     * the balance, and an enough/not-enough message — a budget, not a page order.
+     * The creation form's depth options, each with a preliminary length and credit
+     * estimate from the brief typed so far, plus the balance. The user picks a
+     * depth, never a page count; the estimate is refined once materials are added
+     * ({@code GET /{id}/scope}).
      */
     @GetMapping("/generation-budget")
-    public ResponseEntity<GenerationBudgetResponse> generationBudget(Authentication authentication) {
+    public ResponseEntity<GenerationBudgetResponse> generationBudget(
+            @RequestParam(defaultValue = "0") int briefChars,
+            @RequestParam(defaultValue = "0") long sourceChars,
+            Authentication authentication) {
         User user = currentUser(authentication);
-        return ResponseEntity.ok(ebookService.getGenerationBudget(user.getId()));
+        return ResponseEntity.ok(ebookService.getGenerationBudget(user.getId(), briefChars, sourceChars));
+    }
+
+    /**
+     * A draft's scope: Scrivetta's length and credit estimate for the selected
+     * depth (and for the others), from the brief, materials and blueprint, plus
+     * whether the balance is enough to start. Estimates only.
+     */
+    @GetMapping("/{id}/scope")
+    public ResponseEntity<BookScopeResponse> scope(@PathVariable UUID id, Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(ebookService.getScope(id, user.getId()));
+    }
+
+    /** Change a draft's depth; returns the updated scope. {@code 409} once generation has started. */
+    @PutMapping("/{id}/depth")
+    public ResponseEntity<BookScopeResponse> updateDepth(@PathVariable UUID id,
+                                                         @Valid @RequestBody DepthUpdateRequest request,
+                                                         Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(ebookService.updateDepth(id, user.getId(), request.getDepth()));
     }
 
     /** Load the full editable manuscript (all chapters + Markdown bodies). */

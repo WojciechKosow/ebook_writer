@@ -59,7 +59,7 @@ lifetime), and warnings.
 ## Pipeline (`BookBlueprintService.build`)
 
 1. **Prompt.** The prompt (`BlueprintPrompts`) contains:
-   - the brief, with chapter guidance from `ContentBudget`
+   - the brief, with the selected depth and depth-based chapter guidance (no page target)
    - the compact BookKnowledge JSON (no bookkeeping, trimmed per list to
      `blueprint.max-knowledge-chars`)
    - the valid source refs

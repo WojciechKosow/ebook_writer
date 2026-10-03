@@ -102,7 +102,7 @@ class KnowledgeAssemblerTest {
 
     @Test
     void roundTripsThroughJson() {
-        BookKnowledgeData d = new BookKnowledgeData(1, new BookKnowledgeData.BookInfo("T", "English", "A", "G", null, 30),
+        BookKnowledgeData d = new BookKnowledgeData(1, new BookKnowledgeData.BookInfo("T", "English", "A", "G", null, "STANDARD"),
                 null, "s", List.of(new BookKnowledgeData.Topic("x", "y", "low", List.of("README.md"))),
                 null, null, null, null, null, null, null, null, null, null, null);
         BookKnowledgeData back = KnowledgeAssembler.read(KnowledgeAssembler.write(d));

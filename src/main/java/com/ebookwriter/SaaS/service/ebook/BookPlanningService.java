@@ -6,7 +6,7 @@ import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.prompt.PlanningPrompts;
-import com.ebookwriter.SaaS.config.properties.CreditProperties;
+import com.ebookwriter.SaaS.entity.BookDepth;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,6 +23,10 @@ import java.util.UUID;
 /**
  * Step 1 — ask the model for a structured book plan and persist it as the
  * ebook's metadata plus a set of PENDING chapters.
+ *
+ * <p>The plan is driven by the selected {@link BookDepth} and the content, never
+ * by a page count: the planner decides how many chapters the subject needs at
+ * that depth and how much room each needs, and the sum is the planned length.
  */
 @Slf4j
 @Service
@@ -37,7 +41,7 @@ public class BookPlanningService {
 
     private final AnthropicService anthropicService;
     private final EbookRepository ebookRepository;
-    private final CreditProperties creditProperties;
+    private final ScopeEstimationService scopeEstimationService;
 
     @Transactional
     public void plan(UUID ebookId) {
@@ -45,27 +49,11 @@ public class BookPlanningService {
         Ebook ebook = ebookRepository.findById(ebookId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found: " + ebookId));
 
-        int frontMatter = EbookHtmlBuilder.FRONT_MATTER_PAGES;
-
-        // Two separate concepts (see ContentBudget):
-        //  - the TARGET the user selected is a soft content budget that shapes the
-        //    outline, so the book naturally lands around that size;
-        //  - the reserved CEILING (min(balance, cap) + overdraft) is what the user
-        //    may actually generate — a hard maximum, never something to fill.
-        // Legacy rows without a reservation fall back to the target as the ceiling.
-        int targetPages = ebook.getApproxPageCount() > 0 ? ebook.getApproxPageCount()
-                : Math.max(ContentBudget.MIN_TARGET_PAGES, creditProperties.getStandardTargetPages());
-        int pageBudget = ebook.getPageBudget() > 0 ? ebook.getPageBudget() : targetPages;
-        int contentCeiling = Math.max(1, pageBudget - frontMatter);
-
-        // If the user can't strictly afford the target (the ceiling minus the
-        // overdraft buffer), plan a complete book for what they CAN afford rather
-        // than planning the full target and running out of credits mid-book. The
-        // overdraft stays as headroom for a natural ending.
-        int affordable = Math.max(ContentBudget.MIN_TARGET_PAGES,
-                pageBudget - Math.max(0, creditProperties.getMaxOverdraft()));
-        int effectiveTarget = Math.min(targetPages, affordable);
-        ContentBudget budget = ContentBudget.forTarget(effectiveTarget);
+        // The user chose a DEPTH, not a page count. Scrivetta's estimate (from the
+        // brief and any source text) is passed to the planner as orientation only;
+        // the plan's length is whatever the content needs at that depth.
+        BookDepth depth = ebook.effectiveDepth();
+        ScopeEstimate estimate = scopeEstimationService.estimate(ebook);
 
         // A fixed structure promised in the brief ("7-day plan", "10-step guide")
         // must be delivered in full; tell the planner so and check it afterwards.
@@ -75,28 +63,29 @@ public class BookPlanningService {
                         + "the " + s.count() + " " + s.unit() + "s must be covered in the plan; "
                         + "do not stop partway.")
                 .orElse("");
-        int structuralMinimum = structure.map(BookPlanningService::structuralMinimumPages).orElse(0);
 
         String system = PlanningPrompts.system(ebook.getLanguage());
-        String user = PlanningPrompts.user(ebook, budget, Math.min(contentCeiling,
-                Math.max(budget.softLimit(structuralMinimum), budget.contentTarget())), structureHint);
+        String user = PlanningPrompts.user(ebook, depth, estimate, structureHint);
 
         String raw = anthropicService.complete(system, user, PLAN_MAX_TOKENS);
         BookPlan plan = parsePlan(raw);
+
+        // Only two guards, neither derived from user input: a planner that ran away
+        // far past any sensible scope, and the per-book safety maximum.
+        List<PlannedChapter> planned = limitRunaway(plan.chapters(), estimate);
+        planned = clampToBudget(planned, scopeEstimationService.maxPages() - EbookHtmlBuilder.FRONT_MATTER_PAGES);
+        int plannedBook = totalPages(planned) + EbookHtmlBuilder.FRONT_MATTER_PAGES;
+
+        // Never cut a planned book down to the balance: if the user's credits can't
+        // cover it, stop here (nothing written, hold refunded) and say so.
+        requireAffordable(ebookId, plannedBook, ebook.getPageBudget());
 
         ebook.setTitle(orDefault(plan.title(), ebook.getTopic()));
         ebook.setSubtitle(plan.subtitle());
         ebook.setDescription(plan.description());
         ebook.setWritingGuidelines(plan.writingGuidelines());
         ebook.setPlanJson(raw);
-
-        // Keep the outline near the selected target (the planner is asked to, but a
-        // model left alone tends to expand), then enforce the hard credit ceiling
-        // even if the model ignored it.
-        List<PlannedChapter> planned = rebalanceToTarget(plan.chapters(),
-                budget.softLimit(structuralMinimum),
-                Math.max(budget.contentTarget(), structuralMinimum));
-        planned = clampToBudget(planned, contentCeiling);
+        ebook.setPlannedPages(plannedBook);
 
         ebook.getChapters().clear();
         int number = 1;
@@ -113,72 +102,81 @@ public class BookPlanningService {
         }
 
         ebookRepository.save(ebook);
-        int plannedPages = ebook.getChapters().stream().mapToInt(EbookChapter::getApproxPages).sum();
-        log.info("Planned ebook {} — '{}' with {} chapters, {} content pages "
-                        + "(selected target {}, planned against {}, soft limit {}, credit ceiling {})",
-                ebookId, ebook.getTitle(), ebook.getChapters().size(), plannedPages,
-                targetPages, effectiveTarget, budget.softLimit(structuralMinimum), contentCeiling);
-        if (effectiveTarget < targetPages) {
-            log.info("Ebook {}: credits cover ~{} pages, below the selected target {}; "
-                    + "planned a complete book at the affordable size", ebookId, effectiveTarget, targetPages);
-        }
-        int chapterCount = ebook.getChapters().size();
-        if (structure.isEmpty() && (chapterCount < budget.minChapters() || chapterCount > budget.maxChapters())) {
-            log.info("Ebook {}: {} chapters is outside the usual {}–{} for a ~{}-page book (kept as planned)",
-                    ebookId, chapterCount, budget.minChapters(), budget.maxChapters(), effectiveTarget);
-        }
+        log.info("Planned ebook {} — '{}' at depth {}: {} chapters, ~{} pages "
+                        + "(estimate was {}–{}, credit ceiling {})",
+                ebookId, ebook.getTitle(), depth, ebook.getChapters().size(), plannedBook,
+                estimate.pagesLow(), estimate.pagesHigh(), ebook.getPageBudget());
 
         // Structural completeness check: a promised fixed structure (N days/steps)
-        // needs enough room to actually deliver every unit. This never fails the
-        // book, but a shortfall is a strong signal the finished book may stop
-        // partway, so it is logged loudly for observability.
+        // needs a chapter per unit (or grouped units). This never fails the book,
+        // but a shortfall is a strong signal the planner skipped units.
         structure.ifPresent(req -> {
-            if (ebook.getChapters().size() < req.count()) {
+            if (ebook.getChapters().size() < Math.min(req.count(), 3)) {
                 log.warn("Ebook {} promises a {} structure but the plan has only {} chapters; "
-                                + "the finished book may not cover every {}. Consider a larger page budget.",
+                                + "the finished book may not cover every {}.",
                         ebookId, req.describe(), ebook.getChapters().size(), req.unit());
             }
         });
     }
 
     /**
-     * Content pages a promised structure genuinely needs: every unit at a sensible
-     * minimum depth (two pages — an explanation plus something to do), plus an
-     * opening and a closing chapter. The soft limit never drops below this, so a
-     * "7-day" book is never compressed below seven real days to hit a number.
+     * A planned book must fit what the user's credits cover (the reserved hold,
+     * which includes the small overdraft for a natural overshoot). If it doesn't,
+     * the book is not trimmed to fit — planning stops and the user is told how many
+     * credits the planned book needs. Legacy rows without a hold are not checked.
      */
-    static int structuralMinimumPages(StructureRequirement structure) {
-        return structure.count() * 2 + 2;
+    static void requireAffordable(UUID ebookId, int plannedBookPages, int pageBudget) {
+        if (pageBudget > 0 && plannedBookPages > pageBudget) {
+            log.info("Ebook {}: planned ~{} pages but the credit hold covers {}; returning to draft",
+                    ebookId, plannedBookPages, pageBudget);
+            throw new PlanExceedsCreditsException(plannedBookPages, pageBudget);
+        }
+    }
+
+    static int totalPages(List<PlannedChapter> chapters) {
+        return chapters.stream().mapToInt(pc -> Math.max(1, pc.approxPages())).sum();
     }
 
     /**
-     * Keep the outline near the selected target. A plan whose total is within
-     * {@code softLimit} is the planner's own design and is returned unchanged
-     * (a book may legitimately land a little over its target). Above it, chapter
-     * page counts are scaled down proportionally toward {@code landing} — chapters
-     * are never dropped here, so every planned topic (and the conclusion) survives;
-     * they are simply planned at a depth closer to what the user asked for. A plan
-     * under the target is never inflated: no padding to reach a number.
+     * How far a plan may exceed Scrivetta's own estimate before it is treated as a
+     * planner runaway. Generous on purpose: the estimate is orientation, and a plan
+     * that needs more than its range is normal — only a plan several times larger
+     * than anything the depth and material suggest is pulled back.
      */
-    static List<PlannedChapter> rebalanceToTarget(List<PlannedChapter> chapters, int softLimit, int landing) {
-        int total = chapters.stream().mapToInt(pc -> Math.max(1, pc.approxPages())).sum();
-        if (total <= Math.max(1, softLimit)) {
+    static final double RUNAWAY_FACTOR = 2.0;
+
+    /** Where a runaway plan is pulled back to, relative to the estimate's high end. */
+    static final double RUNAWAY_LANDING = 1.5;
+
+    /**
+     * Guard against a planner runaway (the "keeps expanding" failure mode), never
+     * against a long book. A plan up to {@link #RUNAWAY_FACTOR}× the high end of
+     * Scrivetta's estimate is the planner's own design and is returned unchanged —
+     * the estimate is not a limit. Beyond that, chapter sizes are scaled down
+     * toward {@link #RUNAWAY_LANDING}× the estimate. Chapters are never dropped
+     * here, so every planned topic (and the conclusion) survives.
+     */
+    static List<PlannedChapter> limitRunaway(List<PlannedChapter> chapters, ScopeEstimate estimate) {
+        int total = totalPages(chapters);
+        int estimateContent = Math.max(1, estimate.pagesHigh() - EbookHtmlBuilder.FRONT_MATTER_PAGES);
+        if (total <= estimateContent * RUNAWAY_FACTOR) {
             return chapters;
         }
-        double factor = (double) Math.max(1, landing) / total;
+        int landing = (int) Math.ceil(estimateContent * RUNAWAY_LANDING);
+        double factor = (double) landing / total;
         List<PlannedChapter> scaled = new ArrayList<>(chapters.size());
         for (PlannedChapter pc : chapters) {
             int pages = Math.max(1, (int) Math.round(Math.max(1, pc.approxPages()) * factor));
             scaled.add(new PlannedChapter(pc.title(), pc.description(), pages));
         }
-        log.info("Rebalanced plan from {} toward the target {} content pages (soft limit {})",
-                total, landing, softLimit);
+        log.warn("Planner runaway: {} content pages against an estimate of {}–{}; scaled toward {}",
+                total, estimate.pagesLow(), estimate.pagesHigh(), landing);
         return scaled;
     }
 
     /**
-     * Force the planned chapters to fit within {@code budget} pages — the hard
-     * credit ceiling. Each chapter keeps a floor of one page; if the model's totals
+     * Force the planned chapters to fit within {@code budget} pages — the per-book
+     * safety maximum (never a user-chosen length). Each chapter keeps a floor of one page; if the model's totals
      * exceed the budget the per-chapter page counts are scaled down proportionally,
      * and if it planned more chapters than the budget can hold at one page each,
      * chapters are dropped from before the final one, so the book always keeps its

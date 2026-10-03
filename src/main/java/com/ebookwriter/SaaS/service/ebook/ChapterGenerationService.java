@@ -44,8 +44,8 @@ public class ChapterGenerationService {
      * Words that fill one rendered page in the actual 6×9" book layout. Measured
      * empirically against the real PDF pipeline (see WordsPerPageCalibrationTest)
      * — the layout fits ~200 words per content page, NOT the ~450 a plain-text
-     * estimate suggests. Using the true value keeps generated length close to the
-     * requested page count instead of overshooting it 2–3×.
+     * estimate suggests. Using the true value keeps a chapter's written length
+     * close to the size it was planned with (and the credit pacing accurate).
      */
     static final int WORDS_PER_PAGE = 200;
 
@@ -161,7 +161,7 @@ public class ChapterGenerationService {
      * Output tokens for a chapter of {@code targetWords}: generous headroom (words
      * → tokens, Markdown and component syntax, non-English text, adaptive thinking
      * and the summary) so a chapter that runs a little long to finish its thought
-     * is never cut off. The target is the length signal; this is only a backstop.
+     * is never cut off. The planned size is orientation; this is only a backstop.
      */
     static long outputTokenBudget(int targetWords) {
         return Math.min(MAX_OUTPUT_TOKENS, targetWords * 3L + 3000L);

@@ -63,11 +63,15 @@ public record BookKnowledgeData(
         return list == null ? List.of() : list.stream().filter(java.util.Objects::nonNull).toList();
     }
 
-    /** The author's brief, copied in so the knowledge is self-describing. */
+    /**
+     * The author's brief, copied in so the knowledge is self-describing. {@code depth}
+     * is the selected {@code BookDepth}; older knowledge carried a page target here,
+     * which is ignored on read.
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record BookInfo(String workingTitle, String language, String targetAudience,
-                           String goal, String style, Integer targetPages) {
+                           String goal, String style, String depth) {
     }
 
     /** What the materials are about as a whole (a project, a course, a practice…). */

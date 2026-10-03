@@ -1,9 +1,9 @@
 package com.ebookwriter.SaaS.service.ebook;
 
-import com.ebookwriter.SaaS.config.properties.CreditProperties;
 import com.ebookwriter.SaaS.dto.blueprint.BlueprintData;
 import com.ebookwriter.SaaS.dto.blueprint.BookGenerationInput;
 import com.ebookwriter.SaaS.dto.plan.PlannedChapter;
+import com.ebookwriter.SaaS.entity.BookDepth;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
@@ -26,11 +26,11 @@ import java.util.UUID;
  * the writer, editor, image pipeline and PDF renderer already use), each linked
  * to its blueprint chapter via {@code blueprintChapterId}.
  *
- * <p>Sizing reuses the legacy planner's rules: the selected target length
- * (capped by what the credits afford) is spread over the chapters by how much of
- * the author's knowledge each one carries, then held under the hard credit
- * ceiling with {@link BookPlanningService#clampToBudget} (which keeps the
- * book's final chapter if chapters must be dropped).
+ * <p>Sizing follows the content, not a page count: each chapter gets the room
+ * its share of the author's knowledge needs at the selected depth (see
+ * {@link #size}), and the sum is the planned length. If the user's credits don't
+ * cover that, planning stops with {@link PlanExceedsCreditsException} instead of
+ * cutting chapters; only the per-book safety maximum can shrink a plan.
  */
 @Slf4j
 @Service
@@ -39,7 +39,7 @@ public class KnowledgeBookPlanner {
 
     private final EbookRepository ebookRepository;
     private final BookBlueprintService blueprintService;
-    private final CreditProperties creditProperties;
+    private final ScopeEstimationService scopeEstimationService;
 
     @Transactional
     public void plan(UUID ebookId) {
@@ -50,22 +50,24 @@ public class KnowledgeBookPlanner {
                         "The book blueprint is no longer ready — finish it before generating."));
         BlueprintData bp = input.blueprint();
 
-        int targetPages = ebook.getApproxPageCount() > 0 ? ebook.getApproxPageCount()
-                : Math.max(ContentBudget.MIN_TARGET_PAGES, creditProperties.getStandardTargetPages());
-        int pageBudget = ebook.getPageBudget() > 0 ? ebook.getPageBudget() : targetPages;
-        int contentCeiling = Math.max(1, pageBudget - EbookHtmlBuilder.FRONT_MATTER_PAGES);
-        int affordable = Math.max(ContentBudget.MIN_TARGET_PAGES,
-                pageBudget - Math.max(0, creditProperties.getMaxOverdraft()));
-        ContentBudget budget = ContentBudget.forTarget(Math.min(targetPages, affordable));
-
-        List<PlannedChapter> planned = distribute(bp.chapters(), budget.contentTarget());
-        List<PlannedChapter> kept = BookPlanningService.clampToBudget(planned, contentCeiling);
+        // Size each chapter by how much of the author's knowledge it carries at the
+        // selected depth; the sum is the book's planned length. No user page count
+        // is involved — only the per-book safety maximum, and the credit check.
+        BookDepth depth = ebook.effectiveDepth();
+        ScopeEstimate estimate = scopeEstimationService.estimate(ebook);
+        List<PlannedChapter> planned = size(bp.chapters(), depth,
+                estimate.midpoint() - EbookHtmlBuilder.FRONT_MATTER_PAGES);
+        List<PlannedChapter> kept = BookPlanningService.clampToBudget(planned,
+                scopeEstimationService.maxPages() - EbookHtmlBuilder.FRONT_MATTER_PAGES);
+        int plannedBook = BookPlanningService.totalPages(kept) + EbookHtmlBuilder.FRONT_MATTER_PAGES;
+        BookPlanningService.requireAffordable(ebookId, plannedBook, ebook.getPageBudget());
 
         ebook.setTitle(orDefault(bp.workingTitle(), ebook.getTopic()));
         ebook.setSubtitle(blankToNull(bp.subtitle()));
         ebook.setDescription(orDefault(bp.concept(), bp.promise()));
         ebook.setWritingGuidelines(writingGuidelines(ebook, bp));
         ebook.setPlanJson(null);
+        ebook.setPlannedPages(plannedBook);
 
         ebook.getChapters().clear();
         int number = 1;
@@ -88,33 +90,47 @@ public class KnowledgeBookPlanner {
         }
         ebookRepository.save(ebook);
         if (kept.size() < planned.size()) {
-            log.warn("Ebook {}: the credit ceiling ({} content pages) holds {} of the blueprint's {} chapters; "
-                    + "the final chapter was kept", ebookId, contentCeiling, kept.size(), planned.size());
+            log.warn("Ebook {}: the per-book safety maximum holds {} of the blueprint's {} chapters; "
+                    + "the final chapter was kept", ebookId, kept.size(), planned.size());
         }
-        log.info("Planned knowledge-based ebook {} from its blueprint: '{}', {} chapters, {} content pages "
-                        + "(target {}, credit ceiling {})", ebookId, ebook.getTitle(), ebook.getChapters().size(),
-                kept.stream().mapToInt(PlannedChapter::approxPages).sum(), budget.contentTarget(), contentCeiling);
+        log.info("Planned knowledge-based ebook {} from its blueprint at depth {}: '{}', {} chapters, ~{} pages "
+                        + "(estimate {}–{}, credit ceiling {})", ebookId, depth, ebook.getTitle(),
+                ebook.getChapters().size(), plannedBook, estimate.pagesLow(), estimate.pagesHigh(),
+                ebook.getPageBudget());
     }
 
     /**
-     * Spread {@code contentPages} over the blueprint chapters, weighted by how much
-     * of the author's material each chapter carries (topics, key points, knowledge
-     * references), so a chapter mapped to a lot of real knowledge gets room for it
-     * and a short orientation chapter stays short. Every chapter gets at least one
-     * page. Pure; unit-tested.
+     * How far the blended estimate (which also weighs the raw volume and breadth
+     * of the materials) may move the per-chapter sizes. Keeps each chapter's size
+     * anchored in what that chapter itself carries.
      */
-    static List<PlannedChapter> distribute(List<BlueprintData.Chapter> chapters, int contentPages) {
-        List<Integer> weights = new ArrayList<>();
-        int total = 0;
+    static final double MIN_SCALE = 0.6;
+    static final double MAX_SCALE = 1.6;
+
+    /**
+     * Size the blueprint chapters at this depth. Each chapter gets the room its
+     * own knowledge needs ({@link ScopeEstimator#chapterPages}), so a chapter
+     * mapped to a lot of the author's material gets space for it and a short
+     * orientation chapter stays short. The sizes are then scaled (within
+     * {@link #MIN_SCALE}–{@link #MAX_SCALE}) toward {@code estimatedContentPages}, the
+     * estimate that also accounts for the materials' overall volume. Every chapter
+     * gets at least one page. Pure; unit-tested.
+     */
+    static List<PlannedChapter> size(List<BlueprintData.Chapter> chapters, BookDepth depth,
+                                     int estimatedContentPages) {
+        List<Double> raw = new ArrayList<>();
+        double total = 0;
         for (BlueprintData.Chapter c : chapters) {
-            int w = Math.min(12, 2 + c.topics().size() + c.keyPoints().size() + c.knowledgeReferences().size());
-            weights.add(w);
-            total += w;
+            double pages = ScopeEstimator.chapterPagesExact(depth, ScopeEstimationService.chapterSignal(c));
+            raw.add(pages);
+            total += pages;
         }
+        double scale = total <= 0 ? 1.0
+                : Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.max(1, estimatedContentPages) / total));
         List<PlannedChapter> out = new ArrayList<>();
         for (int i = 0; i < chapters.size(); i++) {
             BlueprintData.Chapter c = chapters.get(i);
-            int pages = Math.max(1, (int) Math.round((double) contentPages * weights.get(i) / Math.max(1, total)));
+            int pages = Math.max(1, (int) Math.round(raw.get(i) * scale));
             out.add(new PlannedChapter(c.title(), describe(c), pages));
         }
         return out;

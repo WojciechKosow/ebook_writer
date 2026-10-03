@@ -1,7 +1,7 @@
 package com.ebookwriter.SaaS.prompt;
 
+import com.ebookwriter.SaaS.entity.BookDepth;
 import com.ebookwriter.SaaS.entity.Ebook;
-import com.ebookwriter.SaaS.service.ebook.ContentBudget;
 
 /**
  * Prompts for the Book Blueprint — OpenAI planning a book from the author's
@@ -79,7 +79,7 @@ public final class BlueprintPrompts {
                   is fine when it is grounded in the materials; generic chapters like "Introduction",
                   "Basics", "Advanced topics", "Conclusion" with no grounding are not.
                 - Chapter titles are specific ("Securing the API with JWT", not "Security").
-                - Use the brief's target length to size the structure (see CHAPTER GUIDANCE).
+                - Use the brief's depth to decide the structure (see DEPTH and CHAPTER GUIDANCE).
                 - purpose and keyPoints are short planning notes, never book prose.
 
                 KNOWLEDGE GAPS
@@ -137,7 +137,7 @@ public final class BlueprintPrompts {
      */
     public static String user(Ebook e, String knowledgeJson, String validRefs, String confirmedFields,
                               String answers, String currentStructure) {
-        ContentBudget budget = ContentBudget.forTarget(e.getApproxPageCount() > 0 ? e.getApproxPageCount() : 30);
+        BookDepth depth = e.effectiveDepth();
         StringBuilder sb = new StringBuilder();
         sb.append("""
                 BOOK BRIEF
@@ -147,14 +147,19 @@ public final class BlueprintPrompts {
                 Language of the book: %s
                 Style: %s
                 Additional instructions: %s
-                Target length: about %d pages
+
+                DEPTH (the author's scope choice — there is no page target)
+                %s
 
                 CHAPTER GUIDANCE
-                Typically %d–%d chapters at this length — fewer if the author's material is narrow,
-                never padded with chapters the knowledge cannot support.
+                Let the author's knowledge define the chapters. Give every substantial area of the
+                material the chapter(s) it needs at this depth: at QUICK merge minor areas and leave out
+                secondary ones; at COMPREHENSIVE cover the material broadly and split dense areas.
+                Never pad with chapters the knowledge cannot support, and never merge or drop
+                significant material just to keep the book short.
                 """.formatted(nz(e.getTopic()), nz(e.getBookGoal()), nz(e.getTargetAudience()),
-                nz(e.getLanguage()), nz(e.getStyle()), nz(e.getAdditionalInstructions()), budget.targetPages(),
-                budget.minChapters(), budget.maxChapters()));
+                nz(e.getLanguage()), nz(e.getStyle()), nz(e.getAdditionalInstructions()),
+                depth.plannerGuidance()));
         if (confirmedFields != null && !confirmedFields.isBlank()) {
             sb.append("\nAUTHOR-CONFIRMED (keep exactly)\n").append(confirmedFields.strip()).append('\n');
         }

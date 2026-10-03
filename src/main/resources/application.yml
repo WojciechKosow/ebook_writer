@@ -218,25 +218,13 @@ credits:
   # Optional one-time grant when a wallet is first created (useful for testing).
   signup-bonus: ${CREDITS_SIGNUP_BONUS:0}
   # The single central overdraft limit for generation. Because the AI can't
-  # guarantee an exact page count, the requested length is only a target; the
+  # guarantee an exact page count, the length estimate is only an estimate; the
   # balance may dip up to this many credits below zero (lowest balance = -10),
   # and never further. It bounds both the up-front hold and the render page cap.
   max-overdraft: ${CREDITS_MAX_OVERDRAFT:10}
-  # Minimum credit budget required to START a standard generation. Credits are
-  # the generation budget, NOT a promise of an exact page count — this is simply
-  # the smallest budget Scrivetta needs to produce a complete standard ebook.
-  min-generation-budget: ${CREDITS_MIN_GENERATION_BUDGET:30}
-  # Orientational page range for a standard ebook. standard-target-pages is also
-  # the DEFAULT target length when the user selects none. A target is a soft
-  # content budget (it shapes planning); it is NOT a cap — the only hard limit is
-  # the user's credit budget below.
-  standard-target-min-pages: ${CREDITS_STANDARD_TARGET_MIN_PAGES:20}
-  standard-target-pages: ${CREDITS_STANDARD_TARGET_PAGES:30}
-  # Absolute per-generation page ceiling (safety bound only). The real per-book
-  # ceiling is min(balance, this) + max-overdraft, so a user with enough credits
-  # gets the whole book and it only winds down near their actual budget. Raise it
-  # if you want to allow even longer books; it just bounds a single runaway.
-  max-generation-budget: ${CREDITS_MAX_GENERATION_BUDGET:250}
-  # Largest selectable target length (pages). The target is a SOFT content budget
-  # that shapes planning; it never truncates a book. Higher requests are clamped.
-  max-target-pages: ${CREDITS_MAX_TARGET_PAGES:150}
+  # Per-book safety maximum (pages). Users choose a DEPTH, never a page count;
+  # Scrivetta estimates the length from the topic and materials and the start
+  # requires credits for the estimate's high end. This only bounds a runaway:
+  # estimates and plans are capped at it, and the hold is
+  # min(balance, this) + max-overdraft (trued up to the real page count).
+  max-generation-budget: ${CREDITS_MAX_GENERATION_BUDGET:400}

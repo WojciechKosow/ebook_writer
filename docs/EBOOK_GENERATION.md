@@ -21,11 +21,10 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
 
 - **Structural completeness.** When the brief promises a fixed structure — a
   "7-day plan", a "10-step guide", a "30-day challenge", "5 principles" —
-  `StructureRequirement` detects it from the title/topic/instructions and the
-  planning prompt insists the outline cover **every** unit (all seven days), never
-  a partial subset. `BookPlanningService` logs a loud warning if the clamped plan
-  can't hold them, and the chapter writer is told to finish every unit in its
-  scope. This closes the "The 7-Day Focus Reset stops at Day 3" class of bug at
+  `StructureRequirement` detects it from the title/topic/instructions, the scope
+  estimate gives every unit room, and the planning prompt insists the outline
+  cover **every** unit (all seven days), never a partial subset. The chapter
+  writer is told to finish every unit in its scope. This closes the "The 7-Day Focus Reset stops at Day 3" class of bug at
   its source (planning) rather than compensating downstream.
 - Chapters are generated **sequentially**, each aware of the outline and the
   summaries of earlier chapters, so content builds forward without repeating.
@@ -36,7 +35,7 @@ EbookGenerationService  (async orchestrator, status + progress + error handling)
   official Anthropic Java SDK, adaptive thinking, and a small retry.
 - All prompts live in `com.ebookwriter.SaaS.prompt` so they are easy to iterate
   on. Global rules (no filler, no AI mention, no fabricated citations,
-  consistent terminology, respect audience/length) are in `PromptGuidelines`.
+  consistent terminology, let the length follow the material) are in `PromptGuidelines`.
 - After the manuscript is written and edited, the **AI image pipeline** runs
   (see [AI-generated images](#ai-generated-images)). It is best-effort: with no
   OpenAI key, images disabled, or an empty plan, the book passes straight
@@ -83,7 +82,10 @@ to the authenticated user.
 | Method | Path                          | Purpose |
 |--------|-------------------------------|---------|
 | POST   | `/api/ebooks`                 | Create a **draft** (no credits held, not generating); returns `201` with the ebook id and `status: DRAFT`. Upload assets to it, then start. |
-| POST   | `/api/ebooks/{id}/start`      | Reserve the credit hold and start generating a draft; returns `202`. `409` if already started. |
+| GET    | `/api/ebooks/generation-budget?briefChars=&sourceChars=` | Creation form: each depth with a preliminary length/credit estimate, plus the balance. |
+| GET    | `/api/ebooks/{id}/scope`      | A draft's length + credit estimate for its depth (and the other depths), `requiredCredits`, `canGenerate`. |
+| PUT    | `/api/ebooks/{id}/depth`      | Change a draft's depth (`{"depth": "QUICK|STANDARD|COMPREHENSIVE"}`); returns the new scope. `409` once started. |
+| POST   | `/api/ebooks/{id}/start`      | Estimate the scope, require credits for it, reserve the credit hold and start; returns `202`. `402` (with `required`/`available`/`message`) if the credits don't cover the estimate; `409` if already started. |
 | GET    | `/api/ebooks/{id}`            | Poll status/progress + per-chapter progress. |
 | GET    | `/api/ebooks`                 | List the current user's ebooks. |
 | GET    | `/api/ebooks/{id}/content`    | Load the editable manuscript: all chapters + their Markdown bodies. |
@@ -104,7 +106,7 @@ to the authenticated user.
   "topic": "Building SaaS Applications with Spring Boot",
   "targetAudience": "Junior Java developers",
   "style": "Practical, technical, easy to understand",
-  "targetPages": 50,
+  "depth": "STANDARD",
   "language": "English",
   "additionalInstructions": "Focus on real-world development. Include examples.",
   "sourceMaterial": "(optional examples or source text)",
@@ -112,16 +114,16 @@ to the authenticated user.
 }
 ```
 
-`targetPages` is the selected **target length** (~20 / 30 / 50 / 75 / 100; the
-options, default and the user's affordable size are served by
-`GET /api/ebooks/generation-budget`). It is a *soft content budget* — see
-[Target length & credits](#target-length--credits). Optional (defaults to
-`credits.standard-target-pages`), clamped to `[10, credits.max-target-pages]`;
-`approxPageCount` is accepted as an alias for older clients. The status response
-echoes it as `targetPages` next to the real `actualPageCount`.
+`depth` is the user's only control over scope: `QUICK`, `STANDARD` (default) or
+`COMPREHENSIVE`. There is **no page-count input** — Scrivetta determines the
+length from the topic, the materials and the depth (see
+[Depth, scope & credits](#depth-scope--credits)); a `targetPages` sent by an
+older client is ignored. The status response returns `depth`, the
+`estimatedPagesLow/High` taken at start, the `plannedPages` once planned, the
+real `actualPageCount`, and `creditLimited` when the credits ended the book early.
 
-Frontend flow: `POST /api/ebooks` (draft) → optionally upload assets to
-`POST .../images` → `POST .../start` → poll `GET /api/ebooks/{id}` until
+Frontend flow: `POST /api/ebooks` (draft) → optionally upload materials /
+assets → `GET .../scope` (estimate; `PUT .../depth` to change it) → `POST .../start` → poll `GET /api/ebooks/{id}` until
 `status = COMPLETED` → open the editor (`GET/PUT .../content` + the images API)
 → `GET /api/ebooks/{id}/download`.
 
@@ -208,7 +210,7 @@ MAIN COVER → CONTENTS → [ CHAPTER/DAY OPENER → BODY ] × N
 - **Intelligent selection, not one-divider-per-chapter.** Dedicated opener pages
   cost a page, so `DocumentComposer` only uses them when the book is **substantial**
   (≥ 4 chapters averaging ≥ 2 pages, or a ≥ 3-unit program) **and** the reserved
-  page budget has genuine slack for them (`canAfford`). Otherwise — a short book, a
+  credit ceiling has genuine slack for them (`canAfford`). Otherwise — a short book, a
   tight budget — it emits a strong **opener band** at the top of the content page:
   the same hierarchy and label with no extra page. So hierarchy and pacing improve
   without padding page count or eating into content the trim would remove. A live
@@ -533,8 +535,7 @@ future regeneration can preserve them.
 | `OPENAI_MAX_IMAGES_PER_BOOK` | `6` | Hard ceiling on generated images per book. |
 | `OPENAI_MAX_IMAGES_PER_CHAPTER` | `2` | Hard ceiling on generated images per chapter. |
 | `OPENAI_COVER_QUALITY` | `high` | `quality` sent for the cover visual (gpt-image: `low\|medium\|high\|auto`; blank = provider default). |
-| `CREDITS_STANDARD_TARGET_PAGES` | `30` | Default target length when none is selected. |
-| `CREDITS_MAX_TARGET_PAGES` | `150` | Largest selectable target (higher is clamped). |
+| `CREDITS_MAX_GENERATION_BUDGET` | `400` | Per-book safety maximum (pages): estimates and plans are capped at it and the hold is `min(balance, this) + overdraft`. Not a user-facing length. |
 | `OPENAI_READ_TIMEOUT_MS` | `120000` | Per-call read timeout (image generation is slow). |
 | `OPENAI_CONNECT_TIMEOUT_MS` | `10000` | Per-call connect timeout. |
 | `OPENAI_MAX_RETRIES` | `2` | Retries on a failed image call before that one image is given up. |
@@ -566,124 +567,104 @@ Three ways to run it, cheapest to best:
   validation.
 - **On, same model**: best quality, highest cost.
 
-## Target length & credits
+## Depth, scope & credits
 
-Two separate concepts drive generation, and they are never confused:
+**The page count is a result, never an input.** The user chooses a *depth*;
+Scrivetta analyses the scope and determines the length:
 
-| | **Target length** (`targetPages`) | **Credit ceiling** (`pageBudget`) |
-|---|---|---|
-| What | how much content we *ideally* want | how much the user is *allowed* to generate |
-| Used by | planning (outline, depth, exercises, visuals) | writing pacing + render safety bound |
-| Nature | **soft** — never truncates, never pads | **hard** — `min(balance, cap) + overdraft` |
+```
+USER chooses depth ─┐
+brief + materials ──┼─▶ ScopeEstimator ─▶ estimate (pages/chapters/credits, a RANGE)
+blueprint (if any) ─┘          │
+                               ▼
+               start: credits ≥ estimate high?  ── no ─▶ 402 "needs up to N credits"
+                               │ yes
+                               ▼
+        plan (Claude, or blueprint sizing) at that depth ─▶ plannedPages
+                               │
+               plan ≤ credit hold? ── no ─▶ refund, back to DRAFT, "planned at ~N pages"
+                               │ yes
+                               ▼
+     write ─▶ edit ─▶ images ─▶ render ─▶ actualPageCount ─▶ bill the real pages
+```
 
-1. **Content budgeting before generation.** `ContentBudget.forTarget` turns the
-   target into a plan scale: chapter range, depth, practical components per
-   chapter, visual density (~20 focused … ~100 definitive). The planner is asked to
-   land in roughly `0.9×–1.15×` of the target. `BookPlanningService` then keeps the
-   outline near it: a plan within the **soft limit** (`1.25×` the content target,
-   or more if a promised structure — every day of a 7-day program — needs it) is
-   kept exactly as designed; a plan far above it (the "keeps expanding until the
-   credits run out" failure) is rebalanced toward the target **without dropping
-   chapters**; a short plan is never inflated. If the user can't strictly afford
-   the target, a complete book is planned at the affordable size instead of
-   planning the full target and running out mid-book.
-2. **Credit-aware writing (`WritingBudget`).** Before each chapter the
-   orchestrator re-checks the remaining credit capacity (net of front matter, a
-   page per possible opener, image slack and a safety margin) against the rest of
-   the plan, using the words actually written so far:
-   - *enough credits* → write as planned. Passing the soft target never stops a
-     book — a chapter that ran long is kept whole and generation continues;
-   - *slightly short* → tighten the remaining chapters (≥ 60% of plan), drop none;
-   - *genuinely short* → **wind down**: keep as many upcoming chapters as fit, always
-     keep the planned final chapter, and mark the ones in between `DEFERRED`
-     (outline kept, never rendered — ready for a future *Continue* feature). The
-     final chapter is told exactly which topics are out of scope so it neither
-     references nor apologises for them.
-   Credits are permission to continue, never an instruction to write more: chapter
-   targets are never raised because credits are available.
-3. **Never mid-thought.** The chapter target is a guide, not a stop ("finish the
-   thought"), with generous output-token headroom. If a response still hits the
-   token limit, `ManuscriptIntegrity.repairTruncated` drops the incomplete tail —
-   half sentence, unclosed exercise/component, unterminated code fence, dangling
-   heading — back to the last complete block. A truncated *edit* is discarded in
-   favour of the complete original.
-4. **Premium ending architecture.** The final chapter is written (and edited)
-   against `ChapterPrompts.ENDING_ARCHITECTURE`: synthesis (not a TOC recap) →
-   practical next step → completion checklist where it fits → final takeaway →
-   intentional closing, with generic AI sign-offs banned and no references to
-   content that doesn't exist. Non-final chapters end at clean boundaries and only
-   refer forward to chapters in the (deferral-aware) outline.
+| Depth | What changes |
+|---|---|
+| `QUICK` | essentials only, few side topics, one strong example, short explanations, selective use of materials |
+| `STANDARD` | full practical treatment, worked examples, normal depth |
+| `COMPREHENSIVE` | broad scope, thorough explanations, several examples and edge cases, extensive use of materials — never dropping important content to save pages, never padding |
+
+Depth is applied in **every** stage: the estimate, the planning / blueprint
+prompts (`BookDepth.plannerGuidance`), the blueprint chapter sizing, each
+chapter prompt and the editorial pass (`BookDepth.writerGuidance`).
+
+1. **Estimation (`ScopeEstimator`, `ScopeEstimationService`).** Not
+   `pages = sourcePages × k`. It weighs, from weakest to strongest: the brief
+   (depth sets a typical scope; a rich brief or a promised N-unit structure widens
+   it), the **source volume** with diminishing returns (`T·ln(1+p/T)` — the first
+   pages count ~1:1, whole repositories taper), the **distinct knowledge** extracted
+   from the materials (topics, processes, examples, technical details, insights),
+   and the **blueprint** (each chapter sized by the knowledge it carries). For a
+   knowledge-based book the materials define the scope — 5 pages of notes at
+   Comprehensive give a modest book, 150 pages of material are never summarised
+   into 30. The result is a range (wider with less information) capped at the
+   per-book safety maximum, with a `basis` (`BRIEF`, `SOURCE_TEXT`, `KNOWLEDGE`,
+   `BLUEPRINT`). Unit-tested in `ScopeEstimatorTest`.
+2. **Credits before generation.** `start` requires a balance of at least the
+   estimate's **high end** (1 credit ≈ 1 page). Below it, `402` with a message such
+   as *"At Comprehensive depth, Scrivetta estimates this book at about 120–160
+   pages, so it needs up to 160 credits to generate — you have 90."* A book is
+   never planned smaller to fit the balance.
+3. **Planning follows the content.** The legacy planner gets the depth and the
+   estimate explicitly marked *"not a target, not a limit"*; it sets each chapter's
+   `approxPages` to what that chapter needs, and the sum is `plannedPages`. The
+   only adjustments are system guards, never user input: a **runaway** guard (a
+   plan over 2× the estimate's high end is scaled toward 1.5×, no chapter dropped)
+   and the **per-book safety maximum**. Knowledge-based books size each blueprint
+   chapter by its knowledge at the depth (`KnowledgeBookPlanner.size`).
+4. **A plan the credits can't cover is never cut.** If `plannedPages` exceeds the
+   reserved hold (balance + overdraft), `PlanExceedsCreditsException` refunds the
+   hold, returns the book to `DRAFT` with `plannedPages` and an explanation, and the
+   next start requires that many credits.
+5. **Writing follows the plan.** The chapter prompt gives the depth and the
+   planned size as *orientation, not a target or a limit*. Credits are only
+   permission: `WritingBudget` still paces against the hold as a safety net and,
+   only if writing runs far past what the credits cover, tightens or winds the book
+   down to its planned ending (chapters `DEFERRED`). That — or a render trimmed to
+   the credit ceiling — sets `creditLimited`, which the UI shows. Never silent.
+6. **Never mid-thought.** Generous output-token headroom; if a response still hits
+   the limit, `ManuscriptIntegrity.repairTruncated` drops the incomplete tail. A
+   truncated *edit* is discarded in favour of the complete original.
+7. **Premium ending architecture.** The final chapter is written (and edited)
+   against `ChapterPrompts.ENDING_ARCHITECTURE`.
 
 ## Page-count handling & billing
 
-**1 credit = 1 final generated page.** The AI cannot guarantee an exact page
-count — ask for 15 and the finished book might be 13, 17, or 22 — so the
-requested count is only a **target length**, never the price. The real cost is
-read back from the rendered PDF, and the user pays for the pages they actually
-got. We never tell the user "15 pages = 15 credits", because we can't promise
-exactly 15 pages.
+**1 credit = 1 final generated page.** The estimate is shown as an estimate
+("~120–160 pages, ~120–160 credits"); the real cost is read back from the
+rendered PDF, and the user pays for the pages they actually got.
 
 To make the real length payable without a runaway bill, the balance may go a
 little negative: a small **overdraft**, capped centrally at
-`credits.max-overdraft` (`CREDITS_MAX_OVERDRAFT`, default **10**). The lowest a
-balance can ever reach from generation is `-10`.
+`credits.max-overdraft` (`CREDITS_MAX_OVERDRAFT`, default **10**).
 
-1. **Reserve an overdraft-aware ceiling up front.** A draft holds no credits. On
-   **start** (`CreditService.reserveGenerationHold`) we don't charge the target —
-   we reserve `min(targetPages, balance) + maxOverdraft` credits as a hold. This
-   ceiling (a) lets a book run up to `maxOverdraft` pages past what the user can
-   strictly afford, honouring a natural ending a little over target; (b) is
-   target-bounded, so a large balance isn't drained by one book; and (c) can never
-   drive the balance below `-maxOverdraft` (`balance − hold ≥ −maxOverdraft`). The
-   only precondition to start is holding **at least one credit** — we no longer
-   reject just because the balance is below the requested target. The DRAFT →
-   PENDING transition is claimed atomically (`EbookRepository.claimForStart`) so a
-   double-click / retry / refresh can never reserve two holds.
-2. **Aim for the target, cap at the ceiling.** Two pages are always spent on front
-   matter (cover + table of contents, `EbookHtmlBuilder.FRONT_MATTER_PAGES`), so
-   content is sized in *content pages* = pages − front matter. The planner is told
-   to **aim for** the target length; `BookPlanningService` enforces the reserved
-   ceiling as a hard maximum, scaling chapter `approxPages` down (and dropping
-   extra chapters) so their sum can't exceed it.
-3. **Size words to the real layout.** Chapter word targets use
-   `WORDS_PER_PAGE ≈ 200` — the number of words that actually fit on a page in
-   the 6×9" layout, measured against the real PDF pipeline
-   (`WordsPerPageCalibrationTest`). This keeps the natural length close to the
-   target so the overshoot the ceiling has to trim is small.
-4. **Stop a runaway at the ceiling — keeping the ending.** After rendering, the
-   true page count is read from the PDF. A book above its target renders in full.
-   Only if it exceeds the reserved credit ceiling (writing is paced to prevent
-   this) is content removed: whole `##` sections from the end of the latest
-   *earlier* chapter first, so the final chapter — synthesis, next step, closing —
-   is preserved; components and code blocks are never split. Trimmed chapters are
-   persisted so the stored manuscript matches the PDF.
-5. **Bill the real page count, idempotently.** The hold is trued up
-   (`EbookGenerationService.reconcileCredits`): the user is charged for exactly the
-   pages rendered (clamped to `[1, ceiling]`) and the unused reservation is refunded
-   as a `GENERATION_ADJUSTMENT` ledger entry, leaving the balance at
-   `balanceAtStart − actualPages`. `Ebook.actualPageCount` records the result. The
-   true-up is claimed atomically (`EbookRepository.markReconciled`), so a retried
-   worker or re-run generation is a no-op — credits are never charged twice for the
-   same ebook. A generation that **fails before a PDF exists** refunds the whole
-   hold (no real pages ⇒ no charge), guarded by `creditsRefunded` /
-   `creditsReconciled` so a refund never stacks with the true-up.
-
-**Worked examples** (`maxOverdraft = 10`):
-
-| Balance | Target | Final pages | Charged | Balance after |
-|--------:|-------:|------------:|--------:|--------------:|
-| 100 | 15 | 13 | 13 | 87 |
-| 100 | 15 | 15 | 15 | 85 |
-| 15 | 15 | 20 | 20 | −5 |
-| 15 | 15 | 25 | 25 | −10 |
-| 15 | 15 | (would be 30) | 25 | −10 *(trimmed to the ceiling)* |
-
-> **Structure vs. the trim.** The trim removes trailing content to fit the
-> ceiling, so a promised structure must be *planned* to fit — that is why
-> `StructureRequirement` steers the outline and word sizing up front (step 2/3).
-> With a right-sized plan the trim rarely fires; when it does it only shaves a few
-> trailing paragraphs. A book whose promised structure genuinely cannot fit is
-> surfaced as a planning warning rather than silently delivered half-finished.
+1. **Reserve a ceiling up front.** On **start** (`CreditService.reserveGenerationHold`)
+   we reserve `min(balance, maxGenerationBudget) + maxOverdraft` as a hold — a
+   credit ceiling, not a length. It can never drive the balance below
+   `-maxOverdraft`. The DRAFT → PENDING transition is claimed atomically
+   (`EbookRepository.claimForStart`) so a double-click can never reserve two holds.
+2. **Size words to the real layout.** Chapter word targets use
+   `WORDS_PER_PAGE ≈ 200`, measured against the real PDF pipeline
+   (`WordsPerPageCalibrationTest`).
+3. **Render in full.** The true page count is read from the PDF. Only if a render
+   exceeds the credit ceiling (which the start gate and plan check make rare) is
+   trailing content removed — whole `##` sections from the latest *earlier*
+   chapter first, so the ending is preserved — and the book flagged `creditLimited`.
+4. **Bill the real page count, idempotently** (`EbookGenerationService.reconcileCredits`):
+   charge exactly the pages rendered (clamped to `[1, ceiling]`) and refund the
+   rest as a `GENERATION_ADJUSTMENT`. Claimed atomically
+   (`EbookRepository.markReconciled`). A generation that fails before a PDF exists
+   refunds the whole hold.
 
 ## Not yet (deliberately)
 
