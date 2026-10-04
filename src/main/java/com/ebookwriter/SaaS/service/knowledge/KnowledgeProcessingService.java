@@ -24,7 +24,9 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -40,8 +42,10 @@ import java.util.UUID;
  *
  * <p>Resilience: a batch that fails after retries is skipped with a warning
  * and the rest still produces knowledge; only when every batch fails does the
- * run fail. A failed consolidation falls back to the deterministic merge.
- * Usage (calls, tokens, estimated cost) is recorded per run and in lifetime
+ * run fail. Documents of a failed batch are recorded as not analysed
+ * ({@code Coverage.documentsFailed}), and the knowledge cannot continue to the
+ * blueprint until a later run analyses them. A failed consolidation falls
+ * back to the deterministic merge. Usage (calls, tokens, estimated cost) is recorded per run and in lifetime
  * totals.
  */
 @Slf4j
@@ -111,6 +115,7 @@ public class KnowledgeProcessingService {
 
             // Map: one extraction call per batch.
             List<BookKnowledgeData> partials = new ArrayList<>();
+            Set<Integer> analyzedChunks = new HashSet<>();
             String lastError = null;
             int batchCount = plan.chunks().size();
             for (KnowledgeChunker.Chunk chunk : plan.chunks()) {
@@ -121,6 +126,7 @@ public class KnowledgeProcessingService {
                             KnowledgePrompts.extractionUser(ebook, chunk.index(), batchCount, notesContext, chunk.text()));
                     usage.add(completion);
                     partials.add(KnowledgeAssembler.resolveSources(KnowledgeAssembler.parse(completion.json()), resolver));
+                    analyzedChunks.add(chunk.index());
                 } catch (OpenAiTextException | IllegalArgumentException e) {
                     lastError = e.getMessage();
                     usage.failedCalls++;
@@ -144,11 +150,18 @@ public class KnowledgeProcessingService {
                 result = consolidate(ebook, merged, resolver, usage, warnings);
             }
 
+            // Only documents whose batches actually succeeded count as analysed.
+            List<BookKnowledgeData.SourceRef> analyzedSources = plan.sourcesAfter(analyzedChunks);
+            List<String> failedRefs = BookKnowledgeService.failedRefs(analyzedSources);
+            if (!failedRefs.isEmpty()) {
+                warnings.add(BookKnowledgeService.incompleteMessage(failedRefs));
+            }
             BookKnowledgeData.Coverage coverage = new BookKnowledgeData.Coverage(
                     usable.size(), documents.size(),
-                    (int) plan.sources().stream().filter(BookKnowledgeData.SourceRef::analyzed).count(),
-                    plan.notAnalyzed(), plan.duplicates(), skippedAtExtraction, batchCount, plan.analyzedChars());
-            result = result.withBookkeeping(bookInfo(ebook), plan.sources(), coverage);
+                    (int) analyzedSources.stream().filter(BookKnowledgeData.SourceRef::analyzed).count(),
+                    plan.notAnalyzed(), plan.duplicates(), skippedAtExtraction, batchCount, plan.analyzedChars(),
+                    failedRefs.size());
+            result = result.withBookkeeping(bookInfo(ebook), analyzedSources, coverage);
 
             BookKnowledge knowledge = knowledgeRepository.findByEbookId(ebookId).orElseThrow();
             knowledge.setKnowledgeJson(KnowledgeAssembler.write(result));

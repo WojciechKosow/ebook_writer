@@ -39,6 +39,8 @@ public class KnowledgeChunker {
 
     public static final String NOTES_REF = "user-notes";
     static final String BUDGET_REASON = "analysis size limit reached";
+    /** A planned document whose batch (or one of its batches) could not be analysed. */
+    public static final String ANALYSIS_FAILED_REASON = "analysis failed (its batch could not be analysed)";
 
     private final KnowledgeProperties limits;
 
@@ -50,7 +52,8 @@ public class KnowledgeChunker {
      * The run's plan.
      *
      * @param chunks        batches to send, in order
-     * @param sources       every document considered, with its analysis outcome
+     * @param sources       every document considered; documents placed in batches are
+     *                      not yet {@code analyzed} — see {@link #sourcesAfter}
      * @param refs          ref → document (for resolving citations)
      * @param duplicates    documents skipped as duplicates
      * @param notAnalyzed   documents (fully) left out by the budget
@@ -61,6 +64,32 @@ public class KnowledgeChunker {
     public record Plan(List<Chunk> chunks, List<SourceRef> sources, Map<String, AnalysisDocument> refs,
                        int duplicates, int notAnalyzed, long analyzedChars, String notesExcerpt,
                        List<String> warnings) {
+
+        /**
+         * The sources with the run's outcome applied: a document placed in batches
+         * counts as analysed only when every batch carrying it was analysed
+         * successfully; otherwise it is not analysed, with
+         * {@link #ANALYSIS_FAILED_REASON}. Documents never placed in a batch
+         * (duplicates, over budget) are unchanged.
+         */
+        public List<SourceRef> sourcesAfter(Set<Integer> analyzedChunks) {
+            Map<String, List<Integer>> chunksByRef = new HashMap<>();
+            for (Chunk c : chunks) {
+                for (String r : c.refs()) chunksByRef.computeIfAbsent(r, k -> new ArrayList<>()).add(c.index());
+            }
+            List<SourceRef> out = new ArrayList<>();
+            for (SourceRef s : sources) {
+                List<Integer> carrying = chunksByRef.get(s.ref());
+                if (carrying == null) {
+                    out.add(s);
+                } else if (analyzedChunks.containsAll(carrying)) {
+                    out.add(withOutcome(s, true, s.notAnalyzedReason()));
+                } else {
+                    out.add(withOutcome(s, false, ANALYSIS_FAILED_REASON));
+                }
+            }
+            return out;
+        }
     }
 
     private static final Map<Kind, Integer> PRIORITY = Map.of(
@@ -132,10 +161,10 @@ public class KnowledgeChunker {
                 notAnalyzed++;
                 sources.add(sourceRef(ref, ad, false, null, BUDGET_REASON));
             } else if (partsSent < parts.size()) {
-                sources.add(sourceRef(ref, ad, true, null,
+                sources.add(sourceRef(ref, ad, false, null,
                         "partially analysed (" + partsSent + " of " + parts.size() + " parts; " + BUDGET_REASON + ")"));
             } else {
-                sources.add(sourceRef(ref, ad, true, null, null));
+                sources.add(sourceRef(ref, ad, false, null, null));
             }
         }
         if (current.length() > 0) {
@@ -205,6 +234,11 @@ public class KnowledgeChunker {
             start = end;
         }
         return parts;
+    }
+
+    private static SourceRef withOutcome(SourceRef s, boolean analyzed, String notAnalyzedReason) {
+        return new SourceRef(s.ref(), s.origin(), s.sourceType(), s.kind(), s.language(), s.chars(), s.truncated(),
+                analyzed, s.duplicateOf(), notAnalyzedReason);
     }
 
     private static SourceRef sourceRef(String ref, AnalysisDocument ad, boolean analyzed, String duplicateOf,

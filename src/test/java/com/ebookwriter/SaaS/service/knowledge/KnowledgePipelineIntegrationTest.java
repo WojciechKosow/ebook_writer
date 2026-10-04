@@ -193,8 +193,14 @@ public class KnowledgePipelineIntegrationTest {
         assertEquals("README.md", copy.duplicateOf());
         assertEquals(2, k.coverage().sourcesTotal());
         assertEquals(1, k.coverage().duplicates());
-        assertTrue(k.coverage().filesSkippedAtExtraction() > 0);
+        assertTrue(k.coverage().filesSkippedAtExtraction() > 0, "skipped files (.env, node_modules…) stay skipped");
         assertEquals(extraction.size(), k.coverage().chunks());
+        // Every batch succeeded: everything sent is analysed, nothing failed.
+        assertEquals(0, k.coverage().documentsFailed());
+        assertEquals(k.sources().stream().filter(BookKnowledgeData.SourceRef::analyzed).count(), k.coverage().documentsAnalyzed());
+        assertEquals(k.coverage().documentsTotal() - k.coverage().duplicates() - k.coverage().documentsNotAnalyzed(),
+                k.coverage().documentsAnalyzed());
+        assertEquals(stored.getDocumentsAnalyzed(), k.coverage().documentsAnalyzed());
 
         // Usage / cost accounting.
         assertEquals(requests.size(), stored.getOpenAiCalls());
@@ -338,7 +344,46 @@ public class KnowledgePipelineIntegrationTest {
         BookKnowledge done = awaitDone(ebookId);
         assertEquals(KnowledgeStatus.KNOWLEDGE_READY, done.getStatus());
         assertTrue(done.getWarningsJson().contains("Batch 1 of"));
-        assertFalse(knowledgeService.getBookKnowledge(ebookId).orElseThrow().topics().isEmpty());
+        BookKnowledgeData k = knowledgeService.getBookKnowledge(ebookId).orElseThrow();
+        assertFalse(k.topics().isEmpty());
+
+        // The documents of the failed batch are not reported as analysed.
+        Set<String> inFailedBatch = new LinkedHashSet<>();
+        Matcher m = SOURCE_LABEL.matcher(OPENAI.requests().stream()
+                .filter(r -> r.user().contains("batch 1 of")).findFirst().orElseThrow().user());
+        while (m.find()) inFailedBatch.add(m.group(1));
+        assertFalse(inFailedBatch.isEmpty());
+        for (BookKnowledgeData.SourceRef s : k.sources()) {
+            if (inFailedBatch.contains(s.ref())) {
+                assertFalse(s.analyzed(), s.ref() + " was in the failed batch");
+                assertEquals(KnowledgeChunker.ANALYSIS_FAILED_REASON, s.notAnalyzedReason());
+            } else if (s.duplicateOf() == null) {
+                assertTrue(s.analyzed(), s.ref() + " was in a successful batch");
+            }
+        }
+        assertEquals(inFailedBatch.size(), k.coverage().documentsFailed());
+        assertEquals(k.sources().stream().filter(BookKnowledgeData.SourceRef::analyzed).count(), k.coverage().documentsAnalyzed());
+        assertEquals(k.coverage().documentsAnalyzed(), done.getDocumentsAnalyzed());
+        assertTrue(done.getWarningsJson().contains("incomplete"));
+
+        // Incomplete knowledge does not continue to the blueprint; the reason names the materials.
+        String firstFailed = inFailedBatch.iterator().next();
+        mvc.perform(post("/api/ebooks/" + ebookId + "/knowledge/continue").with(auth()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("could not analyse")))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString(firstFailed)));
+        assertEquals(KnowledgeStatus.KNOWLEDGE_READY, knowledgeService.getStatus(ebookId));
+        mvc.perform(post("/api/ebooks/" + ebookId + "/blueprint/build").with(auth()))
+                .andExpect(status().isConflict());
+
+        // A later run that analyses everything clears the block.
+        OPENAI.respond(KnowledgePipelineIntegrationTest::modelLikeAnswer);
+        mvc.perform(post("/api/ebooks/" + ebookId + "/knowledge/process").with(auth())).andExpect(status().isAccepted());
+        assertEquals(KnowledgeStatus.KNOWLEDGE_READY, awaitDone(ebookId).getStatus());
+        assertEquals(0, knowledgeService.getBookKnowledge(ebookId).orElseThrow().coverage().documentsFailed());
+        mvc.perform(post("/api/ebooks/" + ebookId + "/knowledge/continue").with(auth()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY_FOR_BLUEPRINT"));
     }
 
     @Test

@@ -126,9 +126,17 @@ public class BookKnowledgeService {
         return overview(ebookId, userId);
     }
 
-    /** "Continue": the author accepts the knowledge; the book is now ready for the blueprint stage. */
+    /**
+     * "Continue": the author accepts the knowledge; the book is now ready for the
+     * blueprint stage. Refused while some materials sent for analysis were not
+     * actually analysed (incomplete knowledge).
+     */
     public KnowledgeOverviewResponse continueToBlueprint(UUID ebookId, UUID userId) {
         requireOwned(ebookId, userId);
+        String incomplete = getBookKnowledge(ebookId).map(BookKnowledgeService::incompleteReason).orElse(null);
+        if (incomplete != null) {
+            throw new IllegalStateException(incomplete);
+        }
         KnowledgeStatus status = getStatus(ebookId);
         if (status != KnowledgeStatus.READY_FOR_BLUEPRINT
                 && knowledgeRepository.markReadyForBlueprint(ebookId, KnowledgeStatus.KNOWLEDGE_READY,
@@ -136,6 +144,34 @@ public class BookKnowledgeService {
             throw new IllegalStateException("Scrivetta hasn't finished learning from your materials yet.");
         }
         return overview(ebookId, userId);
+    }
+
+    // ---- Incomplete knowledge ----------------------------------------------------------
+
+    /**
+     * Why this knowledge must not be used for a blueprint or a book yet, or null when
+     * it may. Knowledge is incomplete when documents were sent for analysis but their
+     * batch failed. Documents deliberately left out (skipped files, duplicates, over
+     * the size budget) do not make it incomplete.
+     */
+    public static String incompleteReason(BookKnowledgeData d) {
+        List<String> failed = failedRefs(d.sources());
+        return failed.isEmpty() ? null : incompleteMessage(failed);
+    }
+
+    /** Refs of the documents whose analysis failed. */
+    static List<String> failedRefs(List<BookKnowledgeData.SourceRef> sources) {
+        return sources.stream()
+                .filter(s -> !s.analyzed() && KnowledgeChunker.ANALYSIS_FAILED_REASON.equals(s.notAnalyzedReason()))
+                .map(BookKnowledgeData.SourceRef::ref).toList();
+    }
+
+    static String incompleteMessage(List<String> failedRefs) {
+        int shown = Math.min(5, failedRefs.size());
+        String names = String.join(", ", failedRefs.subList(0, shown))
+                + (failedRefs.size() > shown ? " and " + (failedRefs.size() - shown) + " more" : "");
+        return "Scrivetta could not analyse " + failedRefs.size() + " of your document(s) (" + names
+                + "), so its knowledge of your materials is incomplete. Process your materials again before continuing.";
     }
 
     // ---- helpers -------------------------------------------------------------------

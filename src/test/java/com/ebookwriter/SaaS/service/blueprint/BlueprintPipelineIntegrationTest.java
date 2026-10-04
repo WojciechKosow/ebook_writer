@@ -21,6 +21,7 @@ import com.ebookwriter.SaaS.service.MailService;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
 import com.ebookwriter.SaaS.service.image.OpenAiImageClient;
 import com.ebookwriter.SaaS.service.knowledge.KnowledgeAssembler;
+import com.ebookwriter.SaaS.service.knowledge.KnowledgeChunker;
 import com.ebookwriter.SaaS.support.FakeOpenAiServer;
 import com.ebookwriter.SaaS.support.FakeOpenAiServer.Reply;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -233,6 +234,35 @@ class BlueprintPipelineIntegrationTest {
         BookGenerationInput input = blueprintService.getGenerationInput(ebookId).orElseThrow();
         assertTrue(input.answers().isEmpty());
         assertTrue(input.unresolvedGaps().isEmpty());
+        assertFalse(blueprintService.readiness(ebookId).blocked(), "complete knowledge + approved blueprint may generate");
+
+        // Same blueprint, but the knowledge turns out to be missing a document whose analysis failed.
+        BookKnowledge k = knowledgeRepository.findByEbookId(ebookId).orElseThrow();
+        k.setKnowledgeJson(KnowledgeAssembler.write(withFailedDocument(ShopKnowledgeFixture.full(), ShopKnowledgeFixture.ORDER)));
+        knowledgeRepository.save(k);
+        BookBlueprintService.GenerationReadiness readiness = blueprintService.readiness(ebookId);
+        assertTrue(readiness.blocked(), "generation never starts from incomplete knowledge");
+        assertTrue(readiness.blockedReason().contains(ShopKnowledgeFixture.ORDER), readiness.blockedReason());
+    }
+
+    @Test
+    void incompleteKnowledgeCannotBecomeABlueprint() throws Exception {
+        UUID ebookId = bookWithKnowledge(withFailedDocument(ShopKnowledgeFixture.full(), ShopKnowledgeFixture.ORDER));
+        build(ebookId).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString(ShopKnowledgeFixture.ORDER)))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("incomplete")));
+        assertTrue(OPENAI.requests().isEmpty(), "no blueprint call is paid for");
+    }
+
+    /** The knowledge as a run leaves it when the batch carrying {@code ref} failed. */
+    private static BookKnowledgeData withFailedDocument(BookKnowledgeData d, String ref) {
+        List<BookKnowledgeData.SourceRef> sources = d.sources().stream().map(s -> !s.ref().equals(ref) ? s
+                : new BookKnowledgeData.SourceRef(s.ref(), s.origin(), s.sourceType(), s.kind(), s.language(), s.chars(),
+                s.truncated(), false, null, KnowledgeChunker.ANALYSIS_FAILED_REASON)).toList();
+        BookKnowledgeData.Coverage c = d.coverage();
+        return d.withBookkeeping(d.book(), sources, new BookKnowledgeData.Coverage(c.sourcesTotal(), c.documentsTotal(),
+                c.documentsAnalyzed() - 1, c.documentsNotAnalyzed(), c.duplicates(), c.filesSkippedAtExtraction(),
+                c.chunks(), c.analyzedChars(), 1));
     }
 
     // ---- 10. many gaps ------------------------------------------------------------
