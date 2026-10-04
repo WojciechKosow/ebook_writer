@@ -210,8 +210,45 @@ public class EbookContentRenderer {
             for (Element e : unit) {
                 group.appendChild(e);
             }
+            startsWithTable(group, column);
         }
+
+        // A lead-in line ("The endpoints:") travels with the table it introduces.
+        for (Element table : body.select("> table")) {
+            Element lead = table.previousElementSibling();
+            if (lead == null || !lead.tagName().equals("p") || !lead.text().strip().endsWith(":")) {
+                continue;
+            }
+            Element group = new Element("div").addClass("keep-with-next");
+            lead.before(group);
+            group.appendChild(lead);
+            group.appendChild(table);
+            startsWithTable(group, column);
+        }
+        TableLayout.guardStarts(body);
         return body.html();
+    }
+
+    /**
+     * A heading group ending in a table that may split doesn't move as one block
+     * (a page-long table would leave a page-long gap behind it). It starts on the
+     * page only if the heading, any lead-in, the table's header and its first row
+     * fit there — otherwise all of it starts on the next page — and the table then
+     * splits between rows under a repeated header.
+     */
+    private static void startsWithTable(Element group, float column) {
+        Element last = group.children().last();
+        if (last == null || !last.tagName().equals("table") || last.hasClass(TableLayout.WHOLE)) {
+            return;
+        }
+        double start = TableLayout.startHeight(last);
+        for (Element e : group.children()) {
+            if (e != last) {
+                start += TableLayout.blockHeight(e, column);
+            }
+        }
+        group.addClass("keep-with-next--table");
+        group.attr("style", TableLayout.minHeightStyle(start));
     }
 
     /**

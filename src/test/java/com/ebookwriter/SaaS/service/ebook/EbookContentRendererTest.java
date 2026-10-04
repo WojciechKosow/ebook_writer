@@ -184,7 +184,11 @@ class EbookContentRendererTest {
     @Test
     void blocksThatNeverSplitTravelWithTheirHeadingAtAnySize() {
         String bigTable = "| A | B |\n|---|---|\n" + "| a | b |\n".repeat(40);
-        assertTrue(renderer.toHtml("### Columns\n\n" + bigTable).startsWith("<div class=\"keep-with-next\"><h3>"));
+        String tableGroup = renderer.toHtml("### Columns\n\n" + bigTable);
+        assertTrue(tableGroup.startsWith("<div class=\"keep-with-next keep-with-next--table\" style=\"-fs-page-break-min-height:"),
+                "a table that may split joins its heading as a group that starts only where heading, header and first row fit: "
+                        + tableGroup);
+        assertTrue(tableGroup.contains("<h3>Columns</h3><table"));
         String bigCallout = ":::example\n" + "word ".repeat(EbookContentRenderer.KEEP_WITH_NEXT_MAX_CHARS) + "\n:::";
         assertTrue(renderer.toHtml("### Offer\n\n" + bigCallout).startsWith("<div class=\"keep-with-next\"><h3>"));
     }

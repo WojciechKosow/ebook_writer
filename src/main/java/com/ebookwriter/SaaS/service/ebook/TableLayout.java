@@ -14,7 +14,8 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Sizes table columns to the text column, from the table's own content.
+ * Sizes table columns to the text column, from the table's own content, and
+ * decides how each table meets a page break ({@link #paginate}, {@link #guardStarts}).
  *
  * <p>Left to itself the renderer uses automatic table layout, where a column can
  * never be narrower than its longest unbreakable word. Technical tables are full
@@ -131,6 +132,208 @@ final class TableLayout {
             colgroup.appendElement("col").attr("style", String.format(Locale.ROOT, "width: %.1f%%", pct));
         }
         table.prependChild(colgroup);
+
+        paginate(table, rows, widths, availablePt);
+    }
+
+    // ---- Vertical pagination ------------------------------------------------------
+
+    /** A table at most this share of a page tall is kept whole: it moves to the next page rather than split. */
+    static final double WHOLE_TABLE_SHARE = 0.3;
+
+    /** Marks a table kept whole (stylesheet: {@code page-break-inside: avoid}). */
+    static final String WHOLE = "table--whole";
+
+    /** The estimated height (pt) of the table's start: its header plus first body row. */
+    static final String START_ATTR = "data-start-pt";
+
+    /**
+     * Decide how the table meets a page break. The renderer repeats the header
+     * on every continuation page and keeps rows whole (stylesheet); what it
+     * can't do reliably is decide where the table should <em>start</em>: left
+     * alone it sets the header at a page foot and pushes the first row on, and a
+     * table it had to move itself loses its rows' keep-together. So the start is
+     * decided here, from the content:
+     * <ul>
+     *   <li>a <b>short</b> table (≤ {@link #WHOLE_TABLE_SHARE} of a page) is kept
+     *       whole — splitting three rows over two pages helps nobody;</li>
+     *   <li>a longer table may split, but only starts on a page with room for its
+     *       header and first row ({@code -fs-page-break-min-height}); otherwise it
+     *       starts on the next page. After that it fills each page with whole
+     *       rows and continues under a repeated header.</li>
+     * </ul>
+     */
+    private static void paginate(Element table, List<List<Element>> rows, double[] widths, float availablePt) {
+        double header = 0;
+        double first = -1;
+        double total = TABLE_MARGIN_PT;
+        for (List<Element> row : rows) {
+            double h = rowHeight(row, widths, availablePt);
+            total += h;
+            boolean headerRow = row.stream().allMatch(c -> c.tagName().equals("th"));
+            if (headerRow && first < 0) {
+                header += h;
+            } else if (first < 0) {
+                first = h;
+            }
+        }
+        double start = TABLE_MARGIN_PT + header + Math.max(first, 0) + START_HEADROOM_PT;
+        table.attr(START_ATTR, String.format(Locale.ROOT, "%.0f", start));
+        if (total <= WHOLE_TABLE_SHARE * PageGeometry.book().contentHeightPt()) {
+            table.addClass(WHOLE);
+        }
+    }
+
+    /**
+     * Guard the start of every splittable table that isn't already the end of a
+     * heading/lead-in group (which carries its own guard): wrap it in a block
+     * with the minimum height. The guard must sit on a wrapper — on the table
+     * itself the renderer applies it to the rows, moving them on and leaving
+     * the header behind, the very break it is meant to prevent.
+     */
+    static void guardStarts(Element root) {
+        for (Element table : root.select("table")) {
+            Element parent = table.parent();
+            if (table.hasClass(WHOLE) || startHeight(table) <= 0
+                    || (parent != null && parent.hasClass("keep-with-next--table"))) {
+                continue;
+            }
+            Element wrapper = new Element("div").addClass("table-start")
+                    .attr("style", minHeightStyle(startHeight(table)));
+            table.before(wrapper);
+            wrapper.appendChild(table);
+        }
+    }
+
+    /** The CSS that keeps a block off a page with less than {@code pt} left. */
+    static String minHeightStyle(double pt) {
+        return String.format(Locale.ROOT, "-fs-page-break-min-height: %.0fpt", pt);
+    }
+
+    /** Estimated start height of a table sized by {@link #apply}, or 0 if it wasn't. */
+    static double startHeight(Element table) {
+        try {
+            return Double.parseDouble(table.attr(START_ATTR));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    // table { margin: 1em 0 } at 10pt; the header row's line box; th, td { padding: 0.45em … }
+    private static final double TABLE_MARGIN_PT = 10;
+    private static final double LINE_HEIGHT = 1.52;     // body { line-height: 1.52 }
+    private static final double CELL_VPAD_EM = 0.45;
+    /** Estimates err low on wrapping; keep a little room so "fits" means fits. */
+    private static final double START_HEADROOM_PT = 16;
+
+    private static double rowHeight(List<Element> row, double[] widths, float availablePt) {
+        double tallest = 0;
+        for (int c = 0; c < row.size() && c < widths.length; c++) {
+            Element cell = row.get(c);
+            boolean header = cell.tagName().equals("th");
+            float size = header ? HEADER_PT : BODY_PT;
+            List<Run> runs = new ArrayList<>();
+            collect(cell, header, false, false, runs);
+            double inner = widths[c] - 2 * CELL_PAD_EM * size - BORDER_PT;
+            double h = lines(runs, inner) * size * LINE_HEIGHT + 2 * CELL_VPAD_EM * size + BORDER_PT;
+            tallest = Math.max(tallest, h);
+        }
+        return tallest;
+    }
+
+    /** Lines the runs wrap to at {@code width}: greedy fill over the renderer's break opportunities. */
+    private static int lines(List<Run> runs, double width) {
+        List<double[]> pieces = pieces(runs); // {width without trailing space, trailing space}
+        int lines = 1;
+        double line = 0;
+        for (double[] p : pieces) {
+            if (p[0] < 0) { // explicit <br>
+                lines++;
+                line = 0;
+                continue;
+            }
+            if (line > 0 && line + p[0] > width) {
+                lines++;
+                line = 0;
+            }
+            // A piece wider than the column is broken (word-wrap: break-word).
+            if (p[0] > width && width > 0) {
+                lines += (int) Math.floor(p[0] / width);
+                line = p[0] % width;
+            } else {
+                line += p[0];
+            }
+            line += p[1];
+        }
+        return lines;
+    }
+
+    /**
+     * Estimated height (pt) of a heading or paragraph set in the text column of
+     * {@code widthPt} — used to keep a heading, its lead-in and a table's start
+     * on one page. Mirrors the stylesheet's sizes and margins.
+     */
+    static double blockHeight(Element block, double widthPt) {
+        String tag = block.tagName();
+        Face face = tag.matches("h[2-4]") ? Face.SANS_BOLD : Face.SERIF;
+        float size = switch (tag) {
+            case "h2" -> 15.5f;
+            case "h3" -> 12.5f;
+            case "h4" -> 9.5f;
+            default -> 11f;
+        };
+        double lineHeight = tag.matches("h[2-4]") ? 1.22 : LINE_HEIGHT;
+        double margins = switch (tag) {
+            case "h2" -> (1.5 + 0.5 + 0.25) * size + 1; // margin 1.5em 0 0.5em, padding-bottom, rule
+            case "h3" -> (1.25 + 0.35) * size;
+            case "h4" -> (1.1 + 0.3) * size;
+            default -> 0.65 * size;                      // p { margin-bottom: 0.65em }
+        };
+        List<Run> runs = List.of(new Run(block.text(), face, size, 0, false));
+        return lines(runs, widthPt) * size * lineHeight + margins;
+    }
+
+    private static List<double[]> pieces(List<Run> runs) {
+        StringBuilder all = new StringBuilder();
+        List<Integer> owner = new ArrayList<>();
+        List<double[]> out = new ArrayList<>();
+        for (int i = 0; i < runs.size(); i++) {
+            String t = runs.get(i).text();
+            if (t.equals("\n")) {
+                flushPieces(all, owner, runs, out);
+                out.add(new double[]{-1, 0});
+                continue;
+            }
+            all.append(t);
+            for (int k = 0; k < t.length(); k++) {
+                owner.add(i);
+            }
+        }
+        flushPieces(all, owner, runs, out);
+        return out;
+    }
+
+    private static void flushPieces(StringBuilder all, List<Integer> owner, List<Run> runs, List<double[]> out) {
+        String text = all.toString();
+        if (!text.isEmpty()) {
+            CodeBreakLineBreaker breaker = new CodeBreakLineBreaker();
+            breaker.setText(text);
+            int start = 0;
+            for (int end = breaker.next(); start < text.length(); end = breaker.next()) {
+                if (end == java.text.BreakIterator.DONE || end > text.length()) {
+                    end = text.length();
+                }
+                if (end <= start) {
+                    continue;
+                }
+                double full = measurePiece(text, owner, runs, start, end, false);
+                double trimmed = measurePiece(text, owner, runs, start, end, true);
+                out.add(new double[]{trimmed, full - trimmed});
+                start = end;
+            }
+        }
+        all.setLength(0);
+        owner.clear();
     }
 
     /** Column widths (pt) summing to {@code available}; see the class comment for the rules. */
@@ -319,15 +522,16 @@ final class TableLayout {
             if (end <= start) {
                 continue;
             }
-            widest = Math.max(widest, measurePiece(text, owner, runs, start, end));
+            widest = Math.max(widest, measurePiece(text, owner, runs, start, end, true));
             start = end;
         }
         return widest;
     }
 
-    /** Width of {@code text[start, end)} without its trailing spaces, run by run. */
-    private static double measurePiece(String text, List<Integer> owner, List<Run> runs, int start, int end) {
-        while (end > start && Character.isWhitespace(text.charAt(end - 1))) {
+    /** Width of {@code text[start, end)} (without its trailing spaces if {@code trim}), run by run. */
+    private static double measurePiece(String text, List<Integer> owner, List<Run> runs, int start, int end,
+                                       boolean trim) {
+        while (trim && end > start && Character.isWhitespace(text.charAt(end - 1))) {
             end--;
         }
         double w = 0;

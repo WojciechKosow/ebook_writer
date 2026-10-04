@@ -327,6 +327,19 @@ editor preview  ==  PDF output
   reports any body page with text or painted shapes outside the text column (the
   renderer clips there, so an overflowing column would otherwise vanish
   silently); `TableWidthPdfTest` covers both.
+- **Tables break between whole rows, under a repeated header.** Tables render
+  with the renderer's native `-fs-table-paginate: paginate`, so the `<thead>`
+  repeats at the top of every continuation page, and rows keep together
+  (`tr { page-break-inside: avoid }`; only a row taller than a page splits).
+  `TableLayout` estimates row heights from the content and decides how each
+  table starts: a short table (≤ 30% of a page) is kept whole; a longer one
+  starts only where its header and first row fit (`-fs-page-break-min-height`
+  on a wrapper or on the heading/lead-in group it ends — never on the table,
+  where the renderer would apply it to the rows and strand the header; and reset
+  on children, because the renderer inherits it), then fills each page with whole
+  rows. A heading group or a lead-in ending in `:` starts with its table the same
+  way instead of moving as one block. `TablePaginationTest` checks it on
+  rendered PDFs.
 - **No near-empty last page.** After rendering, if the final page holds only a
   spilled line or two (and no image), the renderer re-renders with the final
   chapter set slightly tighter (`chapter--snug`) and keeps it only if the page

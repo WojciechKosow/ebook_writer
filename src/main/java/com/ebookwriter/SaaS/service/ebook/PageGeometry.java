@@ -44,6 +44,11 @@ public record PageGeometry(float widthPt, float heightPt,
         return widthPt - marginLeftPt - marginRightPt;
     }
 
+    /** Height of the text area: the page height less the top and bottom margins. */
+    public float contentHeightPt() {
+        return heightPt - marginTopPt - marginBottomPt;
+    }
+
     static PageGeometry load() {
         try (InputStream in = PageGeometry.class.getResourceAsStream(CSS_PATH)) {
             if (in == null) {
