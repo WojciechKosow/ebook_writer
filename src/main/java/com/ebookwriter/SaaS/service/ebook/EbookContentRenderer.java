@@ -134,11 +134,14 @@ public class EbookContentRenderer {
      *   <li><b>figures</b> — an image on its own line becomes a {@code <figure>}
      *       with its caption (a meaningful alt text) inside it, so a caption can
      *       never land on a different page from its image;</li>
-     *   <li><b>heading + lead</b> — a section heading is wrapped with the block
-     *       that follows it (a paragraph, list, component, table or figure of
-     *       modest size), so a heading never sits alone at the foot of a page.
-     *       A very long following paragraph is left free (orphans/widows handle
-     *       it) so a whole page isn't pushed forward for one heading.</li>
+     *   <li><b>heading + lead</b> — a section heading (or a run of them, an h2
+     *       straight into its h3) is wrapped with the start of what it
+     *       introduces, so a heading never sits alone at the foot of a page: the
+     *       first block, plus — when that is only a short lead-in line — the
+     *       block the lead-in introduces. Code, tables, figures and components
+     *       join at any size (they never split, so they'd move anyway); a very
+     *       long paragraph or list is left free (orphans/widows handle it) so a
+     *       whole page isn't pushed forward for one heading.</li>
      * </ul>
      */
     static String paginate(String html) {
@@ -164,35 +167,93 @@ public class EbookContentRenderer {
         }
 
         for (Element heading : new ArrayList<>(body.children())) {
-            String tag = heading.tagName();
-            if (!(tag.equals("h2") || tag.equals("h3") || tag.equals("h4"))) {
-                continue;
+            if (heading.parent() != body || !isHeading(heading)) {
+                continue; // already grouped as part of an earlier heading run
             }
-            Element next = heading.nextElementSibling();
-            if (next == null || next.tagName().matches("h[1-6]") || !keepable(next)) {
-                continue;
+            // A heading run (an h2 straight into its h3) travels as one unit.
+            List<Element> unit = new ArrayList<>();
+            Element next = heading;
+            while (next != null && isHeading(next)) {
+                unit.add(next);
+                next = next.nextElementSibling();
+            }
+            // ...together with the start of what it introduces: the first block,
+            // and — while that is only a lead-in line ("Here is the entity:") —
+            // the block the lead-in introduces, so the heading never ends a page
+            // above a one-line fragment while its code/table/callout moves on.
+            int leadIns = 0;
+            boolean open = false;
+            while (next != null && !next.tagName().matches("h[1-6]")) {
+                if (!keepable(next)) {
+                    open = leadIns > 0; // bind the lead-in to what follows
+                    break;
+                }
+                unit.add(next);
+                if (!isLeadIn(next) || leadIns++ == MAX_LEAD_INS) {
+                    break;
+                }
+                next = next.nextElementSibling();
+            }
+            if (unit.size() == 1 || unit.stream().allMatch(EbookContentRenderer::isHeading)) {
+                continue; // nothing to hold: page-break-after: avoid on the heading applies
             }
             Element group = new Element("div").addClass("keep-with-next");
+            if (open) {
+                group.addClass("keep-with-next--open");
+            }
             heading.before(group);
-            group.appendChild(heading);
-            group.appendChild(next);
+            for (Element e : unit) {
+                group.appendChild(e);
+            }
         }
         return body.html();
     }
 
-    /** Whether a block is small enough to travel with its heading. */
-    private static boolean keepable(Element block) {
+    /** Lead-in paragraphs a heading may gather before reaching the block they introduce. */
+    static final int MAX_LEAD_INS = 2;
+
+    /** A paragraph this short (chars, ~2 lines) is a lead-in, not content that can stand alone. */
+    static final int LEAD_IN_MAX_CHARS = 160;
+
+    private static boolean isHeading(Element e) {
+        String tag = e.tagName();
+        return tag.equals("h2") || tag.equals("h3") || tag.equals("h4");
+    }
+
+    /**
+     * Whether a block is only a lead-in to the next one: a short paragraph, or one
+     * that ends in a colon ("The entity looks like this:"). Left at a page foot
+     * under its heading, it reads as a stranded heading.
+     */
+    private static boolean isLeadIn(Element block) {
+        if (!block.tagName().equals("p")) {
+            return false;
+        }
+        String text = block.text().strip();
+        return text.length() <= LEAD_IN_MAX_CHARS || text.endsWith(":");
+    }
+
+    /**
+     * Blocks the page breaker never splits (the stylesheet sets
+     * {@code page-break-inside: avoid}): they move to the next page whole
+     * whenever they don't fit, so a heading must move with them at any size —
+     * gluing it on costs nothing but the heading's own lines. (A block taller
+     * than a page is split regardless, and then the heading simply sits above
+     * its start.)
+     */
+    private static boolean isUnsplittable(Element block) {
         String tag = block.tagName();
-        if (tag.equals("figure") || tag.equals("pre")) {
-            return true;
-        }
-        if (tag.equals("div") && block.hasClass("cmp")) {
-            return block.text().length() <= KEEP_WITH_NEXT_MAX_CHARS * 2;
-        }
-        if (tag.equals("table")) {
-            return block.select("tr").size() <= 12;
-        }
-        return block.text().length() <= KEEP_WITH_NEXT_MAX_CHARS;
+        return tag.equals("figure") || tag.equals("pre") || tag.equals("table")
+                || (tag.equals("div") && block.hasClass("cmp"));
+    }
+
+    /**
+     * Whether a block can travel with its heading: any block that moves as a
+     * whole anyway, or a splittable one (paragraph, list, quote) short enough
+     * that moving it whole doesn't push a page's worth of text forward.
+     */
+    private static boolean keepable(Element block) {
+        return isUnsplittable(block) || block.text().length() <= KEEP_WITH_NEXT_MAX_CHARS;
     }
 
     /**

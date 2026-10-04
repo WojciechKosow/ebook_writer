@@ -303,11 +303,16 @@ editor preview  ==  PDF output
 - **Semantic units stay together** (`EbookContentRenderer.paginate`, shared by
   preview and PDF): an image on its own line becomes a `<figure>` with its caption
   inside (captions can't separate from images; generic/overlong alt text isn't
-  printed); a section heading is grouped with the block it introduces (paragraph,
-  list, component, modest table/figure) so it can't be stranded at a page foot —
-  a very long paragraph is left free so a page isn't pushed forward for one
-  heading. Components, code, figures and table rows avoid page-internal breaks;
-  table headers repeat on continuation pages.
+  printed); a section heading (or an h2→h3 run) is grouped with the start of
+  what it introduces so it can't be stranded at a page foot: the first block,
+  plus the block a short lead-in line ("Here is the entity:") introduces. Code,
+  tables, figures and components join at any size (they move whole anyway); a
+  very long paragraph or list is left free so a page isn't pushed forward for
+  one heading. Inside a group the group is the keep-together unit — when it is
+  taller than a page, its code/table/callout splits starting under the heading
+  rather than jumping alone. Components, code, figures and table rows otherwise
+  avoid page-internal breaks; table headers repeat on continuation pages.
+  `HeadingPaginationTest` renders real PDFs and fails on any orphan heading.
 - **No near-empty last page.** After rendering, if the final page holds only a
   spilled line or two (and no image), the renderer re-renders with the final
   chapter set slightly tighter (`chapter--snug`) and keeps it only if the page

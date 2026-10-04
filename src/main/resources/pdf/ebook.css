@@ -427,6 +427,21 @@ th {
    with the header repeated on a continuation page.
    =========================================================================== */
 .keep-with-next { page-break-inside: avoid; }
+/* A heading + lead-in line whose content is a long, splittable block: bind the
+   group to that block so the page breaker carries them over together. */
+.keep-with-next--open { page-break-after: avoid; }
+/* Inside a heading group the group is the unit kept together: it moves to the
+   next page whole when it fits on one. When it can't (a near-page code block or
+   callout under its heading), its content may split so it starts right under
+   the heading, instead of jumping alone and leaving the heading at the foot. */
+.keep-with-next > pre,
+.keep-with-next > .cmp,
+.keep-with-next > table { page-break-inside: auto; }
+/* Likewise directly under a band chapter opener: the opener already heads the
+   page, so the first block starts there rather than leaving the opener alone. */
+.chapter-body > .keep-with-next:first-child,
+.chapter-body > pre:first-child,
+.chapter-body > .cmp:first-child { page-break-inside: auto; }
 thead { display: table-header-group; }
 tr { page-break-inside: avoid; }
 li { orphans: 2; widows: 2; }

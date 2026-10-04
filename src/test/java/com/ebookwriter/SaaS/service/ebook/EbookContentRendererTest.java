@@ -167,6 +167,37 @@ class EbookContentRendererTest {
     }
 
     @Test
+    void aLeadInLineTravelsWithTheCodeItIntroducesAndItsHeading() {
+        String html = renderer.toHtml("### Offer\n\nHere is the entity:\n\n```java\nclass Offer {}\n```\n\nAfter.");
+        assertTrue(html.contains("<div class=\"keep-with-next\"><h3>Offer</h3><p>Here is the entity:</p><pre>"),
+                "heading, lead-in and code block form one unit: " + html);
+        assertTrue(html.indexOf("</pre></div>") < html.indexOf("<p>After."));
+    }
+
+    @Test
+    void aHeadingRunIsKeptWithItsFirstBlock() {
+        String html = renderer.toHtml("## Data model\n\n### User\n\n```java\nclass User {}\n```");
+        assertTrue(html.contains("<div class=\"keep-with-next\"><h2>Data model</h2><h3>User</h3><pre>"), html);
+        assertEquals(1, countOccurrences(html, "keep-with-next"));
+    }
+
+    @Test
+    void blocksThatNeverSplitTravelWithTheirHeadingAtAnySize() {
+        String bigTable = "| A | B |\n|---|---|\n" + "| a | b |\n".repeat(40);
+        assertTrue(renderer.toHtml("### Columns\n\n" + bigTable).startsWith("<div class=\"keep-with-next\"><h3>"));
+        String bigCallout = ":::example\n" + "word ".repeat(EbookContentRenderer.KEEP_WITH_NEXT_MAX_CHARS) + "\n:::";
+        assertTrue(renderer.toHtml("### Offer\n\n" + bigCallout).startsWith("<div class=\"keep-with-next\"><h3>"));
+    }
+
+    @Test
+    void aLeadInBeforeALongBlockIsBoundToThatBlock() {
+        String longPara = "word ".repeat(EbookContentRenderer.KEEP_WITH_NEXT_MAX_CHARS / 4);
+        String html = renderer.toHtml("### Rules\n\nThe rule is:\n\n" + longPara);
+        assertTrue(html.contains("<div class=\"keep-with-next keep-with-next--open\"><h3>Rules</h3><p>The rule is:</p></div>"),
+                "the long paragraph stays free, but the group asks not to be parted from it: " + html);
+    }
+
+    @Test
     void aVeryLongParagraphIsNotGluedToItsHeading() {
         String longPara = "word ".repeat(EbookContentRenderer.KEEP_WITH_NEXT_MAX_CHARS / 4);
         String html = renderer.toHtml("## Heading\n\n" + longPara);
