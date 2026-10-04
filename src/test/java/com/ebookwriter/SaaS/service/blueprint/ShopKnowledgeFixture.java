@@ -76,6 +76,6 @@ public final class ShopKnowledgeFixture {
                 sequence,
                 List.of(new KnowledgeGap("Why JWT instead of server sessions?", "Author wants to explain it", "JWT authentication", List.of(NOTES))),
                 sources,
-                new Coverage(2, refs.size(), refs.size(), 0, 1, 7, 2, 8000));
+                new Coverage(2, refs.size(), refs.size(), 0, 1, 7, 2, 8000, 0));
     }
 }

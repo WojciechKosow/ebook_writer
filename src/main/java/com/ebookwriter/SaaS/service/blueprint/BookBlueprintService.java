@@ -27,6 +27,7 @@ import com.ebookwriter.SaaS.repository.KnowledgeSourceRepository;
 import com.ebookwriter.SaaS.request.BlueprintUpdateRequest;
 import com.ebookwriter.SaaS.service.ai.OpenAiTextClient;
 import com.ebookwriter.SaaS.service.ai.OpenAiTextException;
+import com.ebookwriter.SaaS.service.knowledge.BookKnowledgeService;
 import com.ebookwriter.SaaS.service.knowledge.KnowledgeAssembler;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -162,8 +163,11 @@ public class BookBlueprintService {
      * </ul>
      */
     public GenerationReadiness readiness(UUID ebookId) {
-        if (getGenerationInput(ebookId).isPresent()) {
-            return new GenerationReadiness(GenerationMode.KNOWLEDGE, null);
+        Optional<BookGenerationInput> input = getGenerationInput(ebookId);
+        if (input.isPresent()) {
+            // Never write a book from knowledge that is missing materials whose analysis failed.
+            return new GenerationReadiness(GenerationMode.KNOWLEDGE,
+                    BookKnowledgeService.incompleteReason(input.get().knowledge()));
         }
         Optional<BookBlueprint> row = blueprintRepository.findByEbookId(ebookId);
         if (row.isPresent() && row.get().getStatus() != BlueprintStatus.NOT_STARTED) {
@@ -246,6 +250,12 @@ public class BookBlueprintService {
                 .filter(k -> k.getStatus().hasKnowledge())
                 .orElseThrow(() -> new IllegalStateException(
                         "Scrivetta needs to learn from your materials first (knowledge is not ready)."));
+        if (knowledge.getKnowledgeJson() != null) {
+            String incomplete = BookKnowledgeService.incompleteReason(KnowledgeAssembler.read(knowledge.getKnowledgeJson()));
+            if (incomplete != null) {
+                throw new IllegalStateException(incomplete);
+            }
+        }
         BookBlueprint blueprint = findOrCreate(ebook);
         if (blueprint.getStatus() == BlueprintStatus.BUILDING_BLUEPRINT
                 && blueprint.getStartedAt() != null

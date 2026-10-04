@@ -185,11 +185,17 @@ public record BookKnowledgeData(
                             boolean analyzed, String duplicateOf, String notAnalyzedReason) {
     }
 
+    /**
+     * What the run actually covered. {@code documentsAnalyzed} counts only documents
+     * whose batches were analysed successfully; {@code documentsNotAnalyzed} are left
+     * out by the size budget; {@code documentsFailed} were sent for analysis but their
+     * batch failed — the knowledge is then incomplete.
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Coverage(int sourcesTotal, int documentsTotal, int documentsAnalyzed,
                            int documentsNotAnalyzed, int duplicates, int filesSkippedAtExtraction,
-                           int chunks, long analyzedChars) {
+                           int chunks, long analyzedChars, int documentsFailed) {
     }
 
     /** A copy with the deterministic bookkeeping (brief, sources, coverage) replaced. */
