@@ -300,14 +300,83 @@ editor preview  ==  PDF output
 
 ## Pagination & final page
 
-- **Semantic units stay together** (`EbookContentRenderer.paginate`, shared by
-  preview and PDF): an image on its own line becomes a `<figure>` with its caption
-  inside (captions can't separate from images; generic/overlong alt text isn't
-  printed); a section heading is grouped with the block it introduces (paragraph,
-  list, component, modest table/figure) so it can't be stranded at a page foot —
-  a very long paragraph is left free so a page isn't pushed forward for one
-  heading. Components, code, figures and table rows avoid page-internal breaks;
-  table headers repeat on continuation pages.
+- **Logical blocks keep their start together** (`EbookContentRenderer.paginate`,
+  shared by preview and PDF). An image on its own line becomes a `<figure>` with
+  its caption inside. A *title* — a heading run (h2 straight into h3), a bold
+  label ("**Request**"), or a lead-in ending in `:` ("Your task:") — is grouped
+  with up to two lead-in lines and the block it introduces. The group starts on
+  the current page only if its *start* fits there — the title plus the first
+  three lines of a paragraph or list item, a code block or component whole if it
+  fits a page (they move whole anyway), otherwise its first lines, a table's
+  header and first row — and otherwise starts on the next page; past its start the
+  content flows over pages. This is space-aware: `BlockMetrics` estimates the
+  start from the content with the bundled fonts, and the group carries it as the
+  renderer's `-fs-page-break-min-height` (+16pt headroom, capped at 85% of a page,
+  reset on children because the renderer inherits it). Components get the same
+  guard on themselves: an exercise, or any component taller than a page, flows
+  over pages (`cmp--flows`) once its label, title and opening lines are placed;
+  other components move whole when they fit a page. Exceptions, kept as before:
+  the chapter's first block starts under the opener unguarded (moving it would
+  leave the opener alone), a figure (size unknown) moves whole with its title,
+  and an action plan (`:::steps`, whose floated numbers make the renderer leave
+  a blank page when it flows) moves whole with its title. `KeepTogetherTest` and
+  `HeadingPaginationTest` check it on rendered PDFs.
+- **Tables fit the text column** (`TableLayout`, called from `paginate`). Every
+  table gets a `<colgroup>` and is rendered with `table-layout: fixed`, so it is
+  exactly the text column wide (`PageGeometry` reads the column from the
+  stylesheet's `@page` rule). Column shares follow the content, measured with the
+  bundled fonts: each column's minimum is its widest unbreakable piece, its
+  natural width its widest cell on one line; spare width goes where it is wanted
+  (short categorical columns stay narrow, prose and code columns grow), and when
+  even the minimums don't fit only the widest columns give way. Code in cells
+  gets invisible break points between its words (camelCase, `_`, before `<`) as
+  zero-width spaces, honoured by `CodeBreakLineBreaker` in the PDF and natively
+  by browsers; cells fall back to `word-wrap: break-word`. `PdfQualityInspector`
+  reports any body page with text or painted shapes outside the text column (the
+  renderer clips there, so an overflowing column would otherwise vanish
+  silently); `TableWidthPdfTest` covers both.
+- **Tables break between whole rows, under a repeated header.** Tables render
+  with the renderer's native `-fs-table-paginate: paginate`, so the `<thead>`
+  repeats at the top of every continuation page, and rows keep together
+  (`tr { page-break-inside: avoid }`; only a row taller than a page splits).
+  `TableLayout` estimates row heights from the content and decides how each
+  table starts: a short table (≤ 30% of a page) is kept whole; a longer one
+  starts only where its header and first row fit (`-fs-page-break-min-height`
+  on a wrapper or on the heading/lead-in group it ends — never on the table,
+  where the renderer would apply it to the rows and strand the header; and reset
+  on children, because the renderer inherits it), then fills each page with whole
+  rows. A heading group or a lead-in ending in `:` starts with its table the same
+  way instead of moving as one block. `TablePaginationTest` checks it on
+  rendered PDFs.
+- **Global layout validation: nothing broken is ever delivered.** Every render
+  (`PdfGenerationService.renderValidated`) is
+  `layout → validate → PASS: write the PDF / errors: repair → layout → validate`.
+  The check (`LayoutValidator`) is deterministic and reads the geometry the
+  renderer actually laid out — openhtmltopdf's box tree after layout, before the
+  PDF is written (`LayoutSnapshot`: every page with its content rectangle from the
+  `@page` rule, every block, line, text fragment, table row and cell, positioned
+  and floated boxes included). It reports, with page, element id, bounds and
+  allowed bounds: lines or images crossing the content foot into the footer/page
+  number band (`FOOTER_OVERLAP`, `CONTENT_OVERFLOW`), anything past the side
+  margins (`OUTSIDE_PAGE_BOUNDS`, `TABLE_OVERFLOW`), text overflowing its own box
+  (`TEXT_CLIPPING`), headings, component titles and table headers whose content
+  begins overleaf (`ORPHAN_HEADING`), tables with too many cells, misaligned or
+  overlapping cells, lost/duplicated/out-of-order rows or a continuation without
+  its header (`MALFORMED_TABLE`, `BROKEN_CONTINUATION`,
+  `MISSING_REPEATED_HEADER`), text laid out twice, never laid out, or drawn over
+  other text (`BROKEN_CONTINUATION`), and blank body pages or an opener left alone
+  (`SUSPICIOUS_EMPTY_PAGE`, a warning; cover, contents and opener pages are
+  recognised from the document). Blocks may span pages — only atoms (lines,
+  images, rows) are held to page bounds, so a continuation is never an error.
+  Repairs fix the source HTML, never the PDF (`LayoutRepair`): a page break before
+  the element's logical block, a width constraint, an image height cap. At most
+  `MAX_REPAIR_ATTEMPTS` (2) rounds; a round with nothing new to apply ends the loop
+  at once, so it cannot cycle. A layout that still has errors raises
+  `LayoutValidationException` (an `EbookValidationException`): the PDF is not
+  written or stored, and generation fails the book and refunds the hold. Every
+  attempt, issue and repair is logged. `LayoutValidatorTest` covers each rule on
+  hand-built geometry; `LayoutPipelineTest` covers repair, revalidation and
+  controlled failure on real renders.
 - **No near-empty last page.** After rendering, if the final page holds only a
   spilled line or two (and no image), the renderer re-renders with the final
   chapter set slightly tighter (`chapter--snug`) and keeps it only if the page

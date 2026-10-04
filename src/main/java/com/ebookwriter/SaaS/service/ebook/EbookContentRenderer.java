@@ -117,9 +117,6 @@ public class EbookContentRenderer {
 
     // ---- Semantic pagination ------------------------------------------------
 
-    /** A heading is kept with a following block only if that block is this short (chars). */
-    static final int KEEP_WITH_NEXT_MAX_CHARS = 700;
-
     /** Alt text that says nothing — never printed as a caption. */
     private static final java.util.Set<String> GENERIC_ALT = java.util.Set.of(
             "", "image", "illustration", "picture", "photo", "figure", "diagram");
@@ -134,11 +131,14 @@ public class EbookContentRenderer {
      *   <li><b>figures</b> — an image on its own line becomes a {@code <figure>}
      *       with its caption (a meaningful alt text) inside it, so a caption can
      *       never land on a different page from its image;</li>
-     *   <li><b>heading + lead</b> — a section heading is wrapped with the block
-     *       that follows it (a paragraph, list, component, table or figure of
-     *       modest size), so a heading never sits alone at the foot of a page.
-     *       A very long following paragraph is left free (orphans/widows handle
-     *       it) so a whole page isn't pushed forward for one heading.</li>
+     *   <li><b>heading + lead</b> — a section heading (or a run of them, an h2
+     *       straight into its h3) is wrapped with the start of what it
+     *       introduces, so a heading never sits alone at the foot of a page: the
+     *       first block, plus — when that is only a short lead-in line — the
+     *       block the lead-in introduces. Code, tables, figures and components
+     *       join at any size (they never split, so they'd move anyway); a very
+     *       long paragraph or list is left free (orphans/widows handle it) so a
+     *       whole page isn't pushed forward for one heading.</li>
      * </ul>
      */
     static String paginate(String html) {
@@ -163,36 +163,202 @@ public class EbookContentRenderer {
             }
         }
 
-        for (Element heading : new ArrayList<>(body.children())) {
-            String tag = heading.tagName();
-            if (!(tag.equals("h2") || tag.equals("h3") || tag.equals("h4"))) {
-                continue;
-            }
-            Element next = heading.nextElementSibling();
-            if (next == null || next.tagName().matches("h[1-6]") || !keepable(next)) {
-                continue;
-            }
-            Element group = new Element("div").addClass("keep-with-next");
-            heading.before(group);
-            group.appendChild(heading);
-            group.appendChild(next);
+        float column = PageGeometry.book().contentWidthPt();
+        for (Element table : body.select("table")) {
+            TableLayout.apply(table, availableWidth(table, column));
         }
+
+        // Logical blocks: a title and the start of what it introduces.
+        for (Element child : new ArrayList<>(body.children())) {
+            if (child.parent() != body) {
+                continue; // already part of an earlier block
+            }
+            List<Element> unit = logicalBlock(child);
+            if (unit != null) {
+                keepTogether(unit, column, child == body.firstElementChild());
+            }
+        }
+        // Components keep their label and title with the start of their body.
+        for (Element cmp : body.select("div.cmp")) {
+            if (!opensChapter(cmp, body)) {
+                guardComponent(cmp, column);
+            }
+        }
+        TableLayout.guardStarts(body, body.firstElementChild());
         return body.html();
     }
 
-    /** Whether a block is small enough to travel with its heading. */
-    private static boolean keepable(Element block) {
-        String tag = block.tagName();
-        if (tag.equals("figure") || tag.equals("pre")) {
+    /** Class of a guarded logical block (stylesheet: may split once its start is placed). */
+    static final String KEEP_START = "keep-with-next--start";
+
+    /** Room added to every estimated start, so "fits" means fits. */
+    static final double START_HEADROOM_PT = 16;
+
+    /**
+     * The logical block that begins at {@code first}, or null if none does: a
+     * title — a heading run (an h2 straight into its h3), or a label paragraph
+     * ("**Request**", "Your task:") — followed by up to {@link #MAX_LEAD_INS}
+     * lead-in lines and the content block they introduce.
+     */
+    private static List<Element> logicalBlock(Element first) {
+        List<Element> unit = new ArrayList<>();
+        Element next = first;
+        if (isHeading(first)) {
+            while (next != null && isHeading(next)) {
+                unit.add(next);
+                next = next.nextElementSibling();
+            }
+        } else if (isLabel(first)) {
+            unit.add(first);
+            next = first.nextElementSibling();
+        } else {
+            return null;
+        }
+        int leadIns = 0;
+        while (next != null && !next.tagName().matches("h[1-6]")) {
+            unit.add(next);
+            if (!isLeadIn(next) || leadIns++ == MAX_LEAD_INS) {
+                break;
+            }
+            next = next.nextElementSibling();
+        }
+        boolean content = unit.stream().anyMatch(e -> !isHeading(e) && e != first);
+        return content ? unit : null; // a title with nothing after it: page-break-after: avoid applies
+    }
+
+    /**
+     * Keep a logical block's start on one page, space-aware: the block is
+     * wrapped in a group that starts on the current page only if the page has
+     * room for its <b>start</b> — the title and lead-ins, plus the start of the
+     * content ({@link BlockMetrics#start}: the first lines of a paragraph or
+     * list, a code block or component whole if it fits a page, a table's header
+     * and first row). Otherwise the group starts on the next page
+     * ({@code -fs-page-break-min-height}). Past its start the content flows and
+     * may continue overleaf — a long paragraph, code block, exercise or table is
+     * never pushed forward whole for its title's sake.
+     *
+     * <p>A block whose size can't be estimated (a figure), or an action plan, is
+     * kept whole with its title instead, as before.
+     */
+    private static void keepTogether(List<Element> unit, float column, boolean opensChapter) {
+        Element content = unit.get(unit.size() - 1);
+        // An action plan's floated step numbers make the renderer leave a blank
+        // page inside a guarded group; it keeps its steps whole itself, so it
+        // joins its title as one unit, as before.
+        double start = content.hasClass("cmp--steps") ? -1 : BlockMetrics.start(content, column);
+        Element group = new Element("div").addClass("keep-with-next");
+        // The chapter's first block sits under the opener, which already heads
+        // the page: it starts there, whatever its size (the stylesheet lets it
+        // split) — moving it would leave the opener alone on a page.
+        if (start >= 0 && !opensChapter) {
+            for (Element e : unit.subList(0, unit.size() - 1)) {
+                start += BlockMetrics.height(e, column);
+            }
+            group.addClass(KEEP_START).attr("style", TableLayout.minHeightStyle(start + START_HEADROOM_PT));
+        }
+        unit.get(0).before(group);
+        for (Element e : unit) {
+            group.appendChild(e);
+        }
+    }
+
+    /** Whether {@code e} is, or begins, the first block of the chapter body. */
+    private static boolean opensChapter(Element e, Element body) {
+        Element first = body.firstElementChild();
+        return first != null && (e == first || e.parents().contains(first));
+    }
+
+    /** Class of a component that flows over pages (stylesheet: no page-break-inside: avoid). */
+    static final String FLOWS = "cmp--flows";
+
+    /**
+     * A component that may split — an exercise, or anything taller than a page —
+     * flows over pages, but starts only where its label, title and the first
+     * lines of its body fit, so the title never ends a page above a body that
+     * begins overleaf. One that fits a page is moved whole by the stylesheet and
+     * needs no guard. (Keeping "avoid" on a component taller than a page is what
+     * strands its title: the renderer can't honour it and breaks right after the
+     * header.)
+     */
+    private static void guardComponent(Element cmp, float column) {
+        if (cmp.hasClass("cmp--steps")) {
+            // An action plan keeps every step whole already, and its floated step
+            // numbers make the renderer leave a blank page when it flows.
+            return;
+        }
+        double start = BlockMetrics.start(cmp, column);
+        double whole = BlockMetrics.height(cmp, column);
+        if (start > 0 && start < whole) {
+            cmp.addClass(FLOWS);
+            String style = cmp.attr("style");
+            String guard = TableLayout.minHeightStyle(start + START_HEADROOM_PT);
+            cmp.attr("style", style.isBlank() ? guard : style + ";" + guard);
+        }
+    }
+
+    /**
+     * The width a table is laid out in: the text column, less the inset of a
+     * component box or list it sits in. (Column widths are emitted as shares, so
+     * this only steers how the width is divided, never the table's own width.)
+     */
+    private static float availableWidth(Element table, float column) {
+        float width = column;
+        if (table.closest(".cmp") != null) {
+            width -= 28f; // component padding (≈1.1em each side) + keyline
+        }
+        if (table.closest("li") != null) {
+            width -= 16f; // list indent
+        }
+        return width;
+    }
+
+    /** Lead-in paragraphs a heading may gather before reaching the block they introduce. */
+    static final int MAX_LEAD_INS = 2;
+
+    /** A paragraph this short (chars, ~2 lines) is a lead-in, not content that can stand alone. */
+    static final int LEAD_IN_MAX_CHARS = 160;
+
+    private static boolean isHeading(Element e) {
+        String tag = e.tagName();
+        return tag.equals("h2") || tag.equals("h3") || tag.equals("h4");
+    }
+
+    /**
+     * Whether a block is only a lead-in to the next one: a short paragraph, or one
+     * that ends in a colon ("The entity looks like this:"). Left at a page foot
+     * under its heading, it reads as a stranded heading.
+     */
+    private static boolean isLeadIn(Element block) {
+        if (!block.tagName().equals("p")) {
+            return false;
+        }
+        String text = block.text().strip();
+        return text.length() <= LEAD_IN_MAX_CHARS || text.endsWith(":");
+    }
+
+    /** A label this short ("Request", "Important") is a title for what follows, not content. */
+    static final int LABEL_MAX_CHARS = 80;
+
+    /**
+     * Whether a paragraph is a label for the block after it: a short line set
+     * entirely in bold or italics ("**Request**", "**Important**"), or a lead-in
+     * that ends in a colon ("Your task:", "The endpoints:"). Left at a page foot,
+     * it reads like a stranded heading.
+     */
+    private static boolean isLabel(Element p) {
+        if (!p.tagName().equals("p") || p.nextElementSibling() == null) {
+            return false;
+        }
+        String text = p.text().strip();
+        if (text.isEmpty()) {
+            return false;
+        }
+        if (text.endsWith(":") && text.length() <= LEAD_IN_MAX_CHARS) {
             return true;
         }
-        if (tag.equals("div") && block.hasClass("cmp")) {
-            return block.text().length() <= KEEP_WITH_NEXT_MAX_CHARS * 2;
-        }
-        if (tag.equals("table")) {
-            return block.select("tr").size() <= 12;
-        }
-        return block.text().length() <= KEEP_WITH_NEXT_MAX_CHARS;
+        boolean emphasised = p.children().size() == 1 && p.ownText().isBlank()
+                && p.child(0).tagName().matches("strong|b|em|i");
+        return emphasised && text.length() <= LABEL_MAX_CHARS;
     }
 
     /**

@@ -132,13 +132,22 @@ table {
     border-collapse: collapse;
     margin: 1em 0;
     font-size: 10pt;
-    page-break-inside: avoid;
+    /* Pagination (see TableLayout): a table may split between rows, and its
+       header row repeats at the top of every continuation page. */
+    -fs-table-paginate: paginate;
+    /* Column widths come from the <colgroup> EbookContentRenderer sizes from the
+       content (TableLayout); fixed layout makes the table exactly the text
+       column wide, so a long token can never push it past the margin. */
+    table-layout: fixed;
 }
 th, td {
     border: 1px solid #e6e3dd;
     padding: 0.45em 0.65em;
     text-align: left;
     vertical-align: top;
+    /* Last resort for a token wider than its column: break it, never overflow. */
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 th {
     background: #f7f5f0;
@@ -427,8 +436,39 @@ th {
    with the header repeated on a continuation page.
    =========================================================================== */
 .keep-with-next { page-break-inside: avoid; }
+/* Inside a heading group the group is the unit kept together: it moves to the
+   next page whole when it fits on one. When it can't (a near-page code block or
+   callout under its heading), its content may split so it starts right under
+   the heading, instead of jumping alone and leaving the heading at the foot. */
+.keep-with-next > pre,
+.keep-with-next > .cmp,
+.keep-with-next > table { page-break-inside: auto; }
+/* Likewise directly under a band chapter opener: the opener already heads the
+   page, so the first block starts there rather than leaving the opener alone. */
+.chapter-body > .keep-with-next:first-child,
+.chapter-body > pre:first-child,
+.chapter-body > .cmp:first-child { page-break-inside: auto; }
 thead { display: table-header-group; }
 tr { page-break-inside: avoid; }
+/* A short table moves to the next page whole rather than split; a longer one
+   starts only where its header and first row fit (an inline
+   -fs-page-break-min-height from TableLayout) and then splits between rows. */
+table.table--whole { page-break-inside: avoid; }
+/* Logical blocks (EbookContentRenderer.keepTogether): a title — heading, label,
+   lead-in — with the start of what it introduces. The group starts only where
+   that start fits (an inline -fs-page-break-min-height estimated from the
+   content: the title plus the first lines of a paragraph, a code block or
+   component whole if it fits a page, a table's header and first row) and then
+   flows, so long content continues overleaf instead of moving whole. */
+.keep-with-next.keep-with-next--start { page-break-inside: auto; }
+/* An exercise, or any component taller than a page, flows over pages once its
+   label, title and opening lines are placed (guarded the same way); other
+   components move whole when they fit a page. */
+.cmp.cmp--flows { page-break-inside: auto; }
+/* The renderer inherits -fs-page-break-min-height: the guard belongs to the
+   group/wrapper/component alone, or every line and row inside would demand that
+   much room and be pushed off the page away from its title. */
+.keep-with-next--start > *, .table-start > *, .cmp > * { -fs-page-break-min-height: 0; }
 li { orphans: 2; widows: 2; }
 
 /* The book's ending. When the final page would otherwise hold only a spilled
@@ -783,11 +823,20 @@ li { orphans: 2; widows: 2; }
     margin: 0 0 0.7cm 0;
     max-width: 12cm;
 }
+/* Meta chips ("20–30 MINUTES"): the pill is drawn on an inline span, whose
+   border wraps the text exactly as laid out. As a shrink-to-fit inline-block the
+   renderer sized it without the letter-spacing, and the capitals ran past the
+   pill's edge. The block around it reserves the pill's height (its line plus the
+   pill's padding and border) and keeps the spacing below. */
 .opener-meta {
-    display: inline-block;
-    white-space: nowrap;
     font-family: "Ebook Sans";
     font-size: 8.5pt;
+    line-height: 1.52;
+    padding: calc(0.25em + 1px) 0;
+    margin-bottom: 0.7cm;
+}
+.opener-meta > .meta-chip {
+    white-space: nowrap;
     font-weight: bold;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -795,9 +844,8 @@ li { orphans: 2; widows: 2; }
     border: 1px solid #d3ccbd;
     border-radius: 999px;
     padding: 0.25em 0.9em;
-    margin-bottom: 0.7cm;
 }
-.opener--unit .opener-meta {
+.opener--unit .opener-meta > .meta-chip {
     color: #1f6b4f;
     border-color: #bcd8c9;
 }
@@ -822,10 +870,14 @@ li { orphans: 2; widows: 2; }
 
 /* A unit's band opener (compact books) carries the same day/step meta chip. */
 .chapter-meta {
-    display: inline-block;
-    white-space: nowrap;
     font-family: "Ebook Sans";
     font-size: 8pt;
+    line-height: 1.52;
+    padding: calc(0.2em + 1px) 0;
+    margin: 0.1em 0 0.6em 0;
+}
+.chapter-meta > .meta-chip {
+    white-space: nowrap;
     font-weight: bold;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -833,5 +885,4 @@ li { orphans: 2; widows: 2; }
     border: 1px solid #bcd8c9;
     border-radius: 999px;
     padding: 0.2em 0.8em;
-    margin: 0.1em 0 0.6em 0;
 }
