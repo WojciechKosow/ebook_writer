@@ -166,6 +166,11 @@ public class EbookContentRenderer {
             }
         }
 
+        float column = PageGeometry.book().contentWidthPt();
+        for (Element table : body.select("table")) {
+            TableLayout.apply(table, availableWidth(table, column));
+        }
+
         for (Element heading : new ArrayList<>(body.children())) {
             if (heading.parent() != body || !isHeading(heading)) {
                 continue; // already grouped as part of an earlier heading run
@@ -207,6 +212,22 @@ public class EbookContentRenderer {
             }
         }
         return body.html();
+    }
+
+    /**
+     * The width a table is laid out in: the text column, less the inset of a
+     * component box or list it sits in. (Column widths are emitted as shares, so
+     * this only steers how the width is divided, never the table's own width.)
+     */
+    private static float availableWidth(Element table, float column) {
+        float width = column;
+        if (table.closest(".cmp") != null) {
+            width -= 28f; // component padding (≈1.1em each side) + keyline
+        }
+        if (table.closest("li") != null) {
+            width -= 16f; // list indent
+        }
+        return width;
     }
 
     /** Lead-in paragraphs a heading may gather before reaching the block they introduce. */

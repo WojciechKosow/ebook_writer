@@ -313,6 +313,20 @@ editor preview  ==  PDF output
   rather than jumping alone. Components, code, figures and table rows otherwise
   avoid page-internal breaks; table headers repeat on continuation pages.
   `HeadingPaginationTest` renders real PDFs and fails on any orphan heading.
+- **Tables fit the text column** (`TableLayout`, called from `paginate`). Every
+  table gets a `<colgroup>` and is rendered with `table-layout: fixed`, so it is
+  exactly the text column wide (`PageGeometry` reads the column from the
+  stylesheet's `@page` rule). Column shares follow the content, measured with the
+  bundled fonts: each column's minimum is its widest unbreakable piece, its
+  natural width its widest cell on one line; spare width goes where it is wanted
+  (short categorical columns stay narrow, prose and code columns grow), and when
+  even the minimums don't fit only the widest columns give way. Code in cells
+  gets invisible break points between its words (camelCase, `_`, before `<`) as
+  zero-width spaces, honoured by `CodeBreakLineBreaker` in the PDF and natively
+  by browsers; cells fall back to `word-wrap: break-word`. `PdfQualityInspector`
+  reports any body page with text or painted shapes outside the text column (the
+  renderer clips there, so an overflowing column would otherwise vanish
+  silently); `TableWidthPdfTest` covers both.
 - **No near-empty last page.** After rendering, if the final page holds only a
   spilled line or two (and no image), the renderer re-renders with the final
   chapter set slightly tighter (`chapter--snug`) and keeps it only if the page

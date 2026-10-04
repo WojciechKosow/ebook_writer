@@ -306,6 +306,7 @@ public class PdfGenerationService {
             PdfRendererBuilder builder = new PdfRendererBuilder();
             builder.useFastMode();
             registerFonts(builder);
+            builder.useUnicodeLineBreaker(new CodeBreakLineBreaker());
             builder.useProtocolsStreamImplementation(r2StreamFactory(overrides), R2_PROTOCOL);
             builder.withW3cDocument(dom, "/");
             builder.toStream(os);

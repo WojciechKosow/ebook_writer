@@ -133,12 +133,19 @@ table {
     margin: 1em 0;
     font-size: 10pt;
     page-break-inside: avoid;
+    /* Column widths come from the <colgroup> EbookContentRenderer sizes from the
+       content (TableLayout); fixed layout makes the table exactly the text
+       column wide, so a long token can never push it past the margin. */
+    table-layout: fixed;
 }
 th, td {
     border: 1px solid #e6e3dd;
     padding: 0.45em 0.65em;
     text-align: left;
     vertical-align: top;
+    /* Last resort for a token wider than its column: break it, never overflow. */
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 th {
     background: #f7f5f0;
