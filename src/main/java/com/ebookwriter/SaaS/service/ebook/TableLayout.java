@@ -147,6 +147,9 @@ final class TableLayout {
     /** The estimated height (pt) of the table's start: its header plus first body row. */
     static final String START_ATTR = "data-start-pt";
 
+    /** The estimated height (pt) of the whole table. */
+    static final String HEIGHT_ATTR = "data-height-pt";
+
     /**
      * Decide how the table meets a page break. The renderer repeats the header
      * on every continuation page and keeps rows whole (stylesheet); what it
@@ -179,6 +182,7 @@ final class TableLayout {
         }
         double start = TABLE_MARGIN_PT + header + Math.max(first, 0) + START_HEADROOM_PT;
         table.attr(START_ATTR, String.format(Locale.ROOT, "%.0f", start));
+        table.attr(HEIGHT_ATTR, String.format(Locale.ROOT, "%.0f", total));
         if (total <= WHOLE_TABLE_SHARE * PageGeometry.book().contentHeightPt()) {
             table.addClass(WHOLE);
         }
@@ -189,13 +193,14 @@ final class TableLayout {
      * heading/lead-in group (which carries its own guard): wrap it in a block
      * with the minimum height. The guard must sit on a wrapper — on the table
      * itself the renderer applies it to the rows, moving them on and leaving
-     * the header behind, the very break it is meant to prevent.
+     * the header behind, the very break it is meant to prevent. A table that
+     * opens the chapter ({@code opener}) starts under the chapter opener as is.
      */
-    static void guardStarts(Element root) {
+    static void guardStarts(Element root, Element opener) {
         for (Element table : root.select("table")) {
             Element parent = table.parent();
-            if (table.hasClass(WHOLE) || startHeight(table) <= 0
-                    || (parent != null && parent.hasClass("keep-with-next--table"))) {
+            if (table == opener || table.hasClass(WHOLE) || startHeight(table) <= 0
+                    || (parent != null && parent.hasClass(EbookContentRenderer.KEEP_START))) {
                 continue;
             }
             Element wrapper = new Element("div").addClass("table-start")
@@ -205,15 +210,33 @@ final class TableLayout {
         }
     }
 
-    /** The CSS that keeps a block off a page with less than {@code pt} left. */
+    /** No guard asks for more than this share of a page: a start that can't fit any page guards nothing. */
+    static final double MAX_GUARD_SHARE = 0.85;
+
+    /**
+     * The CSS that keeps a block off a page with less than {@code pt} left —
+     * capped below a full page, because a guard no page can satisfy makes the
+     * renderer break, find the fresh page still too short, and break again,
+     * leaving a blank page behind.
+     */
     static String minHeightStyle(double pt) {
-        return String.format(Locale.ROOT, "-fs-page-break-min-height: %.0fpt", pt);
+        double capped = Math.min(pt, MAX_GUARD_SHARE * PageGeometry.book().contentHeightPt());
+        return String.format(Locale.ROOT, "-fs-page-break-min-height: %.0fpt", capped);
     }
 
     /** Estimated start height of a table sized by {@link #apply}, or 0 if it wasn't. */
     static double startHeight(Element table) {
+        return number(table.attr(START_ATTR));
+    }
+
+    /** Estimated height of a whole table sized by {@link #apply}, or 0 if it wasn't. */
+    static double wholeHeight(Element table) {
+        return number(table.attr(HEIGHT_ATTR));
+    }
+
+    private static double number(String value) {
         try {
-            return Double.parseDouble(table.attr(START_ATTR));
+            return Double.parseDouble(value);
         } catch (NumberFormatException e) {
             return 0;
         }
@@ -268,29 +291,21 @@ final class TableLayout {
         return lines;
     }
 
+    /** Typefaces the book sets text in, for {@link #textLines}. */
+    enum Typeface { SERIF, SANS_BOLD, MONO }
+
     /**
-     * Estimated height (pt) of a heading or paragraph set in the text column of
-     * {@code widthPt} — used to keep a heading, its lead-in and a table's start
-     * on one page. Mirrors the stylesheet's sizes and margins.
+     * Lines {@code text} wraps to in a column {@code widthPt} wide, set in
+     * {@code face} at {@code sizePt} — measured with the bundled fonts and the
+     * renderer's own break opportunities. Shared with {@link BlockMetrics}.
      */
-    static double blockHeight(Element block, double widthPt) {
-        String tag = block.tagName();
-        Face face = tag.matches("h[2-4]") ? Face.SANS_BOLD : Face.SERIF;
-        float size = switch (tag) {
-            case "h2" -> 15.5f;
-            case "h3" -> 12.5f;
-            case "h4" -> 9.5f;
-            default -> 11f;
+    static int textLines(String text, Typeface face, float sizePt, double widthPt) {
+        Face f = switch (face) {
+            case SERIF -> Face.SERIF;
+            case SANS_BOLD -> Face.SANS_BOLD;
+            case MONO -> Face.MONO;
         };
-        double lineHeight = tag.matches("h[2-4]") ? 1.22 : LINE_HEIGHT;
-        double margins = switch (tag) {
-            case "h2" -> (1.5 + 0.5 + 0.25) * size + 1; // margin 1.5em 0 0.5em, padding-bottom, rule
-            case "h3" -> (1.25 + 0.35) * size;
-            case "h4" -> (1.1 + 0.3) * size;
-            default -> 0.65 * size;                      // p { margin-bottom: 0.65em }
-        };
-        List<Run> runs = List.of(new Run(block.text(), face, size, 0, false));
-        return lines(runs, widthPt) * size * lineHeight + margins;
+        return lines(List.of(new Run(text.replace('\n', ' '), f, sizePt, 0, false)), widthPt);
     }
 
     private static List<double[]> pieces(List<Run> runs) {

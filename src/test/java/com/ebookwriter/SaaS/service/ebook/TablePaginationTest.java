@@ -92,7 +92,7 @@ class TablePaginationTest {
         assertTrue(small.selectFirst("table").hasClass(TableLayout.WHOLE));
         assertTrue(small.select(".table-start").isEmpty());
 
-        Document large = Jsoup.parseBodyFragment(renderer.toHtml(TablePaginationProbe.table(1, TablePaginationProbe.uniform(40, 4))));
+        Document large = Jsoup.parseBodyFragment(renderer.toHtml("Opening line.\n\n" + TablePaginationProbe.table(1, TablePaginationProbe.uniform(40, 4))));
         Element table = large.selectFirst("table");
         assertFalse(table.hasClass(TableLayout.WHOLE));
         assertFalse(table.attr("style").contains("page-break-min-height"),
@@ -101,8 +101,8 @@ class TablePaginationTest {
         assertTrue(wrapper.hasClass("table-start"));
         assertTrue(wrapper.attr("style").startsWith("-fs-page-break-min-height:"));
 
-        Document led = Jsoup.parseBodyFragment(renderer.toHtml("The columns:\n\n" + TablePaginationProbe.table(1, TablePaginationProbe.uniform(40, 4))));
-        Element group = led.selectFirst(".keep-with-next--table");
+        Document led = Jsoup.parseBodyFragment(renderer.toHtml("Opening line.\n\nThe columns:\n\n" + TablePaginationProbe.table(1, TablePaginationProbe.uniform(40, 4))));
+        Element group = led.selectFirst("." + EbookContentRenderer.KEEP_START);
         assertNotNull(group, "a lead-in ending in a colon starts with its table");
         assertEquals("p", group.child(0).tagName());
         assertTrue(TableLayout.startHeight(group.selectFirst("table")) > 0);

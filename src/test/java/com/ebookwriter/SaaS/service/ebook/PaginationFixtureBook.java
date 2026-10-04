@@ -10,8 +10,9 @@ import java.util.Random;
 /**
  * A deterministic, technical-book-shaped manuscript for pagination tests: the
  * shape a knowledge book takes (h2 sections, h3 "Entity: what it owns"
- * subsections, h4 labels, long prose, lists, code, tables and callouts in
- * varied order), so headings land at every possible height on a page.
+ * subsections, h4 labels, long prose, lists, code, tables, callouts, bold
+ * labels and lead-ins, exercises — some over several pages — in varied order),
+ * so titles land at every possible height on a page.
  */
 final class PaginationFixtureBook {
 
@@ -79,7 +80,16 @@ final class PaginationFixtureBook {
     }
 
     private static String block(Random r) {
-        return switch (r.nextInt(12)) {
+        return switch (r.nextInt(20)) {
+            case 12 -> "**Request**\n\n```http\nPOST /api/auth/login\nContent-Type: application/json\n\n{\"email\": \"a@b.c\", \"password\": \"secret\"}\n```";
+            case 13 -> "**Important**\n\n" + prose(r, 2 + r.nextInt(8));
+            case 14 -> ":::exercise Implement the login endpoint\nYour task: " + prose(r, 3 + r.nextInt(6))
+                    + ("\n\n" + prose(r, 4 + r.nextInt(8))).repeat(r.nextInt(5)) + "\n:::";
+            case 15 -> ":::warning\n" + prose(r, 2 + r.nextInt(6)) + "\n:::";
+            case 16 -> ":::tip Use a dedicated bean\n" + prose(r, 1 + r.nextInt(5)) + "\n:::";
+            case 17 -> code(r, 30 + r.nextInt(45)); // long examples, some taller than a page
+            case 18 -> "#### Exercise — Implement login\n\nYour task:\n\n" + prose(r, 4 + r.nextInt(10));
+            case 19 -> "Response:\n\n```http\nHTTP/1.1 200 OK\n\n{\"token\": \"eyJ...\"}\n```";
             case 0, 1 -> prose(r, 6 + r.nextInt(10)); // long paragraph (often > 700 chars)
             case 2 -> prose(r, 1 + r.nextInt(3));
             case 3 -> list(r);

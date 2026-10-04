@@ -43,6 +43,25 @@ final class StrandedHeadingProbe {
                     && text.equals(text.toUpperCase()) && text.chars().anyMatch(Character::isLetter);
         }
 
+        /**
+         * Any title-like line: a heading, a component label or table header
+         * (8.5pt bold sans capitals), a bold label on its own ("Request"), or a
+         * short lead-in ending in a colon ("Your task:").
+         */
+        boolean title() {
+            if (heading()) {
+                return true;
+            }
+            String t = text.strip();
+            if (sans() && bold() && size < 9f && t.equals(t.toUpperCase()) && t.chars().anyMatch(Character::isLetter)) {
+                return true;
+            }
+            if (!sans() && bold() && t.length() <= 40 && !t.contains(" — ") && !t.contains("—")) {
+                return true;
+            }
+            return !sans() && !font.contains("Mono") && t.endsWith(":") && t.length() <= 60;
+        }
+
         /** The page number at the foot of a page. */
         boolean folio() {
             return sans() && size < 9f && text.strip().matches("\\d+");
@@ -78,10 +97,19 @@ final class StrandedHeadingProbe {
 
     /** Every heading that ends its page with too little of its section beneath it. */
     static List<Stranded> find(byte[] pdf) throws IOException {
+        return find(pdf, Line::heading);
+    }
+
+    /** Every title of any kind ({@link Line#title}) that ends its page with too little beneath it. */
+    static List<Stranded> findTitles(byte[] pdf) throws IOException {
+        return find(pdf, Line::title);
+    }
+
+    private static List<Stranded> find(byte[] pdf, java.util.function.Predicate<Line> isTitle) throws IOException {
         List<Line> all = lines(pdf);
         List<Stranded> found = new ArrayList<>();
         int pages = all.isEmpty() ? 0 : all.get(all.size() - 1).page();
-        for (int p = 1; p <= pages; p++) {
+        for (int p = 2; p <= pages; p++) { // page 1 is the cover
             List<Line> page = new ArrayList<>();
             for (Line l : all) {
                 if (l.page() == p && !l.folio()) {
@@ -92,7 +120,7 @@ final class StrandedHeadingProbe {
             // distinct lines (by baseline) sit below it.
             int lastHeading = -1;
             for (int i = page.size() - 1; i >= 0; i--) {
-                if (page.get(i).heading()) {
+                if (isTitle.test(page.get(i))) {
                     lastHeading = i;
                     break;
                 }
@@ -104,7 +132,7 @@ final class StrandedHeadingProbe {
             List<Float> baselines = new ArrayList<>();
             for (int i = lastHeading + 1; i < page.size(); i++) {
                 Line l = page.get(i);
-                if (l.heading() || l.y() <= headingY + 1f) {
+                if (isTitle.test(l) || l.y() <= headingY + 1f) {
                     continue;
                 }
                 if (baselines.stream().noneMatch(b -> Math.abs(b - l.y()) < 1f)) {

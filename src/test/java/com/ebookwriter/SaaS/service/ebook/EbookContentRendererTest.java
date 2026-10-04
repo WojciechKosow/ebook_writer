@@ -151,61 +151,97 @@ class EbookContentRendererTest {
         assertFalse(renderer.toHtml("![" + longAlt + "](ebook-image:abc)").contains("figcaption"));
     }
 
+    /** A chapter's first block starts under its opener unguarded, so blocks under test follow an opening line. */
+    private static final String OPENING = "Opening line.\n\n";
+    private static final String OPENING_HTML = "<p>Opening line.</p>\n";
+
+    @Test
+    void theChapterOpeningBlockIsNotGuardedItStartsUnderTheOpener() {
+        String html = renderer.toHtml("### First\n\n" + "word ".repeat(300));
+        assertTrue(html.startsWith("<div class=\"keep-with-next\"><h3>First</h3>"), html);
+        assertFalse(html.contains("page-break-min-height"), html);
+    }
+
+    private static final String GROUP = "<div class=\"keep-with-next keep-with-next--start\" style=\"-fs-page-break-min-height: ";
+
+    /** The start guard (pt) of the logical block group the HTML begins with, or -1. */
+    private static int guard(String html) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("keep-with-next--start\" style=\"-fs-page-break-min-height: (\\d+)pt").matcher(html);
+        return m.find() ? Integer.parseInt(m.group(1)) : -1;
+    }
+
     @Test
     void aHeadingIsKeptWithTheBlockItIntroduces() {
-        String html = renderer.toHtml("## The audit\n\nList every app you opened today.\n\nAnother paragraph.");
-        assertTrue(html.contains("<div class=\"keep-with-next\"><h2>The audit</h2><p>List every app"),
-                "heading and its first block travel together: " + html);
-        assertEquals(1, countOccurrences(html, "keep-with-next"));
+        String html = renderer.toHtml(OPENING + "## The audit\n\nList every app you opened today.\n\nAnother paragraph.");
+        assertTrue(html.startsWith(OPENING_HTML + GROUP), html);
+        assertTrue(html.contains("<h2>The audit</h2><p>List every app you opened today.</p>"),
+                "heading and its first block form one logical block: " + html);
+        assertEquals(1, countOccurrences(html, "keep-with-next--start"));
     }
 
     @Test
     void aHeadingIsKeptWithAComponentThatFollowsIt() {
-        String html = renderer.toHtml("### Try it\n\n:::exercise The audit\nList every app.\n:::");
-        assertTrue(html.contains("keep-with-next"));
+        String html = renderer.toHtml(OPENING + "### Try it\n\n:::exercise The audit\nList every app.\n:::");
+        assertTrue(html.startsWith(OPENING_HTML + GROUP), html);
         assertTrue(html.indexOf("keep-with-next") < html.indexOf("cmp--exercise"));
     }
 
     @Test
     void aLeadInLineTravelsWithTheCodeItIntroducesAndItsHeading() {
-        String html = renderer.toHtml("### Offer\n\nHere is the entity:\n\n```java\nclass Offer {}\n```\n\nAfter.");
-        assertTrue(html.contains("<div class=\"keep-with-next\"><h3>Offer</h3><p>Here is the entity:</p><pre>"),
+        String html = renderer.toHtml(OPENING + "### Offer\n\nHere is the entity:\n\n```java\nclass Offer {}\n```\n\nAfter.");
+        assertTrue(html.contains("<h3>Offer</h3><p>Here is the entity:</p><pre>"),
                 "heading, lead-in and code block form one unit: " + html);
         assertTrue(html.indexOf("</pre></div>") < html.indexOf("<p>After."));
     }
 
     @Test
     void aHeadingRunIsKeptWithItsFirstBlock() {
-        String html = renderer.toHtml("## Data model\n\n### User\n\n```java\nclass User {}\n```");
-        assertTrue(html.contains("<div class=\"keep-with-next\"><h2>Data model</h2><h3>User</h3><pre>"), html);
-        assertEquals(1, countOccurrences(html, "keep-with-next"));
+        String html = renderer.toHtml(OPENING + "## Data model\n\n### User\n\n```java\nclass User {}\n```");
+        assertTrue(html.contains("<h2>Data model</h2><h3>User</h3><pre>"), html);
+        assertEquals(1, countOccurrences(html, "keep-with-next--start"));
     }
 
     @Test
-    void blocksThatNeverSplitTravelWithTheirHeadingAtAnySize() {
+    void aSplittableTableJoinsItsHeadingByItsHeaderAndFirstRow() {
         String bigTable = "| A | B |\n|---|---|\n" + "| a | b |\n".repeat(40);
-        String tableGroup = renderer.toHtml("### Columns\n\n" + bigTable);
-        assertTrue(tableGroup.startsWith("<div class=\"keep-with-next keep-with-next--table\" style=\"-fs-page-break-min-height:"),
-                "a table that may split joins its heading as a group that starts only where heading, header and first row fit: "
-                        + tableGroup);
-        assertTrue(tableGroup.contains("<h3>Columns</h3><table"));
-        String bigCallout = ":::example\n" + "word ".repeat(EbookContentRenderer.KEEP_WITH_NEXT_MAX_CHARS) + "\n:::";
-        assertTrue(renderer.toHtml("### Offer\n\n" + bigCallout).startsWith("<div class=\"keep-with-next\"><h3>"));
+        String html = renderer.toHtml(OPENING + "### Columns\n\n" + bigTable);
+        assertTrue(html.startsWith(OPENING_HTML + GROUP) && html.contains("<h3>Columns</h3><table"), html);
+        assertTrue(guard(html) < 150, "the guard covers the heading, header and first row, not 40 rows: " + guard(html));
     }
 
     @Test
-    void aLeadInBeforeALongBlockIsBoundToThatBlock() {
-        String longPara = "word ".repeat(EbookContentRenderer.KEEP_WITH_NEXT_MAX_CHARS / 4);
-        String html = renderer.toHtml("### Rules\n\nThe rule is:\n\n" + longPara);
-        assertTrue(html.contains("<div class=\"keep-with-next keep-with-next--open\"><h3>Rules</h3><p>The rule is:</p></div>"),
-                "the long paragraph stays free, but the group asks not to be parted from it: " + html);
+    void theGuardCoversOnlyTheStartOfALongBlockNotAllOfIt() {
+        String longPara = "word ".repeat(400);
+        int longGuard = guard(renderer.toHtml(OPENING + "## Heading\n\n" + longPara));
+        int shortGuard = guard(renderer.toHtml(OPENING + "## Heading\n\nword word word."));
+        assertTrue(longGuard > shortGuard, "the first lines of a long paragraph join the heading");
+        assertTrue(longGuard < 150, "heading + first lines, not a page-long paragraph pushed forward: " + longGuard);
+
+        StringBuilder hugeCode = new StringBuilder("```java\n");
+        for (int i = 0; i < 90; i++) {
+            hugeCode.append("int field").append(i).append(";\n");
+        }
+        int codeGuard = guard(renderer.toHtml(OPENING + "### Provider\n\n" + hugeCode + "```"));
+        assertTrue(codeGuard > 0 && codeGuard < 160, "a code block taller than a page joins by its first lines: " + codeGuard);
     }
 
     @Test
-    void aVeryLongParagraphIsNotGluedToItsHeading() {
-        String longPara = "word ".repeat(EbookContentRenderer.KEEP_WITH_NEXT_MAX_CHARS / 4);
-        String html = renderer.toHtml("## Heading\n\n" + longPara);
-        assertFalse(html.contains("keep-with-next"),
-                "gluing a page-long paragraph would push a whole page forward for one heading");
+    void aLabelIsKeptWithItsContent() {
+        for (String label : new String[]{"**Request**", "**Important**", "Your task:", "The endpoints:"}) {
+            String html = renderer.toHtml("Intro paragraph.\n\n" + label + "\n\n```http\nPOST /api/auth/login\n```");
+            assertTrue(html.contains(GROUP) && html.indexOf("keep-with-next") < html.indexOf("<pre>"),
+                    label + " forms a logical block with what follows: " + html);
+        }
+        assertFalse(renderer.toHtml(OPENING + "A plain sentence that is not a label.\n\nNext.").contains("keep-with-next"));
+    }
+
+    @Test
+    void anExerciseOrOversizedComponentGuardsItsTitleWithTheStartOfItsBody() {
+        String exercise = renderer.toHtml(OPENING + ":::exercise Implement login\nYour task: " + "word ".repeat(600) + "\n:::");
+        assertTrue(exercise.contains("cmp cmp--exercise cmp--flows\" style=\"-fs-page-break-min-height: "),
+                "an exercise flows over pages once its title and opening lines are placed: " + exercise);
+        String note = renderer.toHtml(OPENING + ":::note\nShort note.\n:::");
+        assertFalse(note.contains("page-break-min-height"), "a small callout moves whole; no guard needed");
     }
 }

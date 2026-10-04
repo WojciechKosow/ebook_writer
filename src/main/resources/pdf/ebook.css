@@ -436,9 +436,6 @@ th {
    with the header repeated on a continuation page.
    =========================================================================== */
 .keep-with-next { page-break-inside: avoid; }
-/* A heading + lead-in line whose content is a long, splittable block: bind the
-   group to that block so the page breaker carries them over together. */
-.keep-with-next--open { page-break-after: avoid; }
 /* Inside a heading group the group is the unit kept together: it moves to the
    next page whole when it fits on one. When it can't (a near-page code block or
    callout under its heading), its content may split so it starts right under
@@ -457,13 +454,21 @@ tr { page-break-inside: avoid; }
    starts only where its header and first row fit (an inline
    -fs-page-break-min-height from TableLayout) and then splits between rows. */
 table.table--whole { page-break-inside: avoid; }
-/* A heading or lead-in followed by such a table: the group starts only where
-   heading, lead-in, header and first row fit together, then flows. */
-.keep-with-next.keep-with-next--table { page-break-inside: auto; }
+/* Logical blocks (EbookContentRenderer.keepTogether): a title — heading, label,
+   lead-in — with the start of what it introduces. The group starts only where
+   that start fits (an inline -fs-page-break-min-height estimated from the
+   content: the title plus the first lines of a paragraph, a code block or
+   component whole if it fits a page, a table's header and first row) and then
+   flows, so long content continues overleaf instead of moving whole. */
+.keep-with-next.keep-with-next--start { page-break-inside: auto; }
+/* An exercise, or any component taller than a page, flows over pages once its
+   label, title and opening lines are placed (guarded the same way); other
+   components move whole when they fit a page. */
+.cmp.cmp--flows { page-break-inside: auto; }
 /* The renderer inherits -fs-page-break-min-height: the guard belongs to the
-   group/wrapper alone, or every row would demand that much room and be pushed
-   off the page away from its header. */
-.keep-with-next--table > *, .table-start > * { -fs-page-break-min-height: 0; }
+   group/wrapper/component alone, or every line and row inside would demand that
+   much room and be pushed off the page away from its title. */
+.keep-with-next--start > *, .table-start > *, .cmp > * { -fs-page-break-min-height: 0; }
 li { orphans: 2; widows: 2; }
 
 /* The book's ending. When the final page would otherwise hold only a spilled

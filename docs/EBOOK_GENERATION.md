@@ -300,19 +300,27 @@ editor preview  ==  PDF output
 
 ## Pagination & final page
 
-- **Semantic units stay together** (`EbookContentRenderer.paginate`, shared by
-  preview and PDF): an image on its own line becomes a `<figure>` with its caption
-  inside (captions can't separate from images; generic/overlong alt text isn't
-  printed); a section heading (or an h2→h3 run) is grouped with the start of
-  what it introduces so it can't be stranded at a page foot: the first block,
-  plus the block a short lead-in line ("Here is the entity:") introduces. Code,
-  tables, figures and components join at any size (they move whole anyway); a
-  very long paragraph or list is left free so a page isn't pushed forward for
-  one heading. Inside a group the group is the keep-together unit — when it is
-  taller than a page, its code/table/callout splits starting under the heading
-  rather than jumping alone. Components, code, figures and table rows otherwise
-  avoid page-internal breaks; table headers repeat on continuation pages.
-  `HeadingPaginationTest` renders real PDFs and fails on any orphan heading.
+- **Logical blocks keep their start together** (`EbookContentRenderer.paginate`,
+  shared by preview and PDF). An image on its own line becomes a `<figure>` with
+  its caption inside. A *title* — a heading run (h2 straight into h3), a bold
+  label ("**Request**"), or a lead-in ending in `:` ("Your task:") — is grouped
+  with up to two lead-in lines and the block it introduces. The group starts on
+  the current page only if its *start* fits there — the title plus the first
+  three lines of a paragraph or list item, a code block or component whole if it
+  fits a page (they move whole anyway), otherwise its first lines, a table's
+  header and first row — and otherwise starts on the next page; past its start the
+  content flows over pages. This is space-aware: `BlockMetrics` estimates the
+  start from the content with the bundled fonts, and the group carries it as the
+  renderer's `-fs-page-break-min-height` (+16pt headroom, capped at 85% of a page,
+  reset on children because the renderer inherits it). Components get the same
+  guard on themselves: an exercise, or any component taller than a page, flows
+  over pages (`cmp--flows`) once its label, title and opening lines are placed;
+  other components move whole when they fit a page. Exceptions, kept as before:
+  the chapter's first block starts under the opener unguarded (moving it would
+  leave the opener alone), a figure (size unknown) moves whole with its title,
+  and an action plan (`:::steps`, whose floated numbers make the renderer leave
+  a blank page when it flows) moves whole with its title. `KeepTogetherTest` and
+  `HeadingPaginationTest` check it on rendered PDFs.
 - **Tables fit the text column** (`TableLayout`, called from `paginate`). Every
   table gets a `<colgroup>` and is rendered with `table-layout: fixed`, so it is
   exactly the text column wide (`PageGeometry` reads the column from the
