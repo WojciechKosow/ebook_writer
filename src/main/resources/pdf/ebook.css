@@ -823,11 +823,20 @@ li { orphans: 2; widows: 2; }
     margin: 0 0 0.7cm 0;
     max-width: 12cm;
 }
+/* Meta chips ("20–30 MINUTES"): the pill is drawn on an inline span, whose
+   border wraps the text exactly as laid out. As a shrink-to-fit inline-block the
+   renderer sized it without the letter-spacing, and the capitals ran past the
+   pill's edge. The block around it reserves the pill's height (its line plus the
+   pill's padding and border) and keeps the spacing below. */
 .opener-meta {
-    display: inline-block;
-    white-space: nowrap;
     font-family: "Ebook Sans";
     font-size: 8.5pt;
+    line-height: 1.52;
+    padding: calc(0.25em + 1px) 0;
+    margin-bottom: 0.7cm;
+}
+.opener-meta > .meta-chip {
+    white-space: nowrap;
     font-weight: bold;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -835,9 +844,8 @@ li { orphans: 2; widows: 2; }
     border: 1px solid #d3ccbd;
     border-radius: 999px;
     padding: 0.25em 0.9em;
-    margin-bottom: 0.7cm;
 }
-.opener--unit .opener-meta {
+.opener--unit .opener-meta > .meta-chip {
     color: #1f6b4f;
     border-color: #bcd8c9;
 }
@@ -862,10 +870,14 @@ li { orphans: 2; widows: 2; }
 
 /* A unit's band opener (compact books) carries the same day/step meta chip. */
 .chapter-meta {
-    display: inline-block;
-    white-space: nowrap;
     font-family: "Ebook Sans";
     font-size: 8pt;
+    line-height: 1.52;
+    padding: calc(0.2em + 1px) 0;
+    margin: 0.1em 0 0.6em 0;
+}
+.chapter-meta > .meta-chip {
+    white-space: nowrap;
     font-weight: bold;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -873,5 +885,4 @@ li { orphans: 2; widows: 2; }
     border: 1px solid #bcd8c9;
     border-radius: 999px;
     padding: 0.2em 0.8em;
-    margin: 0.1em 0 0.6em 0;
 }

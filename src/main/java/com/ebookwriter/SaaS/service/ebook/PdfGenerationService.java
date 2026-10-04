@@ -13,6 +13,7 @@ import com.openhtmltopdf.extend.FSStream;
 import com.openhtmltopdf.extend.FSStreamFactory;
 import com.openhtmltopdf.extend.FSSupplier;
 import com.openhtmltopdf.outputdevice.helper.BaseRendererBuilder.FontStyle;
+import com.openhtmltopdf.pdfboxout.PdfBoxRenderer;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import lombok.RequiredArgsConstructor;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -296,25 +297,131 @@ public class PdfGenerationService {
     }
 
     private byte[] renderPdf(String html, Map<String, ImageRef> refsByImageId, Map<String, byte[]> overrides) {
-        try {
-            Document jsoupDoc = Jsoup.parse(html);
-            rewriteImageReferences(jsoupDoc, refsByImageId);
-            jsoupDoc.outputSettings().syntax(Document.OutputSettings.Syntax.xml);
-            org.w3c.dom.Document dom = new W3CDom().fromJsoup(jsoupDoc);
+        Document jsoupDoc = Jsoup.parse(html);
+        rewriteImageReferences(jsoupDoc, refsByImageId);
+        return renderValidated(jsoupDoc, overrides).pdf();
+    }
 
-            ByteArrayOutputStream os = new ByteArrayOutputStream(256 * 1024);
-            PdfRendererBuilder builder = new PdfRendererBuilder();
-            builder.useFastMode();
-            registerFonts(builder);
-            builder.useUnicodeLineBreaker(new CodeBreakLineBreaker());
-            builder.useProtocolsStreamImplementation(r2StreamFactory(overrides), R2_PROTOCOL);
-            builder.withW3cDocument(dom, "/");
-            builder.toStream(os);
-            builder.run();
-            return os.toByteArray();
-        } catch (IOException e) {
-            throw new RuntimeException("PDF rendering failed: " + e.getMessage(), e);
+    /** A render: the PDF bytes, the layout they were written from, and its validation. */
+    record Rendered(byte[] pdf, LayoutSnapshot layout, LayoutValidationResult validation, int attempts) {
+    }
+
+    /**
+     * Repairs tried after the first layout before giving up. Each round fixes
+     * every repairable error at its source and lays the book out again; two
+     * rounds cover a fix that exposes a second problem further on.
+     */
+    static final int MAX_REPAIR_ATTEMPTS = 2;
+
+    /**
+     * Lay the book out, validate the layout, and write the PDF only if it passes:
+     * <pre>
+     *   layout → validate → PASS: write the PDF
+     *                     → errors: repair at the source → layout → validate …
+     * </pre>
+     * Repairs are applied to the book HTML ({@link LayoutRepair}), never to the
+     * PDF. At most {@link #MAX_REPAIR_ATTEMPTS} rounds; a round with nothing new
+     * to apply — an error with no deterministic repair, or one that survived its
+     * own repair — ends the loop at once. A layout that still has errors raises
+     * {@link LayoutValidationException}: a broken PDF is never returned as a
+     * success. Warnings are logged and do not block.
+     */
+    Rendered renderValidated(Document doc, Map<String, byte[]> overrides) {
+        LayoutRepair.assignIds(doc);
+        java.util.Set<String> applied = new java.util.LinkedHashSet<>();
+        StringBuilder report = new StringBuilder("PDF layout validation");
+        for (int attempt = 1; ; attempt++) {
+            Laid laid = layout(doc, overrides);
+            LayoutValidationResult result = LayoutValidator.validate(laid.snapshot());
+            report.append(String.format("%nAttempt %d: %s", attempt, result.status()));
+            for (LayoutIssue issue : result.issues()) {
+                report.append("\n  ").append(issue.diagnostic().replace("\n", "\n  "));
+            }
+            if (result.passed()) {
+                byte[] pdf = laid.write();
+                if (attempt > 1 || !result.issues().isEmpty()) {
+                    report.append(String.format("%nFinal PDF accepted after %d attempt(s), %d warning(s).",
+                            attempt, result.warnings().size()));
+                    log.info("{}", report);
+                }
+                return new Rendered(pdf, laid.snapshot(), result, attempt);
+            }
+            laid.close();
+            List<LayoutIssue> fixable = new ArrayList<>();
+            for (LayoutIssue issue : result.errors()) {
+                if (issue.repairable() && !applied.contains(issue.repairKey())) {
+                    fixable.add(issue);
+                }
+            }
+            boolean anyApplied = false;
+            if (attempt <= MAX_REPAIR_ATTEMPTS) {
+                for (LayoutIssue issue : fixable) {
+                    String done = LayoutRepair.apply(doc, issue);
+                    applied.add(issue.repairKey());
+                    report.append("\n  Repair ").append(issue.type()).append(": ")
+                            .append(done == null ? "not applicable" : done);
+                    anyApplied |= done != null;
+                }
+            }
+            if (!anyApplied) {
+                String why = attempt > MAX_REPAIR_ATTEMPTS ? "repair attempts exhausted (" + MAX_REPAIR_ATTEMPTS + ")"
+                        : fixable.isEmpty() ? "no deterministic repair for the remaining error(s), or a repair already "
+                        + "applied did not fix them" : "no repair applied";
+                report.append("\nResult: FAILED — ").append(why);
+                log.error("{}", report);
+                throw new LayoutValidationException(result, attempt, report.toString());
+            }
         }
+    }
+
+    /** A laid-out document whose PDF has not been written yet. */
+    private record Laid(PdfBoxRenderer renderer, ByteArrayOutputStream out, LayoutSnapshot snapshot) {
+        byte[] write() {
+            try (PdfBoxRenderer r = renderer) {
+                r.createPDF();
+                return out.toByteArray();
+            } catch (IOException e) {
+                throw new RuntimeException("PDF rendering failed: " + e.getMessage(), e);
+            }
+        }
+
+        void close() {
+            renderer.close();
+        }
+    }
+
+    private Laid layout(Document jsoupDoc, Map<String, byte[]> overrides) {
+        jsoupDoc.outputSettings().syntax(Document.OutputSettings.Syntax.xml);
+        org.w3c.dom.Document dom = new W3CDom().fromJsoup(jsoupDoc);
+        ByteArrayOutputStream os = new ByteArrayOutputStream(256 * 1024);
+        PdfRendererBuilder builder = new PdfRendererBuilder();
+        builder.useFastMode();
+        registerFonts(builder);
+        builder.useUnicodeLineBreaker(new CodeBreakLineBreaker());
+        builder.useProtocolsStreamImplementation(r2StreamFactory(overrides), R2_PROTOCOL);
+        builder.withW3cDocument(dom, "/");
+        builder.toStream(os);
+        PdfBoxRenderer renderer = builder.buildPdfRenderer();
+        renderer.layout();
+        return new Laid(renderer, os, LayoutSnapshot.capture(renderer));
+    }
+
+    /** Lay out and write without validating — for inspecting a deliberately broken document in tests. */
+    Rendered layoutAndWrite(Document doc, Map<String, byte[]> overrides) {
+        LayoutRepair.assignIds(doc);
+        Laid laid = layout(doc, overrides);
+        LayoutValidationResult result = LayoutValidator.validate(laid.snapshot());
+        return new Rendered(laid.write(), laid.snapshot(), result, 1);
+    }
+
+    /** Build the book HTML (no images) and run it through the validated render, for inspection. */
+    Rendered renderInspected(Ebook ebook, List<EbookChapter> chapters) {
+        return renderValidated(Jsoup.parse(htmlBuilder.build(ebook, chapters, css(), List.of())), Map.of());
+    }
+
+    /** The book HTML (no images), as the renderer receives it. */
+    String html(Ebook ebook, List<EbookChapter> chapters) {
+        return htmlBuilder.build(ebook, chapters, css(), List.of());
     }
 
     /**

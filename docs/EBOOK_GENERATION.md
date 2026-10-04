@@ -348,6 +348,35 @@ editor preview  ==  PDF output
   rows. A heading group or a lead-in ending in `:` starts with its table the same
   way instead of moving as one block. `TablePaginationTest` checks it on
   rendered PDFs.
+- **Global layout validation: nothing broken is ever delivered.** Every render
+  (`PdfGenerationService.renderValidated`) is
+  `layout → validate → PASS: write the PDF / errors: repair → layout → validate`.
+  The check (`LayoutValidator`) is deterministic and reads the geometry the
+  renderer actually laid out — openhtmltopdf's box tree after layout, before the
+  PDF is written (`LayoutSnapshot`: every page with its content rectangle from the
+  `@page` rule, every block, line, text fragment, table row and cell, positioned
+  and floated boxes included). It reports, with page, element id, bounds and
+  allowed bounds: lines or images crossing the content foot into the footer/page
+  number band (`FOOTER_OVERLAP`, `CONTENT_OVERFLOW`), anything past the side
+  margins (`OUTSIDE_PAGE_BOUNDS`, `TABLE_OVERFLOW`), text overflowing its own box
+  (`TEXT_CLIPPING`), headings, component titles and table headers whose content
+  begins overleaf (`ORPHAN_HEADING`), tables with too many cells, misaligned or
+  overlapping cells, lost/duplicated/out-of-order rows or a continuation without
+  its header (`MALFORMED_TABLE`, `BROKEN_CONTINUATION`,
+  `MISSING_REPEATED_HEADER`), text laid out twice, never laid out, or drawn over
+  other text (`BROKEN_CONTINUATION`), and blank body pages or an opener left alone
+  (`SUSPICIOUS_EMPTY_PAGE`, a warning; cover, contents and opener pages are
+  recognised from the document). Blocks may span pages — only atoms (lines,
+  images, rows) are held to page bounds, so a continuation is never an error.
+  Repairs fix the source HTML, never the PDF (`LayoutRepair`): a page break before
+  the element's logical block, a width constraint, an image height cap. At most
+  `MAX_REPAIR_ATTEMPTS` (2) rounds; a round with nothing new to apply ends the loop
+  at once, so it cannot cycle. A layout that still has errors raises
+  `LayoutValidationException` (an `EbookValidationException`): the PDF is not
+  written or stored, and generation fails the book and refunds the hold. Every
+  attempt, issue and repair is logged. `LayoutValidatorTest` covers each rule on
+  hand-built geometry; `LayoutPipelineTest` covers repair, revalidation and
+  controlled failure on real renders.
 - **No near-empty last page.** After rendering, if the final page holds only a
   spilled line or two (and no image), the renderer re-renders with the final
   chapter set slightly tighter (`chapter--snug`) and keeps it only if the page

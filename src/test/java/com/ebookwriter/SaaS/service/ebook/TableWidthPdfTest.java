@@ -34,8 +34,11 @@ class TableWidthPdfTest {
     void theInspectorReportsATableWiderThanTheTextColumn() throws Exception {
         // A table forced past the margin (as auto layout used to do) must not pass silently.
         String wide = "<table style=\"width: 160%\"><tr><td>one</td><td>two</td><td>three</td><td>beyond</td></tr></table>";
-        byte[] pdf = service.render(PaginationFixtureBook.ebook(), List.of(EbookChapter.builder()
-                .chapterNumber(1).title("Wide").content(wide).build()));
+        // Rendered without the layout validation pass (which would repair it), to
+        // check the inspector on its own.
+        byte[] pdf = service.layoutAndWrite(org.jsoup.Jsoup.parse(service.html(PaginationFixtureBook.ebook(),
+                List.of(EbookChapter.builder().chapterNumber(1).title("Wide").content(wide).build()))),
+                java.util.Map.of()).pdf();
 
         assertFalse(violations(pdf).isEmpty());
         assertTrue(PdfQualityInspector.inspect(pdf, -1).issues().stream()

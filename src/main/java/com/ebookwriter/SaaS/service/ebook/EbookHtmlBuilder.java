@@ -364,7 +364,8 @@ public class EbookHtmlBuilder {
                 .append("<h1 class=\"opener-title\">")
                 .append(escape(displayTitle(c.getTitle(), layout.unit()))).append("</h1>");
         if (layout.meta() != null) {
-            html.append("<div class=\"opener-meta\">").append(escape(layout.meta())).append("</div>");
+            html.append("<div class=\"opener-meta\"><span class=\"meta-chip\">").append(escape(layout.meta()))
+                    .append("</span></div>");
         }
         if (layout.statement() != null) {
             html.append("<div class=\"opener-statement\">").append(escape(layout.statement())).append("</div>");
@@ -392,7 +393,8 @@ public class EbookHtmlBuilder {
                 .append("<h1 class=\"chapter-title\">")
                 .append(escape(displayTitle(c.getTitle(), unit))).append("</h1>");
         if (layout != null && layout.meta() != null) {
-            html.append("<div class=\"chapter-meta\">").append(escape(layout.meta())).append("</div>");
+            html.append("<div class=\"chapter-meta\"><span class=\"meta-chip\">").append(escape(layout.meta()))
+                    .append("</span></div>");
         }
         if (isNotBlank(c.getDescription())) {
             html.append("<div class=\"chapter-intro\">")

@@ -41,6 +41,10 @@ import java.util.stream.Collectors;
  *
  * <p>The decision logic ({@link #inspect}) is a pure function of the book's
  * rendered state, so it is fully unit-testable without a database or a renderer.
+ *
+ * <p>The layout itself is validated earlier, at render time
+ * ({@link LayoutValidator}): a PDF whose layout has errors after repair is never
+ * written or stored, and {@link LayoutValidationException} fails the book there.
  */
 @Slf4j
 @Service
