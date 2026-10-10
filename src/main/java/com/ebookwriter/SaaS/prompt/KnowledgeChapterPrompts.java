@@ -4,6 +4,7 @@ import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.service.ebook.ChapterDirective;
 import com.ebookwriter.SaaS.service.ebook.KnowledgeChapterContext;
+import com.ebookwriter.SaaS.service.ebook.WritingContext;
 
 /**
  * Chapter writing for knowledge-based books: Claude writes one chapter from the
@@ -82,6 +83,15 @@ public final class KnowledgeChapterPrompts {
     public static String user(Ebook e, String outline, EbookChapter chapter, String previousSummaries,
                               KnowledgeChapterContext.Context ctx, ChapterDirective directive,
                               String availableImages, int position, int totalChapters) {
+        return user(e, outline, chapter, previousSummaries, ctx, directive, availableImages, position,
+                totalChapters, WritingContext.NONE);
+    }
+
+    /** As above, written with the book's topic registry and template ({@link WritingContext}). */
+    public static String user(Ebook e, String outline, EbookChapter chapter, String previousSummaries,
+                              KnowledgeChapterContext.Context ctx, ChapterDirective directive,
+                              String availableImages, int position, int totalChapters,
+                              WritingContext context) {
         String imagesSection = (availableImages == null || availableImages.isBlank()) ? ""
                 : "\nIMAGES AVAILABLE FOR THIS CHAPTER (use where they fit, or not at all)\n" + availableImages.strip() + "\n";
         return """
@@ -100,7 +110,7 @@ public final class KnowledgeChapterPrompts {
 
                 WHAT EARLIER CHAPTERS ALREADY ESTABLISHED (build on them; do not repeat)
                 %s
-
+                %s
                 CHAPTER TO WRITE NOW
                 Chapter %d: %s
                 Purpose and scope: %s
@@ -129,6 +139,7 @@ public final class KnowledgeChapterPrompts {
                 nz(e.getWritingGuidelines()),
                 nz(outline),
                 previousSummaries == null || previousSummaries.isBlank() ? "(this is the first chapter)" : previousSummaries.strip(),
+                ChapterPrompts.bookContextSections(context, chapter.getChapterNumber()),
                 position,
                 nz(chapter.getTitle()),
                 nz(chapter.getDescription()),

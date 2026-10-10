@@ -63,7 +63,49 @@ public class AnthropicService {
                 .thinking(ThinkingConfigAdaptive.builder().build())
                 .addUserMessage(userPrompt)
                 .build();
+        return send(params, maxTokens, true);
+    }
 
+    /**
+     * What the model is asked when its previous answer stopped at the output
+     * limit. The partial answer goes back as the assistant's turn, followed by
+     * this request (an assistant turn may not end the conversation).
+     */
+    public static final String CONTINUE_PROMPT = """
+            Your previous answer was cut off by the output limit where it ends above.
+            Continue EXACTLY from where it stopped: begin with the very next characters
+            (mid-word or mid-line if that is where it stopped), do not repeat anything
+            already written, add no preface or comment, and keep the same format —
+            including any delimiters and sections that still have to follow.""";
+
+    /**
+     * Continue a completion that stopped at its output limit: the original
+     * request, the text produced so far as the assistant's turn, and
+     * {@link #CONTINUE_PROMPT}. Returns only the <b>new</b> text (the caller
+     * joins it), and whether this part was cut off too.
+     */
+    public Completion continueFrom(String systemPrompt, String userPrompt, String partial, long maxTokens,
+                                   String model) {
+        MessageCreateParams params = MessageCreateParams.builder()
+                .model(model)
+                .maxTokens(maxTokens)
+                .system(systemPrompt)
+                .thinking(ThinkingConfigAdaptive.builder().build())
+                .addUserMessage(userPrompt)
+                .addAssistantMessage(partial)
+                .addUserMessage(CONTINUE_PROMPT)
+                .build();
+        // Leading whitespace is part of the continuation (a paragraph break, the
+        // space between two words), so only the end is trimmed.
+        return send(params, maxTokens, false);
+    }
+
+    /** As {@link #continueFrom(String, String, String, long, String)} on the default model. */
+    public Completion continueFrom(String systemPrompt, String userPrompt, String partial, long maxTokens) {
+        return continueFrom(systemPrompt, userPrompt, partial, maxTokens, properties.getModel());
+    }
+
+    private Completion send(MessageCreateParams params, long maxTokens, boolean trimStart) {
         RuntimeException last = null;
 
         for (int attempt = 1; attempt <= Math.max(1, properties.getMaxRetries()); attempt++) {
@@ -73,8 +115,8 @@ public class AnthropicService {
                 String text = response.content().stream()
                         .flatMap(block -> block.text().stream())
                         .map(block -> block.text())
-                        .collect(Collectors.joining("\n"))
-                        .trim();
+                        .collect(Collectors.joining("\n"));
+                text = trimStart ? text.strip() : text.stripTrailing();
 
                 if (text.isEmpty()) {
                     throw new IllegalStateException("Model returned no text content");

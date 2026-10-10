@@ -54,6 +54,21 @@ public class EbookHtmlBuilder {
      */
     public String build(Ebook ebook, List<EbookChapter> chapters, String css,
                         List<EbookImage> images) {
+        return build(ebook, chapters, css, images, new RenderContext());
+    }
+
+    /**
+     * As {@link #build(Ebook, List, String, List)}, rendering every chapter body
+     * in one book-wide {@link RenderContext}: a block is printed once in the
+     * whole book, and the renderer's notes (removed duplicates and empty
+     * headings, fitted verbatim blocks) are collected for the quality report.
+     *
+     * <p>Only the chapters' reader-facing fields reach the book ({@link ReaderView}):
+     * briefs, summaries and other internal notes are never printed.
+     */
+    public String build(Ebook ebook, List<EbookChapter> chapters, String css,
+                        List<EbookImage> images, RenderContext ctx) {
+        chapters = ReaderView.of(chapters);
 
         EbookImage cover = coverImage(images);
         List<DocumentComposer.ChapterLayout> layouts = DocumentComposer.compose(ebook, chapters);
@@ -69,7 +84,7 @@ public class EbookHtmlBuilder {
 
         appendCover(html, ebook, cover);
         appendTableOfContents(html, chapters);
-        appendChapters(html, chapters, layoutByNumber, Boolean.TRUE.equals(ebook.getLayoutSnugEnding()));
+        appendChapters(html, chapters, layoutByNumber, Boolean.TRUE.equals(ebook.getLayoutSnugEnding()), ctx);
 
         html.append("</body></html>");
         return html.toString();
@@ -325,7 +340,8 @@ public class EbookHtmlBuilder {
      * — a slightly tighter setting of the final chapter that reflows it back.
      */
     private void appendChapters(StringBuilder html, List<EbookChapter> chapters,
-                                Map<Integer, DocumentComposer.ChapterLayout> layouts, boolean snugEnding) {
+                                Map<Integer, DocumentComposer.ChapterLayout> layouts, boolean snugEnding,
+                                RenderContext ctx) {
         EbookChapter last = null;
         for (EbookChapter c : chapters) {
             if (!isBlank(c.getContent())) {
@@ -340,10 +356,11 @@ public class EbookHtmlBuilder {
             displayNum++;
             String endClass = c == last ? (snugEnding ? " chapter--final chapter--snug" : " chapter--final") : "";
             DocumentComposer.ChapterLayout layout = layouts.get(c.getChapterNumber());
+            ctx.startChapter(c.getChapterNumber());
             if (layout != null && layout.style() == DocumentComposer.OpenerStyle.FULL_PAGE) {
-                appendFullPageOpener(html, c, layout, endClass);
+                appendFullPageOpener(html, c, layout, endClass, ctx);
             } else {
-                appendBandChapter(html, c, layout, displayNum, endClass);
+                appendBandChapter(html, c, layout, displayNum, endClass, ctx);
             }
         }
     }
@@ -354,7 +371,7 @@ public class EbookHtmlBuilder {
      * contents page points at the divider — the reader's entry to the section.
      */
     private void appendFullPageOpener(StringBuilder html, EbookChapter c,
-                                      DocumentComposer.ChapterLayout layout, String endClass) {
+                                      DocumentComposer.ChapterLayout layout, String endClass, RenderContext ctx) {
         String anchor = "chapter-" + c.getChapterNumber();
         html.append("<div class=\"opener")
                 .append(layout.unit() ? " opener--unit" : " opener--chapter")
@@ -374,13 +391,14 @@ public class EbookHtmlBuilder {
         // Body begins on the page after the opener (no page-break-before of its own).
         html.append("<div class=\"chapter-continued").append(endClass).append("\">")
                 .append("<div class=\"chapter-body\">")
-                .append(contentRenderer.toHtml(c.getContent()))
+                .append(contentRenderer.toHtml(c.getContent(), ctx))
                 .append("</div></div>");
     }
 
     /** A strong opener band at the top of the content page (the compact default). */
     private void appendBandChapter(StringBuilder html, EbookChapter c,
-                                   DocumentComposer.ChapterLayout layout, int displayNum, String endClass) {
+                                   DocumentComposer.ChapterLayout layout, int displayNum, String endClass,
+                                   RenderContext ctx) {
         String anchor = "chapter-" + c.getChapterNumber();
         boolean unit = layout != null && layout.unit();
         String label = layout != null ? layout.label() : "Chapter " + displayNum;
@@ -396,15 +414,17 @@ public class EbookHtmlBuilder {
             html.append("<div class=\"chapter-meta\"><span class=\"meta-chip\">").append(escape(layout.meta()))
                     .append("</span></div>");
         }
-        if (isNotBlank(c.getDescription())) {
+        // Reader-facing subtitle only — generated at its final length, never
+        // the planner's brief and never shortened here.
+        if (layout != null && layout.statement() != null) {
             html.append("<div class=\"chapter-intro\">")
-                    .append(escape(c.getDescription().strip()))
+                    .append(escape(layout.statement()))
                     .append("</div>");
         }
         html.append("<div class=\"chapter-rule\"></div>")
                 .append("</div>")
                 .append("<div class=\"chapter-body\">")
-                .append(contentRenderer.toHtml(c.getContent()))
+                .append(contentRenderer.toHtml(c.getContent(), ctx))
                 .append("</div></div>");
     }
 

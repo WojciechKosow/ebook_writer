@@ -265,19 +265,25 @@ public final class DocumentComposer {
     }
 
     /**
-     * A one-line opener statement drawn from the chapter's planner description
-     * (never fabricated): its first sentence, bounded so it stays a single line.
+     * Longest reader subtitle printed. Subtitles are generated to fit
+     * ({@code BookTemplateService}); one that is still longer is not printed —
+     * reader text is never shortened with an ellipsis.
+     */
+    public static final int MAX_STATEMENT_CHARS = 160;
+
+    /**
+     * The opener statement: the chapter's reader-facing subtitle, as generated.
+     * Never derived from the planner's brief (an instruction to the model, not
+     * text for the reader) and never cut: a missing or over-long subtitle gives
+     * no statement at all.
      */
     static String openerStatement(EbookChapter chapter) {
-        String desc = chapter.getDescription();
-        if (desc == null || desc.isBlank()) {
+        String subtitle = chapter.getReaderSubtitle();
+        if (subtitle == null || subtitle.isBlank()) {
             return null;
         }
-        String first = desc.strip().split("(?<=[.!?])\\s")[0].strip();
-        if (first.length() > 160) {
-            first = first.substring(0, 157).strip() + "…";
-        }
-        return first;
+        String s = subtitle.strip().replaceAll("\\s+", " ");
+        return s.length() > MAX_STATEMENT_CHARS ? null : s;
     }
 
     private static String two(int n) {

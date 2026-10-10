@@ -121,11 +121,28 @@ pre {
     border-radius: 4px;
     padding: 0.8em 1em;
     margin: 0.9em 0;
-    white-space: pre-wrap;
-    word-wrap: break-word;
+    /* Verbatim: line breaks and indentation are content. Lines never wrap
+       invisibly; VerbatimLayout makes every line fit (smaller type, then a
+       visible carry-over behind .vcont). */
+    white-space: pre;
+    word-wrap: normal;
     page-break-inside: avoid;
 }
-pre code { background: none; padding: 0; font-size: 9pt; }
+pre code { background: none; padding: 0; font-size: inherit; }
+/* A verbatim block in the text face (:::verbatim): verse, addresses, lists
+   whose lines matter. No panel; set like the text, indentation kept. */
+pre.verbatim--text {
+    font-family: "Ebook Serif";
+    font-size: 10.5pt;
+    line-height: 1.5;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    padding: 0 0 0 1.2em;
+}
+p.verbatim-title { margin-bottom: 0.3em; }
+/* The visible mark of a line carried over because it is wider than the page. */
+.vcont { color: #b08a4f; }
 
 table {
     width: 100%;

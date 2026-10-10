@@ -27,10 +27,13 @@ class WordsPerPageCalibrationTest {
             + "where people gather to trade stories about work family and the slow turning seasons")
             .split(" ");
 
+    /** Makes every paragraph unique: the book prints a repeated paragraph only once. */
+    private static int paragraphs;
+
     private static String prose(int words) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < words; i++) {
-            sb.append(WORDS[i % WORDS.length]).append(' ');
+            sb.append(i % 80 == 0 ? "paragraph" + (++paragraphs) : WORDS[i % WORDS.length]).append(' ');
             if (i > 0 && i % 80 == 0) sb.append("\n\n");
         }
         return sb.toString();

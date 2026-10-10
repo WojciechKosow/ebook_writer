@@ -37,9 +37,7 @@ final class BlockMetrics {
     private static final double LIST_INDENT = 1.45 * BODY_PT;    // ul { margin-left: 1.3em } + li padding
     private static final double LIST_MARGIN = 0.7 * BODY_PT;
     private static final double CODE_PT = 9;
-    private static final double CODE_LINE = CODE_PT * 1.42;      // pre { line-height: 1.42 }
     private static final double PRE_CHROME = 2 * 0.8 * CODE_PT + 1.5 + 0.9 * CODE_PT; // padding, border, margin
-    private static final double PRE_INSET = 2 * 1.0 * CODE_PT + 1.5;
     private static final double CMP_MARGIN = 1.15 * BODY_PT;     // .cmp { margin: 1.15em 0 }
     private static final double CMP_PAD = 2 * 0.85 * BODY_PT;    // the roomiest component padding
     private static final double CMP_INSET = 2 * 1.1 * BODY_PT + 3;
@@ -87,13 +85,17 @@ final class BlockMetrics {
                 return total;
             }
             case "pre": {
-                int lines = 0;
-                for (String line : e.wholeText().strip().split("\n", -1)) {
-                    lines += Math.max(1, lines(line, Typeface.MONO, CODE_PT, width - PRE_INSET));
-                }
-                double whole = lines * CODE_LINE + PRE_CHROME;
+                // Verbatim lines never wrap (VerbatimLayout fitted them): one
+                // source line is one printed line, at the block's own size.
+                VerbatimLayout.Style style = VerbatimLayout.style(e);
+                float size = VerbatimLayout.fontSize(e);
+                boolean text = style == VerbatimLayout.TEXT;
+                double lineHeight = size * (text ? 1.5 : 1.42);
+                double chrome = text ? 0.9 * CODE_PT : PRE_CHROME * size / CODE_PT;
+                int lines = e.wholeText().strip().split("\n", -1).length;
+                double whole = lines * lineHeight + chrome;
                 // Moved whole when it fits a page (page-break-inside: avoid); split beyond.
-                return start && whole > page ? (START_LINES + 1) * CODE_LINE + PRE_CHROME : whole;
+                return start && whole > page ? (START_LINES + 1) * lineHeight + chrome : whole;
             }
             case "table": {
                 double s = TableLayout.startHeight(e);

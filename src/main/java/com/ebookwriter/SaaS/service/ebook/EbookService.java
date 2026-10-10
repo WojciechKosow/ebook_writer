@@ -464,6 +464,19 @@ public class EbookService {
     }
 
     /**
+     * The quality report of the book's latest render, for the author to review
+     * before publishing (empty until the book has been rendered). Ownership-scoped.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<QualityReport> getQualityReport(UUID ebookId, UUID userId) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        String json = ebook.getQualityReportJson();
+        return json == null || json.isBlank() ? java.util.Optional.empty()
+                : java.util.Optional.of(QualityReport.fromJson(json));
+    }
+
+    /**
      * Replace the book's chapters with the editor's authoritative list, then
      * re-render the PDF so the download stays in sync. This one save covers
      * every chapter operation:

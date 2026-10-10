@@ -46,7 +46,7 @@ public final class ManuscriptIntegrity {
             Pattern.CASE_INSENSITIVE);
 
     /** Characters a complete prose block may end on (incl. closing quotes/brackets). */
-    private static final String TERMINAL = ".!?…:;)\"'”’»*_`|";
+    private static final String TERMINAL = ".!?…:;)\"'”’»«*_`|。！？」』）";
 
     /**
      * Repair a chapter whose generation was cut off by the output-token limit:
@@ -170,7 +170,9 @@ public final class ManuscriptIntegrity {
 
     /**
      * Split lines into blank-line separated blocks, keeping each ::: component
-     * and code fence whole (they may legitimately contain blank lines).
+     * and code fence whole (they may legitimately contain blank lines). A
+     * block keeps its indentation: an indented block belongs to the list item
+     * above it, and moving it to the margin would take it out of the list.
      */
     static List<String> toBlocks(List<String> lines) {
         List<String> blocks = new ArrayList<>();
@@ -188,7 +190,7 @@ public final class ManuscriptIntegrity {
             }
             if (t.isEmpty() && !inFence && !inDirective) {
                 if (current.length() > 0) {
-                    blocks.add(current.toString().strip());
+                    blocks.add(current.toString().stripTrailing());
                     current.setLength(0);
                 }
                 continue;
@@ -199,7 +201,7 @@ public final class ManuscriptIntegrity {
             current.append(line);
         }
         if (current.length() > 0) {
-            blocks.add(current.toString().strip());
+            blocks.add(current.toString().stripTrailing());
         }
         if (blocks.isEmpty()) {
             blocks.add("");

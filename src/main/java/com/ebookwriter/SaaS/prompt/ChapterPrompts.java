@@ -3,7 +3,10 @@ package com.ebookwriter.SaaS.prompt;
 import com.ebookwriter.SaaS.entity.BookDepth;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
+import com.ebookwriter.SaaS.service.ebook.BookTemplate;
 import com.ebookwriter.SaaS.service.ebook.ChapterDirective;
+import com.ebookwriter.SaaS.service.ebook.VerbatimLayout;
+import com.ebookwriter.SaaS.service.ebook.WritingContext;
 
 /**
  * Step 2 — chapter writing. Chapters are generated sequentially so each one is
@@ -47,6 +50,50 @@ public final class ChapterPrompts {
 
     /** Delimiter separating the chapter body from its short summary. */
     public static final String SUMMARY_DELIMITER = "===SUMMARY===";
+
+    /** Delimiter separating the summary from the chapter's topic registry entries. */
+    public static final String TOPICS_DELIMITER = "===TOPICS===";
+
+    /** How far a chapter may stray from its length budget (±) before it is reported. */
+    public static final double LENGTH_TOLERANCE = 0.25;
+
+    /**
+     * Rules for verbatim blocks — anything whose line breaks and indentation carry
+     * meaning — with the line-length limits measured on the real page and fonts.
+     * Shared by the writer and the editor.
+     */
+    public static String verbatimRules() {
+        VerbatimLayout.Limits l = VerbatimLayout.limits();
+        return """
+                Verbatim blocks (line breaks and indentation are content):
+                - Whenever line breaks or indentation carry meaning — source code in any
+                  language, terminal input/output, configuration, data formats, verse,
+                  addresses, text tables, diagrams drawn with characters, lists whose
+                  line layout matters — put the content in a verbatim block and it is
+                  printed exactly as written:
+                    * a fenced block (```lang ... ```) for material set in a monospaced
+                      face (code, terminals, configuration, character drawings);
+                    * a :::verbatim block (closed by :::) for material set in the book's
+                      normal typeface (verse, addresses, lyrics, line-based lists).
+                - The page is narrow. Every line in a fenced block must be at most %d
+                  characters (%d inside a design component or a list); every line in a
+                  :::verbatim block at most %d characters. Break longer lines the way the
+                  material itself allows (its own continuation or line-break
+                  conventions, shorter names, an extra variable), never by relying on the
+                  page to wrap them.
+                - Inside a verbatim block, never re-wrap or re-indent what is already
+                  correct.
+                """.formatted(l.monoChars(), l.monoNestedChars(), l.textChars());
+    }
+
+    /** Completeness rules shared by the writer and the editor. */
+    public static final String COMPLETENESS_RULES = """
+            Completeness:
+            - Finish every sentence, list, section, block and component you start.
+            - Never announce something that does not follow. A sentence that leads into
+              a block ("…looks like this:", "Here is the corrected version:") must be
+              followed immediately by that block.
+            """;
 
     public static String system(String language) {
         return PromptGuidelines.core(language) + """
@@ -106,12 +153,20 @@ public final class ChapterPrompts {
                 Focus is a state your environment creates, not a trait you are born with.
                 :::
 
+                %s
+                %s
                 After the chapter body, output the delimiter line exactly:
                 %s
                 then a 2-3 sentence summary of what this chapter established, written
                 for the author's own reference (it will guide later chapters and will
-                NOT be printed in the book).
-                """.formatted(SUMMARY_DELIMITER);
+                NOT be printed in the book). Then output the delimiter line exactly:
+                %s
+                then the TOPIC REGISTRY ENTRIES of this chapter: one line per concept,
+                term, technique, procedure, warning or worked example this chapter
+                actually explained, as "- topic — one-line gist" (at most 15 lines,
+                most important first). Later chapters use this list to refer back
+                instead of explaining again. It is NOT printed in the book.
+                """.formatted(COMPLETENESS_RULES, verbatimRules(), SUMMARY_DELIMITER, TOPICS_DELIMITER);
     }
 
     /**
@@ -126,6 +181,20 @@ public final class ChapterPrompts {
                               String availableImages,
                               int position,
                               int totalChapters) {
+        return user(e, fullOutline, chapter, previousSummaries, directive, availableImages, position,
+                totalChapters, WritingContext.NONE);
+    }
+
+    /** As above, written with the book's topic registry and template ({@link WritingContext}). */
+    public static String user(Ebook e,
+                              String fullOutline,
+                              EbookChapter chapter,
+                              String previousSummaries,
+                              ChapterDirective directive,
+                              String availableImages,
+                              int position,
+                              int totalChapters,
+                              WritingContext context) {
         String imagesSection = (availableImages == null || availableImages.isBlank())
                 ? ""
                 : "\nIMAGES AVAILABLE FOR THIS CHAPTER (use where they fit, or not at all)\n"
@@ -148,7 +217,7 @@ public final class ChapterPrompts {
 
                 WHAT EARLIER CHAPTERS ALREADY COVERED (do not repeat these; build on them)
                 %s
-                %s%s
+                %s%s%s
                 CHAPTER TO WRITE NOW
                 Chapter %d: %s
                 Scope: %s
@@ -168,6 +237,7 @@ public final class ChapterPrompts {
                 nz(fullOutline),
                 previousSummaries == null || previousSummaries.isBlank()
                         ? "(this is the first chapter)" : previousSummaries.trim(),
+                bookContextSections(context, chapter.getChapterNumber()),
                 imagesSection,
                 positionSection,
                 position,
@@ -217,6 +287,57 @@ public final class ChapterPrompts {
     }
 
     /**
+     * The topic registry and the book template (shared by the writer and the
+     * editor): what earlier chapters already explained, with the rule to refer
+     * back instead of explaining again, and the recurring sections every chapter
+     * of this book has — or the instruction that it has none.
+     */
+    public static String bookContextSections(WritingContext context, int chapterNumber) {
+        StringBuilder sb = new StringBuilder();
+        if (!context.topicRegistry().isBlank()) {
+            sb.append("""
+
+                    TOPIC REGISTRY — ALREADY EXPLAINED IN EARLIER CHAPTERS
+                    %s
+                    RULE: a topic in this registry has already been explained. Do NOT explain it
+                    again and do not repeat its warning, tip or example. Where this chapter needs
+                    it, refer back in one short sentence (e.g. "see Chapter 2") and build on it.
+                    Only add what is genuinely new for this chapter.
+                    """.formatted(context.topicRegistry()));
+        }
+        BookTemplate template = context.template();
+        if (template != null) {
+            if (template.isEmpty()) {
+                sb.append("""
+
+                        BOOK TEMPLATE — RECURRING SECTIONS
+                        This book has no recurring per-chapter sections. Do not end the chapter with
+                        standard closing sections (exercises, a recap, a summary, "in this chapter"
+                        lists, review questions) — the book's template decided against them.
+                        """);
+            } else {
+                StringBuilder list = new StringBuilder();
+                int n = 1;
+                for (BookTemplate.Section s : template.sections()) {
+                    list.append(n++).append(". ## ").append(s.heading());
+                    if (!s.purpose().isBlank()) {
+                        list.append(" — ").append(s.purpose());
+                    }
+                    list.append('\n');
+                }
+                sb.append("""
+
+                        BOOK TEMPLATE — RECURRING SECTIONS
+                        Every chapter of this book ends with exactly these sections, in this order,
+                        each as a "##" heading with exactly this text, each with real content:
+                        %s                        Write them for chapter %d. Add no other recurring closing section.
+                        """.formatted(list, chapterNumber));
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
      * The depth + length guidance (shared by the legacy and knowledge-based
      * writers). Depth decides what the chapter covers; the word figure is only the
      * room the plan gave it — never a target to hit or a reason to cut content.
@@ -231,12 +352,16 @@ public final class ChapterPrompts {
                   exercise and sentence you start. Never stop mid-thought, and never
                   mention this limit to the reader.""".formatted(directive.targetWords())
                 : """
-                  Planned size: about %d words — the room this chapter was given when the
-                  book was planned. It is orientation, not a target or a limit: cover
-                  this chapter's scope completely at the book's depth and let the length
-                  follow the content. Do not pad to reach the number, and do not drop
-                  important material to stay under it."""
-                        .formatted(directive.targetWords());
+                  Length budget: about %d words (acceptable range %d–%d). The book's length
+                  was planned and agreed with the author, and this is this chapter's share
+                  of it. Cover the chapter's scope at the book's depth WITHIN this budget:
+                  prioritise what matters most, refer back to earlier chapters instead of
+                  re-explaining, and do not pad. Code, verbatim blocks, tables and design
+                  components count by the space they take on the page. Still finish every
+                  section, block and sentence you start."""
+                        .formatted(directive.targetWords(),
+                                (int) Math.round(directive.targetWords() * (1 - LENGTH_TOLERANCE)),
+                                (int) Math.round(directive.targetWords() * (1 + LENGTH_TOLERANCE)));
         return BookDepth.orDefault(depth).writerGuidance() + "\n" + length;
     }
 

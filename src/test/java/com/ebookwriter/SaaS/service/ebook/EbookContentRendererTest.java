@@ -244,4 +244,65 @@ class EbookContentRendererTest {
         String note = renderer.toHtml(OPENING + ":::note\nShort note.\n:::");
         assertFalse(note.contains("page-break-min-height"), "a small callout moves whole; no guard needed");
     }
+
+    // ---- Structural blocks: many, nested, inside lists, inside code ---------------
+
+    @Test
+    void manyComponentsInOneChapterEachRenderOnceWithNoStrayDigits() {
+        StringBuilder md = new StringBuilder("Intro paragraph.\n\n");
+        for (int i = 0; i < 14; i++) {
+            md.append(":::exercise Task number ").append(i).append("\nDo thing ").append(i).append(".\n:::\n\n");
+        }
+        String html = renderer.toHtml(md.toString());
+        org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parseBodyFragment(html);
+        assertEquals(14, doc.select("div.cmp--exercise").size());
+        for (int i = 0; i < 14; i++) {
+            final int n = i;
+            assertEquals(1, doc.select(".cmp-title").stream().filter(t -> t.text().equals("Task number " + n)).count());
+        }
+        assertTrue(doc.select("p").stream().noneMatch(p -> p.text().matches("\\d+")), html);
+        assertFalse(html.contains("CMPBLOCKPLACEHOLDER"));
+    }
+
+    @Test
+    void aBoxInsideAListItemStaysInItAndTheListContinues() {
+        String md = "1. First step.\n2. Second step.\n\n   :::tip\n   A tip for step two.\n   :::\n\n3. Third step.\n";
+        org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parseBodyFragment(renderer.toHtml(md));
+        assertEquals(1, doc.select("ol").size(), doc.body().html());
+        assertEquals(3, doc.select("ol > li").size());
+        assertEquals(1, doc.select("ol > li:nth-child(2) div.cmp--tip").size());
+    }
+
+    @Test
+    void boxesNestAndColonsInsideCodeAreCode() {
+        String md = ":::exercise Outer\nDo the outer task.\n\n:::warning\nCareful inside.\n:::\n\nThen finish.\n:::\n\n"
+                + "```text\n:::not-a-box\nliteral\n:::\n```\n";
+        org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parseBodyFragment(renderer.toHtml(md));
+        assertEquals(1, doc.select("div.cmp--exercise div.cmp--warning").size(), doc.body().html());
+        assertTrue(doc.selectFirst("div.cmp--exercise").text().contains("Then finish."));
+        assertTrue(doc.selectFirst("pre").wholeText().contains(":::not-a-box\nliteral\n:::"));
+    }
+
+    @Test
+    void aVerbatimBlockKeepsEveryLineBreakAndIndent() {
+        String md = ":::verbatim Title\nfirst line\n    indented line\n\nafter a blank line\n:::\n";
+        org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parseBodyFragment(renderer.toHtml(md));
+        org.jsoup.nodes.Element pre = doc.selectFirst("pre.verbatim--text");
+        assertEquals("first line\n    indented line\n\nafter a blank line", pre.wholeText());
+        assertEquals("Title", doc.selectFirst("p.verbatim-title").text());
+    }
+
+    @Test
+    void anEmptyHeadingAndARepeatedBoxAreNotPrinted() {
+        RenderContext ctx = new RenderContext();
+        String box = ":::warning\nNever skip the backup before an upgrade, whatever the deadline says.\n:::\n\n";
+        ctx.startChapter(1);
+        renderer.toHtml("Intro.\n\n" + box, ctx);
+        ctx.startChapter(2);
+        String html = renderer.toHtml("Intro two.\n\n## Empty\n\n## Full\n\nText.\n\n" + box, ctx);
+        assertFalse(html.contains("Empty"));
+        assertFalse(html.contains("Never skip the backup"));
+        assertEquals(java.util.List.of(RenderContext.NoteType.DUPLICATE_REMOVED, RenderContext.NoteType.EMPTY_HEADING_REMOVED),
+                ctx.notes().stream().map(RenderContext.Note::type).toList());
+    }
 }

@@ -92,7 +92,8 @@ public class PdfGenerationService {
         // Each render starts from the natural layout; the final-page fix below is
         // re-decided every time (the manuscript may have been edited).
         ebook.setLayoutSnugEnding(null);
-        byte[] pdf = render(ebook, chapters, images);
+        BookRender last = renderBook(ebook, chapters, images);
+        byte[] pdf = last.rendered().pdf();
         int pageCount = countPages(pdf);
 
         int passes = 0;
@@ -101,7 +102,8 @@ public class PdfGenerationService {
             if (!trimOverflow(chapters, overflowWords)) {
                 break; // nothing left to trim
             }
-            pdf = render(ebook, chapters, images);
+            last = renderBook(ebook, chapters, images);
+            pdf = last.rendered().pdf();
             pageCount = countPages(pdf);
             passes++;
         }
@@ -118,15 +120,31 @@ public class PdfGenerationService {
         // final chapter slightly tighter. Kept only if it actually removes the page.
         if (PdfQualityInspector.lastPageSparse(pdf)) {
             ebook.setLayoutSnugEnding(true);
-            byte[] snug = render(ebook, chapters, images);
+            BookRender snugRender = renderBook(ebook, chapters, images);
+            byte[] snug = snugRender.rendered().pdf();
             int snugPages = countPages(snug);
             if (snugPages < pageCount) {
                 log.info("Reflowed ebook {}'s sparse final page ({} -> {} pages)", ebookId, pageCount, snugPages);
                 pdf = snug;
                 pageCount = snugPages;
+                last = snugRender;
             } else {
                 ebook.setLayoutSnugEnding(null);
             }
+        }
+
+        // The author's quality report for exactly this render: incomplete units,
+        // broken structure, leaked internal text, verbatim overflow, repetition
+        // and length against the plan — each located by chapter and page.
+        QualityReport report = BookQualityInspector.inspect(ebook, chapters, last.context(), last.doc(),
+                last.rendered().layout(), pageCount);
+        ebook.setQualityReportJson(report.toJson());
+        if (report.errors() > 0 || report.warnings() > 0) {
+            log.warn("Quality report for ebook {}: {} error(s), {} warning(s) — {}", ebookId, report.errors(),
+                    report.warnings(), report.findings().stream().limit(10)
+                            .map(f -> f.severity() + " " + f.category() + (f.chapter() == null ? "" : " ch." + f.chapter())
+                                    + (f.page() == null ? "" : " p." + f.page()) + ": " + f.message())
+                            .toList());
         }
         ebookRepository.save(ebook);
 
@@ -263,13 +281,28 @@ public class PdfGenerationService {
      * PDF (the bucket stays private).
      */
     public byte[] render(Ebook ebook, List<EbookChapter> chapters, List<EbookImage> images) {
-        String html = htmlBuilder.build(ebook, chapters, css(), images);
+        return renderBook(ebook, chapters, images).rendered().pdf();
+    }
+
+    /**
+     * A full render and what the quality report needs from it: the validated
+     * render (PDF + layout), the final HTML it was laid out from, and the
+     * renderer's notes.
+     */
+    record BookRender(Rendered rendered, Document doc, RenderContext context) {
+    }
+
+    BookRender renderBook(Ebook ebook, List<EbookChapter> chapters, List<EbookImage> images) {
+        RenderContext ctx = new RenderContext();
+        String html = htmlBuilder.build(ebook, chapters, css(), images, ctx);
         Map<String, ImageRef> refsByImageId = new LinkedHashMap<>();
         for (EbookImage image : images) {
             refsByImageId.put(image.getId().toString(),
                     new ImageRef(image.getStorageKey(), image.getDisplayWidthPercent()));
         }
-        return renderPdf(html, refsByImageId, fittedCover(ebook, images));
+        Document doc = Jsoup.parse(html);
+        rewriteImageReferences(doc, refsByImageId);
+        return new BookRender(renderValidated(doc, fittedCover(ebook, images)), doc, ctx);
     }
 
     /**
@@ -294,12 +327,6 @@ public class PdfGenerationService {
 
     /** Resolved reference for an image token: where to stream it and how wide to draw it. */
     private record ImageRef(String storageKey, Integer displayWidthPercent) {
-    }
-
-    private byte[] renderPdf(String html, Map<String, ImageRef> refsByImageId, Map<String, byte[]> overrides) {
-        Document jsoupDoc = Jsoup.parse(html);
-        rewriteImageReferences(jsoupDoc, refsByImageId);
-        return renderValidated(jsoupDoc, overrides).pdf();
     }
 
     /** A render: the PDF bytes, the layout they were written from, and its validation. */

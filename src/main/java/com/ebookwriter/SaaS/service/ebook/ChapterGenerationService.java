@@ -19,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -92,6 +93,13 @@ public class ChapterGenerationService {
         int targetWords = Math.max(WritingBudget.MIN_CHAPTER_WORDS, directive.targetWords());
         long maxTokens = outputTokenBudget(targetWords);
 
+        // What the chapter is written with beyond its brief: everything earlier
+        // chapters already explained (refer back, never re-explain) and the book
+        // template (the same recurring sections in every chapter, or none).
+        WritingContext writing = new WritingContext(
+                TopicRegistry.forChapter(inBook, chapter.getChapterNumber()),
+                BookTemplate.fromJson(ebook.getChapterTemplateJson()));
+
         String system;
         String userPrompt;
         if (ebook.isKnowledgeBased()) {
@@ -103,7 +111,7 @@ public class ChapterGenerationService {
             system = KnowledgeChapterPrompts.system(ebook.getLanguage());
             userPrompt = KnowledgeChapterPrompts.user(ebook, ManuscriptContext.outline(inBook), chapter,
                     ManuscriptContext.previousSummaries(inBook, chapter.getChapterNumber()), ctx, directive,
-                    availableImages(chapterId), positionOf(inBook, chapter), inBook.size());
+                    availableImages(chapterId), positionOf(inBook, chapter), inBook.size(), writing);
             log.info("Chapter {} of ebook {}: knowledge context {} chars ({} knowledge items, sources {}), prompt {} chars",
                     chapter.getChapterNumber(), ebookId, ctx.totalChars(), ctx.itemCount(), ctx.excerptRefs(),
                     userPrompt.length());
@@ -117,39 +125,82 @@ public class ChapterGenerationService {
                     directive,
                     availableImages(chapterId),
                     positionOf(inBook, chapter),
-                    inBook.size()
+                    inBook.size(),
+                    writing
             );
         }
 
-        AnthropicService.Completion completion =
-                anthropicService.completeDetailed(system, userPrompt, maxTokens);
-        String raw = completion.text();
-
-        String[] parts = raw.split(ChapterPrompts.SUMMARY_DELIMITER, 2);
-        String content = parts[0].trim();
-        String summary = parts.length > 1 ? parts[1].trim() : "";
-
-        // A response cut off by the token limit stops mid-thought (and never reached
-        // the summary delimiter). Repair it back to the last complete block so the
-        // chapter ends cleanly, and never keep a heading with no body at the end.
-        if (completion.truncated() && parts.length == 1) {
-            String repaired = ManuscriptIntegrity.repairTruncated(content);
-            log.warn("Chapter {} of ebook {} hit the output limit; repaired its tail ({} -> {} chars)",
-                    chapter.getChapterNumber(), ebookId, content.length(),
-                    repaired == null ? 0 : repaired.length());
-            content = repaired;
-        } else {
-            content = ManuscriptIntegrity.trimTrailingOrphans(content);
+        // No unit reaches the book incomplete. A response cut off by the output
+        // limit is continued from where it stopped; the result is then checked
+        // structurally (unterminated sentence, unclosed block, a lead-in whose
+        // block never came, a heading with nothing under it). An incomplete
+        // chapter is written again; if that fails too, the chapter fails loudly
+        // — never a silently shortened chapter.
+        Draft draft = null;
+        List<CompletenessCheck.Problem> problems = List.of();
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            AnthropicService.Completion completion =
+                    LongForm.complete(anthropicService, system, userPrompt, maxTokens, null);
+            draft = Draft.parse(completion.text());
+            problems = new ArrayList<>(CompletenessCheck.inspect(draft.content(), directive.finalChapter()));
+            if (completion.truncated()) {
+                problems.add(0, new CompletenessCheck.Problem(CompletenessCheck.Kind.TRUNCATED, null));
+            }
+            if (problems.isEmpty()) {
+                break;
+            }
+            log.warn("Chapter {} of ebook {} is incomplete (attempt {}/{}): {}", chapter.getChapterNumber(), ebookId,
+                    attempt, MAX_ATTEMPTS, describe(problems));
+        }
+        if (!problems.isEmpty()) {
+            throw new IncompleteContentException("Chapter " + chapter.getChapterNumber() + " (\""
+                    + chapter.getTitle() + "\") is incomplete after " + MAX_ATTEMPTS + " attempts: "
+                    + describe(problems));
         }
 
+        String content = ManuscriptIntegrity.trimTrailingOrphans(draft.content());
         chapter.setContent(content);
-        chapter.setSummary(summary);
+        chapter.setSummary(draft.summary());
+        chapter.setCoveredTopics(TopicRegistry.entries(draft.topics(), content));
         chapter.setStatus(ChapterStatus.WRITTEN);
         chapter.setGenerationError(null);
         chapterRepository.save(chapter);
 
-        log.info("Wrote chapter {}/{} of ebook {} ({} chars)",
-                chapter.getChapterNumber(), chapters.size(), ebookId, content.length());
+        double pages = LengthMeter.pages(content);
+        double budgetPages = (double) directive.targetWords() / WORDS_PER_PAGE;
+        if (budgetPages > 0 && Math.abs(pages - budgetPages) / budgetPages > ChapterPrompts.LENGTH_TOLERANCE) {
+            log.warn("Chapter {} of ebook {}: ~{} pages against a budget of ~{} (more than {}% off)",
+                    chapter.getChapterNumber(), ebookId, String.format(java.util.Locale.ROOT, "%.1f", pages),
+                    String.format(java.util.Locale.ROOT, "%.1f", budgetPages),
+                    Math.round(ChapterPrompts.LENGTH_TOLERANCE * 100));
+        }
+        log.info("Wrote chapter {}/{} of ebook {} ({} chars, ~{} pages)", chapter.getChapterNumber(),
+                chapters.size(), ebookId, content.length(), String.format(java.util.Locale.ROOT, "%.1f", pages));
+    }
+
+    /** Full generations of a chapter before it fails as incomplete (each with its own continuations). */
+    static final int MAX_ATTEMPTS = 2;
+
+    /** A chapter's body, its summary and its topic registry entries, split at their delimiters. */
+    record Draft(String content, String summary, String topics) {
+        static Draft parse(String raw) {
+            String[] parts = raw.split(java.util.regex.Pattern.quote(ChapterPrompts.SUMMARY_DELIMITER), 2);
+            String content = parts[0].strip();
+            String rest = parts.length > 1 ? parts[1] : "";
+            String[] tail = rest.split(java.util.regex.Pattern.quote(ChapterPrompts.TOPICS_DELIMITER), 2);
+            return new Draft(content, tail[0].strip(), tail.length > 1 ? tail[1].strip() : "");
+        }
+    }
+
+    /** Thrown when a chapter is still incomplete after every attempt; the chapter is marked FAILED with it. */
+    static class IncompleteContentException extends RuntimeException {
+        IncompleteContentException(String message) {
+            super(message);
+        }
+    }
+
+    static String describe(List<CompletenessCheck.Problem> problems) {
+        return String.join("; ", problems.stream().map(CompletenessCheck.Problem::describe).toList());
     }
 
     /** The chapter's planned length in words. */

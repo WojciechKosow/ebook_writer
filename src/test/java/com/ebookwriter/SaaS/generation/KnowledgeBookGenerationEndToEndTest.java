@@ -242,6 +242,11 @@ class KnowledgeBookGenerationEndToEndTest {
         assertTrue(products.user().contains("WHAT EARLIER CHAPTERS ALREADY ESTABLISHED") && products.user().contains("Names introduced:"),
                 "continuity: earlier chapters' summaries");
 
+        // ---- Reader texts and the book template were decided once, for the whole book ----
+        assertTrue(claude.calls.stream().filter(FakeClaude.Call::isBookTemplate).count() == 1);
+        assertTrue(chapters.stream().allMatch(c -> c.getReaderSubtitle() != null
+                && c.getReaderSubtitle().startsWith("What ") && !c.getReaderSubtitle().equals(c.getDescription())));
+
         // ---- The book itself is about THIS project ----
         EbookChapter jwtChapter = chapters.stream().filter(c -> c.getTitle().contains("JWT")).findFirst().orElseThrow();
         assertTrue(jwtChapter.getContent().contains("The first problem I ran into: " + JWT_ANSWER),
