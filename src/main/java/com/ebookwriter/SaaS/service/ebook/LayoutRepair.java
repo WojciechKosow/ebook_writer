@@ -63,7 +63,8 @@ final class LayoutRepair {
         if (target == null) {
             target = e.closest(".table-start");
         }
-        if (target == null && (e.hasClass("cmp-label") || e.hasClass("cmp-title"))) {
+        if (target == null && (e.hasClass("cmp-label") || e.hasClass("cmp-title")
+                || e.hasClass("steps-eyebrow") || e.hasClass("flow-title"))) {
             target = e.closest(".cmp");
         }
         if (target == null) {

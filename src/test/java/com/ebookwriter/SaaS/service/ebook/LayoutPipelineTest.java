@@ -149,6 +149,48 @@ class LayoutPipelineTest {
         assertEquals(codePage, headingPage, "the heading now opens the page its code starts on");
     }
 
+    private static String filler(int sentences) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < sentences; i++) {
+            sb.append("Filler sentence number ").append(i).append(" keeps the page moving along. ");
+        }
+        return sb.toString();
+    }
+
+    @Test
+    void aPortraitIllustrationUnderAHeadingFitsOnePageWithIt() throws Exception {
+        // A tall AI illustration (2:3) used to be as tall as the page: with its
+        // heading it could never share one, so moving the heading only moved the
+        // orphan and the whole book failed. It is now capped, keeping its ratio.
+        String tall = pngDataUri(1024, 1536);
+        for (int lead = 2; lead <= 60; lead += 2) {
+            PdfGenerationService.Rendered r = render("Opening.\n\n" + filler(lead)
+                    + "\n\n## Stateless by design\n\n![A layered backend](" + tall + ")\n\n" + filler(20));
+
+            assertTrue(r.validation().errors().isEmpty(), "lead " + lead + ": " + r.validation().errors());
+            LayoutSnapshot.Block img = r.layout().blocks().stream().filter(b -> b.tag().equals("img"))
+                    .findFirst().orElseThrow();
+            assertEquals(1.5, img.rect().height() / img.rect().width(), 0.02, "scaled, never stretched");
+            assertTrue(img.rect().height() < 0.65 * PageGeometry.book().contentHeightPt());
+        }
+    }
+
+    @Test
+    void aHeadingNoRepairCanKeepWithItsContentIsDeliveredNotFailed() throws Exception {
+        // A heading over a figure that is pinned taller than the page: no break
+        // can put them on one page. That is cosmetic — nothing is lost — so the
+        // book is delivered instead of failing (and failing again on every resume).
+        String content = "Opening.\n\n## Stateless by design\n\n<figure class=\"figure\"><img src=\""
+                + pngDataUri(100, 200) + "\" style=\"max-height: none; height: 500pt; width: auto\"/></figure>"
+                + "\n\nAfter.";
+
+        PdfGenerationService.Rendered r = render(content);
+
+        assertTrue(r.pdf().length > 0);
+        assertTrue(r.validation().errors().stream().allMatch(PdfGenerationService::cosmetic),
+                r.validation().errors().toString());
+    }
+
     // ---- FAILED → controlled failure -------------------------------------------------------
 
     @Test
