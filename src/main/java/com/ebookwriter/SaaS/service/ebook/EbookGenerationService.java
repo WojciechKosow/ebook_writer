@@ -7,6 +7,7 @@ import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.config.properties.OpenAiProperties;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
+import com.ebookwriter.SaaS.entity.EbookImagePlacement;
 import com.ebookwriter.SaaS.entity.EbookImageRole;
 import com.ebookwriter.SaaS.entity.EbookStatus;
 import com.ebookwriter.SaaS.repository.EbookImageRepository;
@@ -188,8 +189,12 @@ public class EbookGenerationService {
             // Cover: the AI generates a text-free visual and Scrivetta composes the
             // editable cover (title/subtitle stay real text). Best-effort — a
             // failure leaves the safe typographic cover and never fails the book.
+            // A resumed run keeps the cover an earlier run already made (it is paid
+            // for: a Claude plan and an image) instead of generating a new one.
             updateStatus(ebookId, EbookStatus.GENERATING_IMAGES, 94);
-            coverGenerationService.generateForBook(ebookId);
+            if (!(resume && hasCover(ebookId))) {
+                coverGenerationService.generateForBook(ebookId);
+            }
 
             // Reconcile which offered assets the writer actually placed (and the
             // generated images just added), so the asset library shows accurate
@@ -438,6 +443,10 @@ public class EbookGenerationService {
     private boolean hasGeneratedIllustrations(UUID ebookId) {
         return imageRepository.findByEbookIdOrderByCreatedAtAsc(ebookId).stream()
                 .anyMatch(i -> i.getRole() == EbookImageRole.ILLUSTRATION && i.getPlacedBy() == ContentSource.AI);
+    }
+
+    private boolean hasCover(UUID ebookId) {
+        return !imageRepository.findByEbookIdAndPlacement(ebookId, EbookImagePlacement.COVER).isEmpty();
     }
 
     /** Record that the book was brought to an early ending by the credits, so the user is told. */

@@ -434,7 +434,15 @@ th {
     padding: 0;
     page-break-inside: avoid;
 }
-.figure img { margin: 0 auto; }
+.figure img {
+    margin: 0 auto;
+    /* A tall (portrait) illustration is capped so a heading, the image and its
+       caption always fit one page together; otherwise the image is pushed
+       overleaf and the heading is left alone at the page foot. Width follows,
+       so the image is scaled, never stretched. */
+    max-height: 10.5cm;
+    width: auto;
+}
 .figure figcaption {
     font-family: "Ebook Sans";
     font-size: 8.5pt;

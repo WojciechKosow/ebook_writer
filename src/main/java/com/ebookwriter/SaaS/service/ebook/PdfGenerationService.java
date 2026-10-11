@@ -373,7 +373,6 @@ public class PdfGenerationService {
                 }
                 return new Rendered(pdf, laid.snapshot(), result, attempt);
             }
-            laid.close();
             List<LayoutIssue> fixable = new ArrayList<>();
             for (LayoutIssue issue : result.errors()) {
                 if (issue.repairable() && !applied.contains(issue.repairKey())) {
@@ -390,6 +389,18 @@ public class PdfGenerationService {
                     anyApplied |= done != null;
                 }
             }
+            if (!anyApplied && result.errors().stream().allMatch(PdfGenerationService::cosmetic)) {
+                // Nothing left to try, and only headings that end their page remain:
+                // a cosmetic flaw — every line is still laid out, in order — so the
+                // book is delivered with the finding logged rather than failed (a
+                // failure here would fail every resume the same way, at the same page).
+                byte[] pdf = laid.write();
+                report.append(String.format("%nAccepted after %d attempt(s) with %d cosmetic error(s) left "
+                        + "(no repair could clear them).", attempt, result.errors().size()));
+                log.warn("{}", report);
+                return new Rendered(pdf, laid.snapshot(), result, attempt);
+            }
+            laid.close();
             if (!anyApplied) {
                 String why = attempt > MAX_REPAIR_ATTEMPTS ? "repair attempts exhausted (" + MAX_REPAIR_ATTEMPTS + ")"
                         : fixable.isEmpty() ? "no deterministic repair for the remaining error(s), or a repair already "
@@ -399,6 +410,11 @@ public class PdfGenerationService {
                 throw new LayoutValidationException(result, attempt, report.toString());
             }
         }
+    }
+
+    /** A layout error that spoils the look of a page but loses or garbles no content. */
+    static boolean cosmetic(LayoutIssue issue) {
+        return issue.type() == LayoutIssue.Type.ORPHAN_HEADING;
     }
 
     /** A laid-out document whose PDF has not been written yet. */
