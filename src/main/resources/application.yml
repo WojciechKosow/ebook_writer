@@ -26,9 +26,10 @@ spring:
 
   servlet:
     multipart:
-      # PDF blobs and long manuscripts can be large.
-      max-file-size: 25MB
-      max-request-size: 25MB
+      # PDF blobs, long manuscripts and knowledge archives can be large. Keep
+      # these ≥ knowledge.max-upload-bytes (the upload is read into memory).
+      max-file-size: ${MULTIPART_MAX_FILE_SIZE:200MB}
+      max-request-size: ${MULTIPART_MAX_REQUEST_SIZE:200MB}
 
 server:
   # Bind to the platform-provided port (Railway/Render set PORT); 8080 locally.
@@ -162,7 +163,7 @@ openai:
 # archive is read only up to these limits; whatever does not fit one analysis run is
 # recorded as "not analysed" (never silently sent).
 knowledge:
-  max-upload-bytes: ${KNOWLEDGE_MAX_UPLOAD_BYTES:26214400}          # 25 MB (≤ multipart limit)
+  max-upload-bytes: ${KNOWLEDGE_MAX_UPLOAD_BYTES:209715200}         # 200 MB (≤ multipart limit)
   max-sources-per-book: ${KNOWLEDGE_MAX_SOURCES_PER_BOOK:20}
   max-notes-chars: ${KNOWLEDGE_MAX_NOTES_CHARS:100000}
   # Archive (ZIP / RAR) limits. The old KNOWLEDGE_ZIP_* variables still work as fallbacks.

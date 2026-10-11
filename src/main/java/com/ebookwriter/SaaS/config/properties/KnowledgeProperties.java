@@ -23,7 +23,7 @@ public class KnowledgeProperties {
     // ---- Upload --------------------------------------------------------------
 
     /** Largest single upload (bytes). Keep ≤ spring.servlet.multipart.max-file-size. */
-    private long maxUploadBytes = 25L * 1024 * 1024;
+    private long maxUploadBytes = 200L * 1024 * 1024;
 
     /** Most sources (files + the notes) one book may hold. */
     private int maxSourcesPerBook = 20;
