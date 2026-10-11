@@ -86,6 +86,13 @@ public class EbookStatusResponse {
     /** True when a failed generation kept written chapters and can be resumed. */
     private boolean resumable;
 
+    /**
+     * From the latest render's quality report ({@code GET /api/ebooks/{id}/quality-report}):
+     * how many errors and warnings it found. Null until the book has been rendered.
+     */
+    private Integer qualityErrors;
+    private Integer qualityWarnings;
+
     private List<ChapterProgressDTO> chapters;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -121,9 +128,25 @@ public class EbookStatusResponse {
                 .generationMode(ebook.getGenerationMode() == null
                         ? com.ebookwriter.SaaS.entity.GenerationMode.LEGACY : ebook.getGenerationMode())
                 .resumable(resumable)
+                .qualityErrors(qualityCount(ebook, true))
+                .qualityWarnings(qualityCount(ebook, false))
                 .chapters(chapters)
                 .createdAt(ebook.getCreatedAt())
                 .updatedAt(ebook.getUpdatedAt())
                 .build();
+    }
+
+    private static Integer qualityCount(Ebook ebook, boolean errors) {
+        String json = ebook.getQualityReportJson();
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            com.ebookwriter.SaaS.service.ebook.QualityReport r =
+                    com.ebookwriter.SaaS.service.ebook.QualityReport.fromJson(json);
+            return errors ? r.errors() : r.warnings();
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 }

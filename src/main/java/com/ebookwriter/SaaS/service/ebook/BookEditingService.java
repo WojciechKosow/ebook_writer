@@ -61,26 +61,42 @@ public class BookEditingService {
         List<EbookChapter> inBook = ManuscriptContext.inBook(chapters);
         boolean finalChapter = !inBook.isEmpty()
                 && inBook.get(inBook.size() - 1).getId().equals(chapter.getId());
+        // Edited against what the book explained before this chapter (so a
+        // re-explanation becomes a reference back) and the book template.
+        WritingContext writing = new WritingContext(
+                TopicRegistry.forChapter(inBook, chapter.getChapterNumber()),
+                BookTemplate.fromJson(ebook.getChapterTemplateJson()));
         String userPrompt = EditingPrompts.user(
                 ebook,
                 ManuscriptContext.outline(inBook),
                 chapter,
                 ManuscriptContext.otherSummaries(inBook, chapter.getChapterNumber()),
                 finalChapter,
-                knowledgeAddendum(ebook)
+                knowledgeAddendum(ebook),
+                writing
         );
 
-        AnthropicService.Completion completion = anthropicService
-                .completeDetailed(system, userPrompt, maxTokens, anthropicProperties.resolveEditingModel());
-        String edited = completion.text().trim();
+        AnthropicService.Completion completion = LongForm.complete(anthropicService, system, userPrompt, maxTokens,
+                anthropicProperties.resolveEditingModel());
+        String edited = ManuscriptIntegrity.trimTrailingOrphans(completion.text().trim());
 
-        // An edit cut off by the token limit would silently lose the chapter's tail
-        // (often its conclusion). Keep the complete original instead.
-        if (completion.truncated()) {
-            log.warn("Edit of chapter {} in ebook {} was truncated; keeping the unedited chapter",
-                    chapter.getChapterNumber(), ebookId);
-        } else if (!edited.isEmpty()) {
-            chapter.setContent(ManuscriptIntegrity.trimTrailingOrphans(edited));
+        // An edit must be at least as complete as the chapter it replaces. One
+        // that is still cut off after its continuations, or that introduces a
+        // structural gap the original did not have (a sentence left open, a
+        // block announced but missing), is discarded in favour of the original.
+        List<CompletenessCheck.Problem> before = CompletenessCheck.inspect(chapter.getContent(), finalChapter);
+        List<CompletenessCheck.Problem> after = edited.isEmpty() ? List.of()
+                : CompletenessCheck.inspect(edited, finalChapter);
+        boolean regressed = after.size() > before.size();
+        if (completion.truncated() || edited.isEmpty() || regressed) {
+            log.warn("Edit of chapter {} in ebook {} discarded ({}); keeping the unedited chapter",
+                    chapter.getChapterNumber(), ebookId,
+                    completion.truncated() ? "still cut off after continuing"
+                            : edited.isEmpty() ? "empty" : ChapterGenerationService.describe(after));
+        } else {
+            chapter.setContent(edited);
+            // The box entries follow the edited text; the writer's own entries stay.
+            chapter.setCoveredTopics(TopicRegistry.entries(chapter.getCoveredTopics(), edited));
         }
         chapter.setStatus(ChapterStatus.EDITED);
         chapterRepository.save(chapter);

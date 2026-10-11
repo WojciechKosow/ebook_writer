@@ -308,6 +308,20 @@ final class TableLayout {
         return lines(List.of(new Run(text.replace('\n', ' '), f, sizePt, 0, false)), widthPt);
     }
 
+    /**
+     * Width (pt) of {@code text} on one line, set in {@code face} at
+     * {@code sizePt}, measured with the bundled fonts. Used for blocks whose
+     * lines must not wrap ({@link VerbatimLayout}).
+     */
+    static double textWidth(String text, Typeface face, float sizePt) {
+        Face f = switch (face) {
+            case SERIF -> Face.SERIF;
+            case SANS_BOLD -> Face.SANS_BOLD;
+            case MONO -> Face.MONO;
+        };
+        return measure(text, new Run(text, f, sizePt, 0, false));
+    }
+
     private static List<double[]> pieces(List<Run> runs) {
         StringBuilder all = new StringBuilder();
         List<Integer> owner = new ArrayList<>();

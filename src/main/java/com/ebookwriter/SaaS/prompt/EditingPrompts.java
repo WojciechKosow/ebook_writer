@@ -2,6 +2,7 @@ package com.ebookwriter.SaaS.prompt;
 
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
+import com.ebookwriter.SaaS.service.ebook.WritingContext;
 
 /**
  * Step 3 — editorial pass. Runs per chapter with awareness of the whole book so
@@ -29,6 +30,11 @@ public final class EditingPrompts {
                   rewrite or remove them so nothing points at missing content
                 - An ending that trails off: every section, exercise, list and the
                   final sentence must be complete
+                - A topic the TOPIC REGISTRY shows was already explained in an earlier
+                  chapter and is explained again here: replace the re-explanation with
+                  a short reference back ("see Chapter N") and keep only what is new
+                - A warning, tip or example box that repeats one given earlier: remove it
+                - Recurring closing sections that do not match the BOOK TEMPLATE
 
                 Rules:
                 - Improve the manuscript WITHOUT changing the author's intended topic
@@ -39,7 +45,8 @@ public final class EditingPrompts {
                   tag).
                 - Return ONLY the full, improved chapter in Markdown. No commentary,
                   no summary, no delimiters.
-                """;
+
+                """ + ChapterPrompts.COMPLETENESS_RULES + "\n" + ChapterPrompts.verbatimRules();
     }
 
     public static String user(Ebook e,
@@ -64,6 +71,17 @@ public final class EditingPrompts {
                               String otherSummaries,
                               boolean finalChapter,
                               String knowledgeAddendum) {
+        return user(e, fullOutline, chapter, otherSummaries, finalChapter, knowledgeAddendum, WritingContext.NONE);
+    }
+
+    /** As above, edited against the book's topic registry and template ({@link WritingContext}). */
+    public static String user(Ebook e,
+                              String fullOutline,
+                              EbookChapter chapter,
+                              String otherSummaries,
+                              boolean finalChapter,
+                              String knowledgeAddendum,
+                              WritingContext context) {
         String endingSection = finalChapter
                 ? "\nTHIS IS THE BOOK'S FINAL CHAPTER. Keep (or, if missing, strengthen) a "
                         + "deliberate ending that fits the book, and never weaken or remove it:\n"
@@ -77,6 +95,7 @@ public final class EditingPrompts {
                 %s
 
                 SUMMARIES OF THE OTHER CHAPTERS (context only — check for overlap/contradiction)
+                %s
                 %s
 
                 CHAPTER %d: %s
@@ -94,6 +113,7 @@ public final class EditingPrompts {
                 nz(fullOutline),
                 otherSummaries == null || otherSummaries.isBlank()
                         ? "(none)" : otherSummaries.trim(),
+                ChapterPrompts.bookContextSections(context, chapter.getChapterNumber()),
                 chapter.getChapterNumber(),
                 nz(chapter.getTitle()),
                 nz(chapter.getDescription()),

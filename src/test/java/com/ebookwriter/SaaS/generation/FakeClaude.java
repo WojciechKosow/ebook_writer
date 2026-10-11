@@ -36,6 +36,10 @@ final class FakeClaude {
             return system.contains("You are the book's editor");
         }
 
+        boolean isBookTemplate() {
+            return system.contains("decide its chapter template");
+        }
+
         boolean isImagePlanning() {
             return system.contains("planning the illustrations");
         }
@@ -64,6 +68,7 @@ final class FakeClaude {
         if (call.isLegacyPlanning()) return legacyPlan;
         if (call.isEditing()) return between(user, "CURRENT CHAPTER TEXT\n", "\n\nReturn the improved chapter now.");
         if (call.isImagePlanning()) return imagePlan(user);
+        if (call.isBookTemplate()) return bookTemplate(user);
         return "{}";
     }
 
@@ -119,6 +124,17 @@ final class FakeClaude {
                     .append("piece connects to the previous one before moving on to the next part of the build. ");
         }
         return sb.append("\n").toString();
+    }
+
+    /** No recurring sections; a short reader subtitle per chapter, made from its title. */
+    private static String bookTemplate(String user) {
+        Matcher m = Pattern.compile("(?m)^(\\d+)\\. (.+)$").matcher(between(user, "CHAPTERS\n", "\nDecide the template"));
+        List<String> subtitles = new ArrayList<>();
+        while (m.find()) {
+            subtitles.add("{\"number\": %s, \"subtitle\": \"What %s means for your shop\"}"
+                    .formatted(m.group(1), m.group(2).strip().replace("\"", "")));
+        }
+        return "{\"recurringSections\": [], \"chapters\": [" + String.join(",", subtitles) + "]}";
     }
 
     private static String imagePlan(String user) {

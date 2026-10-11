@@ -72,6 +72,7 @@ public class EbookGenerationService {
     private final OpenAiProperties openAiProperties;
     private final KnowledgeBookPlanner knowledgeBookPlanner;
     private final EbookImageRepository imageRepository;
+    private final BookTemplateService bookTemplateService;
 
     @Async("ebookExecutor")
     public void generate(UUID ebookId) {
@@ -102,6 +103,11 @@ public class EbookGenerationService {
                     planningService.plan(ebookId);
                 }
 
+                // Step 1.2 — the book template (recurring sections: in every chapter
+                // or in none) and the reader-facing chapter subtitles, decided once
+                // for the whole book. Best-effort.
+                bookTemplateService.prepare(ebookId);
+
                 // Step 1.5 — decide how any user-uploaded assets should be used
                 // (cover / specific chapter / unused). No-op when nothing was
                 // uploaded; best-effort so it never fails the book.
@@ -122,6 +128,11 @@ public class EbookGenerationService {
                     return;
                 }
             } else {
+                // A book planned before templates existed gets its template now,
+                // so the chapters still to write follow one.
+                if (ebookRepository.findById(ebookId).map(Ebook::getChapterTemplateJson).orElse(null) == null) {
+                    bookTemplateService.prepare(ebookId);
+                }
                 // A resumed run re-decides chapters that were deferred for credits.
                 for (EbookChapter c : chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId)) {
                     if (c.getStatus() == ChapterStatus.DEFERRED) {
@@ -314,7 +325,7 @@ public class EbookGenerationService {
             }
             if (chapter.getStatus() == ChapterStatus.WRITTEN || chapter.getStatus() == ChapterStatus.EDITED) {
                 // Already written by an earlier (resumed) run: keep it, count its length.
-                wordsWritten += wordCount(chapter.getContent());
+                wordsWritten += LengthMeter.pageWords(chapter.getContent());
                 done++;
                 continue;
             }
@@ -371,8 +382,10 @@ public class EbookGenerationService {
                 failed.put(chapter, directive);
                 continue;
             }
+            // Length is measured as page space (code, verse, tables and boxes take
+            // more page per word than prose), so projections follow the real book.
             wordsWritten += chapterRepository.findById(chapter.getId())
-                    .map(c -> wordCount(c.getContent())).orElse(0);
+                    .map(c -> LengthMeter.pageWords(c.getContent())).orElse(0);
 
             done++;
             int inBook = chapters.size() - deferred.size();
@@ -384,10 +397,14 @@ public class EbookGenerationService {
             EbookChapter chapter = f.getKey();
             log.info("Retrying chapter {} of ebook {}", chapter.getChapterNumber(), ebookId);
             if (!writeOrMarkFailed(ebookId, chapter, f.getValue())) {
+                String reason = chapterRepository.findById(chapter.getId())
+                        .map(EbookChapter::getGenerationError).orElse(null);
                 throw new ChapterGenerationException("Chapter " + chapter.getChapterNumber() + " (\"" + chapter.getTitle()
-                        + "\") could not be written. The chapters already written are kept — you can resume the generation.");
+                        + "\") could not be written" + (reason == null ? "" : ": " + reason)
+                        + ". The chapters already written are kept — you can resume the generation.");
             }
-            wordsWritten += chapterRepository.findById(chapter.getId()).map(c -> wordCount(c.getContent())).orElse(0);
+            wordsWritten += chapterRepository.findById(chapter.getId())
+                    .map(c -> LengthMeter.pageWords(c.getContent())).orElse(0);
             done++;
         }
         log.info("Wrote ebook {}: {} words across {} chapters ({} deferred, credit capacity {} words)",
@@ -449,13 +466,6 @@ public class EbookGenerationService {
             return 0;
         }
         return (int) Math.ceil(Math.max(0, openAiProperties.getMaxImagesPerBook()) * 0.5);
-    }
-
-    private static int wordCount(String s) {
-        if (s == null || s.isBlank()) {
-            return 0;
-        }
-        return s.strip().split("\\s+").length;
     }
 
     /**

@@ -9,13 +9,14 @@ editorial pass → HTML → PDF`. Nothing more.
 ```
 EbookGenerationService  (async orchestrator, status + progress + error handling)
   ├─ BookPlanningService      Step 1   — outline as structured JSON
+  ├─ BookTemplateService      Step 1.2 — book template (recurring sections) + reader subtitles
   ├─ AssetPlacementService    Step 1.5 — place any user-uploaded assets
   ├─ ChapterGenerationService Step 2   — write each chapter sequentially
   ├─ BookEditingService       Step 3   — editorial pass per chapter
   ├─ ImagePlanningService     Step 3.5 — plan AI images (structured JSON)
   ├─ ImageGenerationService   Step 3.6 — generate + store + place them
   ├─ CoverGenerationService   Step 3.7 — plan + generate the editable cover visual
-  ├─ PdfGenerationService     Step 4   — assemble HTML, render to PDF
+  ├─ PdfGenerationService     Step 4   — assemble HTML, render to PDF, quality report
   └─ EbookValidationService   Step 4.5 — final quality gate before COMPLETED
 ```
 
@@ -93,6 +94,7 @@ to the authenticated user.
 | GET    | `/api/ebooks/{id}/content`    | Load the editable manuscript: all chapters + their Markdown bodies. |
 | PUT    | `/api/ebooks/{id}/content`    | Save edited chapters, then re-render the PDF (`409` until COMPLETED). |
 | GET    | `/api/ebooks/{id}/download`   | Download the finished PDF (`409` until COMPLETED). |
+| GET    | `/api/ebooks/{id}/quality-report` | The latest render's quality report (see [Book quality](#book-quality)); `404` until rendered. The status response carries `qualityErrors` / `qualityWarnings`. |
 | POST   | `/api/ebooks/{id}/images`     | Upload an asset (multipart `file`, optional `role`). Returns `201`. Works on a draft or a finished book. |
 | GET    | `/api/ebooks/{id}/images`     | List the book's assets (role, placement, usage, dimensions). |
 | GET    | `/api/ebooks/{id}/images/{imageId}/raw` | Stream an asset's bytes for preview (bucket is private). |
@@ -204,9 +206,9 @@ MAIN COVER → CONTENTS → [ CHAPTER/DAY OPENER → BODY ] × N
   monogram).
 - **Chapter / day-step openers.** A major section can open with a dedicated
   **opener page** — big numeral, eyebrow label ("DAY 01" / "CHAPTER 03"), title,
-  an optional duration chip (parsed from the scope, e.g. "10–20 MINUTES"), and a
-  one-line statement (the planner's scope sentence) — with the body starting on
-  the **next** page. Program units (a chapter titled "Day 3", "Step 2", "Part II")
+  an optional duration chip (parsed from the body, e.g. "10–20 MINUTES"), and the
+  chapter's reader subtitle (see [Book quality](#book-quality)) — with the body
+  starting on the **next** page. Program units (a chapter titled "Day 3", "Step 2", "Part II")
   are detected and get the day/step treatment; the opener strips the redundant
   "Day 1 —" from the title since the label already carries it.
 - **Intelligent selection, not one-divider-per-chapter.** Dedicated opener pages
@@ -722,11 +724,19 @@ chapter prompt and the editorial pass (`BookDepth.writerGuidance`).
    tightened or the book brought to its planned ending, flagged `creditLimited`), or
    **CANCEL** (after planning only: full refund, back to `DRAFT`). The run then
    resumes from where it stopped.
-6. **Writing follows the plan.** The chapter prompt gives the depth and the
-   planned size as *orientation, not a target or a limit*.
-7. **Never mid-thought.** Generous output-token headroom; if a response still hits
-   the limit, `ManuscriptIntegrity.repairTruncated` drops the incomplete tail. A
-   truncated *edit* is discarded in favour of the complete original.
+6. **Writing follows the plan's budget.** The plan's per-chapter pages are the
+   chapter's length budget, given to the writer with a ±25% range
+   (`ChapterPrompts.LENGTH_TOLERANCE`). Written length is measured as page space
+   (`LengthMeter`: code, verse, tables and boxes take more page per word than
+   prose), so the writing-time projection and approval pauses follow the real
+   book, and the quality report compares every chapter and the book with the plan.
+7. **Never mid-thought, never silently shortened.** A response cut off by the
+   output limit is continued from where it stopped (`LongForm`,
+   `AnthropicService.continueFrom`); the chapter is then checked structurally
+   (`CompletenessCheck`). An incomplete chapter is written again; if it is still
+   incomplete the chapter fails loudly (FAILED with the reason, the book stays
+   resumable) — no partial chapter is kept. An edit that comes back incomplete is
+   discarded in favour of the complete original.
 8. **Premium ending architecture.** The final chapter is written (and edited)
    against `ChapterPrompts.ENDING_ARCHITECTURE`.
 
@@ -770,3 +780,62 @@ these without a rewrite.
 
 > AI-generated **inline** images at generation time are now implemented — see
 > [AI-generated images](#ai-generated-images).
+
+## Book quality
+
+Rules that hold for any book — technical, cookbook, fiction, verse, training
+material — because none of them looks at the subject, only at structure.
+
+- **No incomplete unit reaches the book.** See *Never mid-thought* above:
+  continuation past the output limit, a structural completeness check
+  (unterminated sentence, unclosed block, a lead-in such as "…looks like this:"
+  whose block never came, a heading with nothing under it, a dangling forward
+  reference at the end of the book), one regeneration, then a loud failure.
+- **Structural blocks render as written.** `:::` components nest (a warning
+  inside an exercise) and keep their indentation, so a box written inside a
+  numbered step stays in that step and the list keeps its numbering; `:::` inside
+  a code block is code. Placeholders are terminated (`…Z1Z` vs `…Z10Z`), so the
+  eleventh component of a chapter can no longer be replaced by the first one plus
+  a stray digit. Within one book build (`RenderContext`), a box or paragraph
+  already printed is not printed again, and a heading left with no content is
+  dropped — both are recorded for the report.
+- **Recurring sections are a book-level decision.** `BookTemplateService` asks
+  once, after planning, which closing sections every chapter has (or none) and
+  stores them on the book (`chapterTemplateJson`). Every chapter prompt and the
+  editor get the template — "exactly these, in this order" or "none" — and the
+  report flags a chapter that misses one, or a section heading found in some
+  chapters but not all.
+- **Internal fields never reach the reader.** A chapter's `description` is the
+  planner's brief, `summary` and `coveredTopics` are notes for later chapters —
+  all internal. The book is composed from `ReaderView` copies holding only the
+  reader-facing fields (title, `readerSubtitle`, body). Subtitles are generated
+  separately at their final length (≤ 110 characters), asked again shorter if
+  needed, and dropped — never cut with an ellipsis, never replaced by the brief.
+- **Verbatim blocks.** One generic type: content whose line breaks and indentation
+  carry meaning — fenced blocks (monospaced) and `:::verbatim` (text face: verse,
+  addresses, line-based lists). The writer gets line-length limits measured on the
+  real page and fonts (`VerbatimLayout.limits`). At render, lines never wrap
+  invisibly (`white-space: pre`): a block whose longest line does not fit is set
+  smaller, down to a readable minimum (7pt mono / 8.5pt text), and a line that
+  still does not fit is carried over visibly — a coloured `→` under the line's own
+  indentation. Lines that fit are copied from the PDF exactly as written; a
+  carried-over line copies with the mark (the renderer has no ActualText), and the
+  report lists every such line.
+- **Topic registry.** After its summary the writer lists what the chapter
+  explained (`===TOPICS===`, "topic — gist"); the first sentence of every box it
+  printed is added from the Markdown. Every later chapter — and the editor — gets
+  the registry of the chapters before it with the rule *already explained = refer
+  back ("see Chapter N"), do not explain again*.
+- **Quality report.** After every render (generation and editor saves),
+  `BookQualityInspector` checks the typeset book and stores a `QualityReport`
+  (`GET /api/ebooks/{id}/quality-report`): incomplete units; empty headings,
+  stranded list numbers, duplicated blocks and template mismatches; printed text
+  matching an internal field, and reader text ending in an ellipsis; verbatim
+  lines set smaller or carried over; topics explained in several chapters and the
+  phrases most repeated across chapters; every chapter's and the book's pages
+  against the plan. Each finding has a severity, the chapter and the PDF page;
+  `readyToPublish` is false while any error remains.
+
+`GenreFixtures` (a technical book, a cookbook and a poetry collection) drive
+`BookQualityAcrossGenresTest` and `ChapterCompletenessGenerationTest`: every rule
+is asserted on all three, with no genre-specific conditions.

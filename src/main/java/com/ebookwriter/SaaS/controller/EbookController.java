@@ -168,6 +168,21 @@ public class EbookController {
         return ResponseEntity.ok(ebookService.getContent(id, user.getId()));
     }
 
+    /**
+     * The quality report of the latest render: incomplete units, broken
+     * structure, leaked internal text, verbatim overflow, repetition and length
+     * against the plan, each located by chapter and page. {@code 404} until the
+     * book has been rendered.
+     */
+    @GetMapping("/{id}/quality-report")
+    public ResponseEntity<com.ebookwriter.SaaS.service.ebook.QualityReport> qualityReport(
+            @PathVariable UUID id, Authentication authentication) {
+        User user = currentUser(authentication);
+        return ebookService.getQualityReport(id, user.getId())
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
     /** Save edited chapters and re-render the PDF so the download stays in sync. */
     @PutMapping("/{id}/content")
     public ResponseEntity<EbookContentResponse> updateContent(

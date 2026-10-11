@@ -95,24 +95,180 @@ public class EbookContentRenderer {
      * Markdown so no content is ever lost.
      */
     public String toHtml(String markdown) {
+        return toHtml(markdown, new RenderContext());
+    }
+
+    /**
+     * Render one chapter body as part of a whole book: {@code ctx} carries what
+     * the book has already printed (so a block appears only once in the book)
+     * and collects notes for the author's quality report. Beyond the plain
+     * transform, the chapter is cleaned before pagination:
+     * <ul>
+     *   <li>a block already printed earlier in the book is dropped;</li>
+     *   <li>a heading left with no content under it is dropped;</li>
+     *   <li>every verbatim block is fitted to its column ({@link VerbatimLayout}).</li>
+     * </ul>
+     */
+    public String toHtml(String markdown, RenderContext ctx) {
         if (markdown == null || markdown.isBlank()) {
             return "";
         }
-        String normalised = autodetect(markdown.replace("\r\n", "\n").replace("\r", "\n"));
+        String html = renderBody(markdown.replace("\r\n", "\n").replace("\r", "\n"));
+        Document doc = Jsoup.parseBodyFragment(html);
+        doc.outputSettings().prettyPrint(false);
+        Element body = doc.body();
+        removeDuplicateBlocks(body, ctx);
+        removeEmptyHeadings(body, ctx);
+        float column = PageGeometry.book().contentWidthPt();
+        for (Element pre : body.select("pre")) {
+            VerbatimLayout.apply(pre, insetWidth(pre, column), ctx);
+        }
+        paginate(body);
+        return body.html();
+    }
+
+    /**
+     * Markdown with directive blocks to HTML — the pure transform, without the
+     * book-level clean-up or pagination. Components may nest (a warning inside an
+     * exercise, a tip inside a list item): each component's body goes through
+     * this same transform.
+     */
+    String renderBody(String markdown) {
+        String normalised = autodetect(markdown);
 
         List<String> components = new ArrayList<>();
         String outer = extractDirectives(normalised, components);
 
         String html = markdownToHtml(outer);
 
-        // Swap each placeholder paragraph for its rendered component HTML.
+        // Swap each placeholder for its rendered component HTML. Tokens are
+        // terminated, so no token is a prefix of another (Z1Z vs Z10Z).
         for (int i = 0; i < components.size(); i++) {
-            String token = PLACEHOLDER_PREFIX + i;
+            String token = placeholder(i);
             html = html.replace("<p>" + token + "</p>", components.get(i));
-            // Defensive: if commonmark didn't wrap it (shouldn't happen), still swap.
+            // A placeholder commonmark did not wrap on its own (e.g. a lazy line in
+            // a list item) is still swapped exactly.
             html = html.replace(token, components.get(i));
         }
-        return paginate(html);
+        return html;
+    }
+
+    static String placeholder(int index) {
+        return PLACEHOLDER_PREFIX + index + "Z";
+    }
+
+    // ---- Book-level clean-up ------------------------------------------------
+
+    /** Prose shorter than this is too generic to call a duplicate ("Let's begin."). */
+    static final int MIN_DUPLICATE_CHARS = 80;
+    /** Components and verbatim blocks this short are not checked either. */
+    static final int MIN_DUPLICATE_BLOCK_CHARS = 30;
+
+    /**
+     * Print each block once in the whole book. A component or a prose paragraph
+     * whose normalised text was already printed — earlier in this chapter or in
+     * an earlier one — is removed and noted. A repeated verbatim block is only
+     * noted: a listing shown again on purpose (a refrain, an updated file shown
+     * in full) is the author's call.
+     */
+    static void removeDuplicateBlocks(Element body, RenderContext ctx) {
+        for (Element e : body.select("div.cmp, p, blockquote, pre")) {
+            if (e.parent() == null || inside(e, "div.cmp, pre, blockquote, li, table, figure")) {
+                continue; // part of a larger block, or detached with it
+            }
+            boolean verbatim = e.tagName().equals("pre");
+            String fp = fingerprint(verbatim ? e.wholeText() : e.text());
+            int min = e.tagName().equals("p") || e.tagName().equals("blockquote")
+                    ? MIN_DUPLICATE_CHARS : MIN_DUPLICATE_BLOCK_CHARS;
+            if (fp.length() < min) {
+                continue;
+            }
+            int first = ctx.firstSeen(e.tagName() + ":" + fp);
+            if (first < 0) {
+                continue;
+            }
+            String where = first == ctx.chapter() ? "earlier in this chapter" : "in chapter " + first;
+            if (verbatim) {
+                String ref = ctx.newRef();
+                e.attr(RenderContext.QA_ATTR, ref);
+                ctx.note(RenderContext.NoteType.DUPLICATE_VERBATIM,
+                        "Verbatim block already printed " + where + " (kept)", excerpt(e.wholeText()), ref);
+            } else {
+                ctx.note(RenderContext.NoteType.DUPLICATE_REMOVED,
+                        "Block already printed " + where + "; not printed again", excerpt(e.text()), null);
+                e.remove();
+            }
+        }
+    }
+
+    /**
+     * Never print a heading with nothing under it: a heading followed directly by
+     * a heading of the same or a higher level, or by the end of the chapter, is
+     * removed. Repeated until stable, since removing an empty subsection can
+     * empty its parent section.
+     */
+    static void removeEmptyHeadings(Element body, RenderContext ctx) {
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (Element h : body.select("h1, h2, h3, h4, h5, h6")) {
+                if (h.parent() != body) {
+                    continue;
+                }
+                Element next = h.nextElementSibling();
+                boolean empty = next == null
+                        || (next.tagName().matches("h[1-6]") && level(next) <= level(h));
+                if (empty) {
+                    ctx.note(RenderContext.NoteType.EMPTY_HEADING_REMOVED,
+                            "Heading with no content under it; not printed", h.text(), null);
+                    h.remove();
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    private static int level(Element heading) {
+        return heading.tagName().charAt(1) - '0';
+    }
+
+    private static boolean inside(Element e, String selector) {
+        for (Element p : e.parents()) {
+            if (p.is(selector)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Lower-cased letters and digits only, single-spaced: what makes two blocks "the same". */
+    static String fingerprint(String text) {
+        return text.toLowerCase(Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{N}]+", " ")
+                .strip();
+    }
+
+    private static String excerpt(String text) {
+        String t = text.strip().replaceAll("\\s+", " ");
+        return t.length() > 120 ? t.substring(0, 120) : t;
+    }
+
+    /**
+     * The width a block is laid out in: the text column less the inset of every
+     * component box and list it is nested in.
+     */
+    static float insetWidth(Element e, float column) {
+        float width = column;
+        for (Element p : e.parents()) {
+            if (p.hasClass("cmp")) {
+                width -= 28f; // component padding (≈1.1em each side) + keyline
+            } else if (p.tagName().equals("li")) {
+                width -= 16f; // list indent
+            } else if (p.tagName().equals("blockquote")) {
+                width -= 13f;
+            }
+        }
+        return width;
     }
 
     // ---- Semantic pagination ------------------------------------------------
@@ -148,7 +304,12 @@ public class EbookContentRenderer {
         Document doc = Jsoup.parseBodyFragment(html);
         doc.outputSettings().prettyPrint(false);
         Element body = doc.body();
+        paginate(body);
+        return body.html();
+    }
 
+    /** {@link #paginate(String)} on a parsed chapter body, in place. */
+    static void paginate(Element body) {
         for (Element p : body.select("p")) {
             if (p.children().size() == 1 && p.child(0).tagName().equals("img")
                     && p.ownText().isBlank()) {
@@ -185,7 +346,6 @@ public class EbookContentRenderer {
             }
         }
         TableLayout.guardStarts(body, body.firstElementChild());
-        return body.html();
     }
 
     /** Class of a guarded logical block (stylesheet: may split once its start is placed). */
@@ -371,9 +531,24 @@ public class EbookContentRenderer {
         String[] lines = markdown.split("\n", -1);
         StringBuilder out = new StringBuilder(markdown.length() + 64);
         boolean insideDirective = false;
+        String fence = null;
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
             String trimmed = line.strip();
+            // Verbatim content is never rewritten.
+            if (fence != null) {
+                if (closesFence(trimmed, fence)) {
+                    fence = null;
+                }
+                out.append(line).append('\n');
+                continue;
+            }
+            String opened = fenceMarker(trimmed);
+            if (opened != null) {
+                fence = opened;
+                out.append(line).append('\n');
+                continue;
+            }
             if (DIRECTIVE_OPEN.matcher(trimmed).matches()) {
                 insideDirective = true;
             } else if (DIRECTIVE_CLOSE.matcher(trimmed).matches()) {
@@ -408,9 +583,27 @@ public class EbookContentRenderer {
         StringBuilder outer = new StringBuilder(markdown.length());
 
         int i = 0;
+        String fence = null;
         while (i < lines.length) {
             String line = lines[i];
-            Matcher open = DIRECTIVE_OPEN.matcher(line.strip());
+            String trimmed = line.strip();
+            // ::: inside a code block is part of the code.
+            if (fence != null) {
+                if (closesFence(trimmed, fence)) {
+                    fence = null;
+                }
+                outer.append(line).append('\n');
+                i++;
+                continue;
+            }
+            String opened = fenceMarker(trimmed);
+            if (opened != null) {
+                fence = opened;
+                outer.append(line).append('\n');
+                i++;
+                continue;
+            }
+            Matcher open = DIRECTIVE_OPEN.matcher(trimmed);
             if (!open.matches()) {
                 outer.append(line).append('\n');
                 i++;
@@ -419,30 +612,115 @@ public class EbookContentRenderer {
 
             String type = open.group(1).toLowerCase(Locale.ROOT);
             String title = open.group(2) == null ? "" : open.group(2).strip();
+            boolean verbatim = VERBATIM_TYPES.contains(type);
 
-            // Collect the inner lines up to the closing fence (or end of input).
+            // Collect the inner lines up to the matching close (or end of input).
+            // Components nest: an inner ":::name" opens a level its own ":::"
+            // closes. A verbatim block is literal, so its first ":::" closes it.
             List<String> inner = new ArrayList<>();
             int j = i + 1;
-            boolean closed = false;
+            int depth = 1;
+            String innerFence = null;
             while (j < lines.length) {
-                if (DIRECTIVE_CLOSE.matcher(lines[j].strip()).matches()) {
-                    closed = true;
-                    break;
+                String t = lines[j].strip();
+                if (innerFence != null) {
+                    if (closesFence(t, innerFence)) {
+                        innerFence = null;
+                    }
+                } else if (!verbatim && fenceMarker(t) != null) {
+                    innerFence = fenceMarker(t);
+                } else if (DIRECTIVE_CLOSE.matcher(t).matches()) {
+                    if (--depth == 0) {
+                        break;
+                    }
+                } else if (!verbatim && DIRECTIVE_OPEN.matcher(t).matches()) {
+                    depth++;
                 }
                 inner.add(lines[j]);
                 j++;
             }
+            boolean closed = depth == 0;
 
-            String innerText = String.join("\n", inner).strip();
-            String token = PLACEHOLDER_PREFIX + componentsOut.size();
-            componentsOut.add(renderComponent(type, title, innerText));
-            // Blank lines around the placeholder guarantee it becomes its own
+            String token = placeholder(componentsOut.size());
+            componentsOut.add(verbatim
+                    ? renderVerbatim(title, dedent(inner))
+                    : renderComponent(type, title, String.join("\n", dedent(inner)).strip()));
+            // The placeholder keeps the block's indentation, so a block written
+            // inside a list item stays inside it (the list is not broken and its
+            // numbering continues). Blank lines around it make it its own
             // paragraph, so the <p>token</p> swap is exact.
-            outer.append('\n').append(token).append("\n\n");
+            String indent = line.substring(0, line.indexOf(':'));
+            outer.append('\n').append(indent).append(token).append("\n\n");
 
             i = closed ? j + 1 : j;
         }
         return outer.toString();
+    }
+
+    /** Directive names of a verbatim block set in the text face (see {@link VerbatimLayout}). */
+    static final java.util.Set<String> VERBATIM_TYPES =
+            java.util.Set.of("verbatim", "preformatted", "lines", "verse", "poem");
+
+    /** Opening code fence (``` or ~~~, 3+), returning its marker, or null. */
+    static String fenceMarker(String stripped) {
+        Matcher m = FENCE_OPEN.matcher(stripped);
+        return m.matches() ? m.group(1) : null;
+    }
+
+    /** Whether {@code stripped} closes a fence opened with {@code marker}. */
+    static boolean closesFence(String stripped, String marker) {
+        if (stripped.length() < marker.length() || stripped.charAt(0) != marker.charAt(0)) {
+            return false;
+        }
+        int n = 0;
+        while (n < stripped.length() && stripped.charAt(n) == marker.charAt(0)) {
+            n++;
+        }
+        return n >= marker.length() && stripped.substring(n).isBlank();
+    }
+
+    private static final Pattern FENCE_OPEN = Pattern.compile("^(`{3,}|~{3,}).*$");
+
+    /** The lines less their common indentation, without leading or trailing blank lines. */
+    static List<String> dedent(List<String> lines) {
+        int common = Integer.MAX_VALUE;
+        for (String l : lines) {
+            if (l.isBlank()) {
+                continue;
+            }
+            int k = 0;
+            while (k < l.length() && l.charAt(k) == ' ') {
+                k++;
+            }
+            common = Math.min(common, k);
+        }
+        int cut = common == Integer.MAX_VALUE ? 0 : common;
+        List<String> out = new ArrayList<>();
+        for (String l : lines) {
+            out.add(l.isBlank() ? "" : l.substring(Math.min(cut, l.length())).stripTrailing());
+        }
+        while (!out.isEmpty() && out.get(0).isEmpty()) {
+            out.remove(0);
+        }
+        while (!out.isEmpty() && out.get(out.size() - 1).isEmpty()) {
+            out.remove(out.size() - 1);
+        }
+        return out;
+    }
+
+    /**
+     * A verbatim block in the text face: every line break and every leading space
+     * is kept as written. An optional title is printed as a label above it.
+     */
+    String renderVerbatim(String title, List<String> lines) {
+        StringBuilder sb = new StringBuilder();
+        if (title != null && !title.isBlank()) {
+            sb.append("<p class=\"verbatim-title\"><strong>").append(escape(title)).append("</strong></p>");
+        }
+        sb.append("<pre class=\"verbatim ").append(VerbatimLayout.TEXT_CLASS).append("\">")
+                .append(escape(String.join("\n", lines)))
+                .append("</pre>");
+        return sb.toString();
     }
 
     // ---- Component rendering ------------------------------------------------
@@ -480,7 +758,7 @@ public class EbookContentRenderer {
         if (title != null && !title.isBlank()) {
             sb.append("<div class=\"cmp-title\">").append(escape(title)).append("</div>");
         }
-        sb.append("<div class=\"cmp-body\">").append(markdownToHtml(inner)).append("</div>");
+        sb.append("<div class=\"cmp-body\">").append(renderBody(inner)).append("</div>");
         sb.append("</div>");
         return sb.toString();
     }
@@ -489,7 +767,7 @@ public class EbookContentRenderer {
     private String renderPullQuote(String inner) {
         String text = inner.replaceFirst("^>\\s?", "").strip();
         return "<div class=\"cmp cmp--pullquote\"><div class=\"cmp-body\">"
-                + markdownToHtml(text) + "</div></div>";
+                + renderBody(text) + "</div></div>";
     }
 
     /**
@@ -521,7 +799,7 @@ public class EbookContentRenderer {
             }
             sb.append("</div>");
             if (step.description != null && !step.description.isBlank()) {
-                sb.append("<div class=\"step-desc\">").append(markdownToHtml(step.description)).append("</div>");
+                sb.append("<div class=\"step-desc\">").append(renderBody(step.description)).append("</div>");
             }
             sb.append("</div></li>");
         }

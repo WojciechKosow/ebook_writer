@@ -35,8 +35,21 @@ public class EbookChapter {
 
     private String title;
 
+    /**
+     * INTERNAL: the planner's brief for this chapter (what it covers and why).
+     * Written for the model, never for the reader — the renderer never sees it
+     * (see {@code ReaderView}).
+     */
     @Column(columnDefinition = "text")
     private String description;
+
+    /**
+     * READER-FACING: a short subtitle printed under the chapter title, generated
+     * separately at its final length (never cut down from the brief). Null when
+     * none was generated; nothing is printed then.
+     */
+    @Column(columnDefinition = "text")
+    private String readerSubtitle;
 
     /** Target size for this chapter, in pages, derived from the plan. */
     private int approxPages;
@@ -48,6 +61,15 @@ public class EbookChapter {
     /** Short summary used as context for later chapters (avoids repetition). */
     @Column(columnDefinition = "text")
     private String summary;
+
+    /**
+     * INTERNAL: the topic registry entries this chapter contributed — one line
+     * per concept, term, procedure or warning it explained ("topic — gist").
+     * Later chapters get every earlier chapter's entries so they refer back
+     * instead of explaining again (see {@code TopicRegistry}).
+     */
+    @Column(columnDefinition = "text")
+    private String coveredTopics;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

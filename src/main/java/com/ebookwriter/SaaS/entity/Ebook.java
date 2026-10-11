@@ -238,6 +238,22 @@ public class Ebook {
     @Column(columnDefinition = "text")
     private String planJson;
 
+    /**
+     * The book template's recurring per-chapter sections, decided once for the
+     * whole book (see {@code BookTemplateService}): a JSON array of section
+     * headings every chapter ends with, in order. {@code "[]"} means the book has
+     * none; null means no template was decided (older books).
+     */
+    @Column(columnDefinition = "text")
+    private String chapterTemplateJson;
+
+    /**
+     * The latest quality report (JSON, see {@code QualityReport}), produced after
+     * every render for the author to review before publishing.
+     */
+    @Column(columnDefinition = "text")
+    private String qualityReportJson;
+
     // Rendered PDF bytes live in a separate table (EbookPdf) so that status
     // polls and listings don't load the blob.
 
