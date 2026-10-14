@@ -8,6 +8,7 @@ import com.ebookwriter.SaaS.repository.StoreProductRepository;
 import com.ebookwriter.SaaS.repository.StoreRepository;
 import com.ebookwriter.SaaS.request.*;
 import com.ebookwriter.SaaS.service.payment.SubscriptionService;
+import com.stripe.exception.ApiConnectionException;
 import com.stripe.exception.StripeException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -175,7 +176,7 @@ public class StoreService {
                     frontendUrl + "/store?stripe=return");
         } catch (StripeException e) {
             log.error("[StripeConnect] Connect failed for store {}: {}", store.getId(), e.getMessage());
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Could not reach Stripe. Please try again.");
+            throw stripeFailure(e);
         }
     }
 
@@ -188,7 +189,7 @@ public class StoreService {
                 apply(store, stripe.retrieveAccount(store.getStripeAccountId()));
             } catch (StripeException e) {
                 log.error("[StripeConnect] Sync failed for account {}: {}", store.getStripeAccountId(), e.getMessage());
-                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Could not reach Stripe. Please try again.");
+                throw stripeFailure(e);
             }
         }
         return toDashboard(store);
@@ -277,6 +278,19 @@ public class StoreService {
                 : Arrays.asList(store.getRequirementsCurrentlyDue().split(","));
         return new StripeStatusDTO(state, store.isChargesEnabled(), store.isDetailsSubmitted(), due,
                 store.getStripeSyncedAt());
+    }
+
+    /**
+     * A network failure is worth retrying; anything else is Stripe rejecting the
+     * request (e.g. Connect not enabled on the platform) — say so honestly instead
+     * of "could not reach Stripe". The exact reason is in the log.
+     */
+    private static ResponseStatusException stripeFailure(StripeException e) {
+        if (e instanceof ApiConnectionException) {
+            return new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Could not reach Stripe. Please try again.");
+        }
+        return new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Stripe payments aren't available right now. Please try again later.");
     }
 
     private static long validPrice(Long cents) {
