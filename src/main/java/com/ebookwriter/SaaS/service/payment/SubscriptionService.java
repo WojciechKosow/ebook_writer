@@ -30,6 +30,19 @@ public class SubscriptionService {
                 .orElseGet(SubscriptionResponse::none);
     }
 
+    /**
+     * Whether the user has Scrivetta PRO right now — the same rule the billing
+     * page shows ({@code active} or {@code trialing}). Publishing and selling in
+     * a creator store require it.
+     */
+    @Transactional(readOnly = true)
+    public boolean isPro(UUID userId) {
+        return userSubscriptionRepository.findById(userId)
+                .map(SubscriptionResponse::from)
+                .map(SubscriptionResponse::active)
+                .orElse(false);
+    }
+
     /** Cancel at period end (keeps access + credits until the period runs out). */
     @Transactional
     public SubscriptionResponse cancelAtPeriodEnd(User user) {

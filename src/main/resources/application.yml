@@ -213,6 +213,15 @@ stripe:
   cancel-url: ${STRIPE_CANCEL_URL:http://localhost:3000/billing}
   portal-return-url: ${STRIPE_PORTAL_RETURN_URL:http://localhost:3000/billing}
   currency: ${STRIPE_CURRENCY:usd}
+  # Creator stores: Stripe Connect, direct charges on the author's own account
+  # (docs/stripe-connect.md). Separate key and webhook secret from the PRO
+  # subscription above, so store payments can stay in test mode. A live key
+  # (sk_live_/rk_live_) is refused unless STRIPE_CONNECT_LIVE_ENABLED=true.
+  connect:
+    secret-key: ${STRIPE_CONNECT_SECRET_KEY:}
+    webhook-secret: ${STRIPE_CONNECT_WEBHOOK_SECRET:}
+    live-enabled: ${STRIPE_CONNECT_LIVE_ENABLED:false}
+    checkout-expiry-minutes: ${STRIPE_CONNECT_CHECKOUT_EXPIRY_MINUTES:60}
 
 credits:
   # Credits granted per successful monthly subscription payment
