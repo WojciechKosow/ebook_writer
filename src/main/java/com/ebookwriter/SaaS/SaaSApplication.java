@@ -10,6 +10,7 @@ import com.ebookwriter.SaaS.config.properties.OpenAiProperties;
 import com.ebookwriter.SaaS.config.properties.PostmarkProperties;
 import com.ebookwriter.SaaS.config.properties.R2Properties;
 import com.ebookwriter.SaaS.config.properties.StripeProperties;
+import com.ebookwriter.SaaS.config.properties.StripeConnectProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -27,7 +28,8 @@ import org.springframework.scheduling.annotation.EnableAsync;
 		GoogleOAuthProperties.class,
 		KnowledgeProperties.class,
 		BlueprintProperties.class,
-		KnowledgeWritingProperties.class
+		KnowledgeWritingProperties.class,
+		StripeConnectProperties.class
 })
 public class SaaSApplication {
 

@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.util.HtmlUtils;
 
 import java.util.Map;
 import java.util.UUID;
@@ -80,6 +81,24 @@ public class MailServiceImpl implements MailService {
                 "Reset Password",
                 passwordResetUrl,
                 "If you didn't request a password reset, you can safely ignore this email."
+        );
+        send(to, subject, content);
+    }
+
+    @Override
+    public void sendStorePurchaseEmail(String to, String productTitle, String storeName, String downloadUrl) {
+        String title = HtmlUtils.htmlEscape(productTitle != null ? productTitle : "your ebook");
+        String seller = storeName != null && !storeName.isBlank()
+                ? " from <strong>" + HtmlUtils.htmlEscape(storeName) + "</strong>" : "";
+        String subject = "Your download: " + (productTitle != null ? productTitle : "your ebook");
+        String content = emailTemplate(
+                "Thanks for your purchase",
+                "Your payment for <strong>" + title + "</strong>" + seller + " is confirmed.<br>"
+                        + "Use the button below to download your ebook. The link works for 30 days "
+                        + "and up to 5 downloads, so save the file somewhere safe.",
+                "Download your ebook",
+                downloadUrl,
+                "Keep this link private — anyone with it can download your copy."
         );
         send(to, subject, content);
     }

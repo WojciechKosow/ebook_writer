@@ -5,4 +5,7 @@ import java.util.UUID;
 public interface MailService {
     void sendVerificationEmail(String to, UUID tokenId, String token);
     void sendPasswordResetEmail(String to, UUID tokenId, String token);
+
+    /** A creator-store buyer's download link, sent once the payment is confirmed. */
+    void sendStorePurchaseEmail(String to, String productTitle, String storeName, String downloadUrl);
 }
