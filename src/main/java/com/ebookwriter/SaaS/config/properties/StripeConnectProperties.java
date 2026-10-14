@@ -12,6 +12,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * mode. All values come from the environment — never commit real keys.
  *   stripe.connect.secret-key     = sk_test_... (the platform's key; used with the Stripe-Account header)
  *   stripe.connect.webhook-secret = whsec_...   (the Connect webhook endpoint's own signing secret)
+ *   stripe.connect.v2-events-secret = whsec_... (the event destination for v2 account events)
  *   stripe.connect.live-enabled   = false       (a live key is refused unless this is true)
  */
 @Getter
@@ -21,6 +22,12 @@ public class StripeConnectProperties {
 
     private String secretKey = "";
     private String webhookSecret = "";
+
+    /**
+     * Signing secret of the event destination that delivers Accounts v2 "thin"
+     * events ({@code v2.core.account...}) — separate from {@link #webhookSecret}.
+     */
+    private String v2EventsSecret = "";
 
     /**
      * Live mode switch. While false, a live key ({@code sk_live_} / {@code rk_live_})

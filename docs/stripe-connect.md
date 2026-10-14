@@ -15,16 +15,29 @@ Publishing a store and selling both require active Scrivetta PRO
 |---|---|
 | Author creates a store, adds finished ebooks with a USD price | `POST /api/store`, `POST /api/store/products` |
 | "Connect Stripe" creates a connected account (once) and returns a Stripe-hosted Account Link | `POST /api/store/stripe/connect` |
-| Author returns from Stripe; the backend **fetches the account** and stores `charges_enabled`, `details_submitted`, `requirements.currently_due` | `POST /api/store/stripe/sync`, and the `account.updated` webhook |
+| Author returns from Stripe; the backend **fetches the account** and stores its state (ready = `card_payments` active, requirements due) | `POST /api/store/stripe/sync`, and Accounts v2 events at `/api/stripe/connect/account-events` |
 | Buyer clicks Buy; the client sends only `productId` | `POST /api/public/checkout` |
 | Backend re-checks published + PRO + `charges_enabled`, creates a `PENDING` `store_order` and a Checkout Session **on the connected account** | `StoreCheckoutService` |
 | Stripe sends `checkout.session.completed` (`payment_status=paid`) → order `PAID`, download grant, email with the link | `/api/stripe/connect/webhook` |
 | Success page polls our order status until `PAID` | `GET /api/public/orders/{id}` |
 | Buyer downloads through the backend (token: 30 days, max 5 downloads) | `GET /api/public/downloads/{token}/file` |
 
-Connected accounts are created with controller properties (no legacy `type`):
-`controller.losses.payments=stripe`, `controller.fees.payer=account`,
-`controller.requirement_collection=stripe`, `controller.stripe_dashboard.type=full`.
+Connected accounts are created with **Accounts v2** (`POST /v2/core/accounts`). Stripe refuses
+v1 account creation for new Connect platforms, so the original v1 controller properties map to:
+
+| Intent (v1 controller) | Accounts v2 |
+|---|---|
+| `losses.payments=stripe` | `defaults.responsibilities.losses_collector=stripe` |
+| `fees.payer=account` | `defaults.responsibilities.fees_collector=stripe` (Stripe bills the account) |
+| `stripe_dashboard.type=full` | `dashboard=full` |
+| `requirement_collection=stripe` | implied by the full Dashboard |
+| account can take payments | `configuration.merchant.capabilities.card_payments.requested=true` |
+
+Onboarding links use `POST /v2/core/account_links` (`account_onboarding`, configuration
+`merchant`). The store is **Ready to sell** when the merchant `card_payments` capability is
+`active` (the v2 equivalent of `charges_enabled`); "currently due" lists requirements awaiting
+the author with a currently/past-due deadline. Checkout is unchanged: the `acct_...` id is used
+in the `Stripe-Account` header (direct charge).
 
 Checkout Sessions use `price_data` from our database price, `payment_method_types=["card"]`
 (synchronous only), `order_id` in `metadata` and `client_reference_id`, and
@@ -33,7 +46,7 @@ requests immediate access and loses the right of withdrawal. The acceptance time
 on the order (`consent_accepted_at`).
 
 The Connect webhook handles only `checkout.session.completed`, `checkout.session.expired`,
-`account.updated` and `charge.refunded` (full refund → `REFUNDED`, grant revoked). Every
+`account.updated` (if Stripe sends it) and `charge.refunded` (full refund → `REFUNDED`, grant revoked). Every
 event is deduplicated in `stripe_webhook_event`, and an order event whose `event.account`
 is not the order's connected account is logged and ignored.
 
@@ -54,7 +67,16 @@ It is completely separate from the PRO subscription webhook (`/api/stripe/webhoo
    - `account.updated`
    - `charge.refunded`
 4. Put that endpoint's signing secret into `STRIPE_CONNECT_WEBHOOK_SECRET`.
-5. Leave `STRIPE_CONNECT_LIVE_ENABLED=false`. With it false, a live key is refused
+5. Accounts v2 status events: Developers → **Event destinations** → create a destination for
+   **connected accounts**, payload style **thin**, URL
+   `https://<backend>/api/stripe/connect/account-events`, events:
+   - `v2.core.account[configuration.merchant].capability_status_updated`
+   - `v2.core.account[requirements].updated`
+   - `v2.core.account.updated`
+
+   Put its signing secret into `STRIPE_CONNECT_V2_EVENTS_SECRET`. Every such event only
+   triggers a server-side re-fetch of the account.
+6. Leave `STRIPE_CONNECT_LIVE_ENABLED=false`. With it false, a live key is refused
    (every Connect call answers 503) and live-mode events are ignored.
 
 > **Terms of service URL.** `consent_collection.terms_of_service=required` only works
@@ -74,8 +96,18 @@ stripe listen --forward-connect-to localhost:8080/api/stripe/connect/webhook \
   --events checkout.session.completed,checkout.session.expired,account.updated,charge.refunded
 ```
 
-Use a separate `stripe listen --forward-to localhost:8080/api/stripe/webhook` if you
-also test the PRO subscription; the two secrets are different.
+For Accounts v2 events, forward thin events to the second endpoint (its own secret →
+`STRIPE_CONNECT_V2_EVENTS_SECRET`). Flag names depend on your Stripe CLI version — check
+`stripe listen --help` for the thin-event options:
+
+```bash
+stripe listen --forward-thin-to localhost:8080/api/stripe/connect/account-events \
+  --thin-events 'v2.core.account[configuration.merchant].capability_status_updated,v2.core.account[requirements].updated,v2.core.account.updated'
+```
+
+Without it the status still updates whenever the author returns from Stripe (the card also
+re-syncs on that return). Use a separate `stripe listen --forward-to localhost:8080/api/stripe/webhook`
+if you also test the PRO subscription; the secrets are all different.
 
 Then:
 

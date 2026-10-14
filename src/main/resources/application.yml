@@ -220,6 +220,7 @@ stripe:
   connect:
     secret-key: ${STRIPE_CONNECT_SECRET_KEY:}
     webhook-secret: ${STRIPE_CONNECT_WEBHOOK_SECRET:}
+    v2-events-secret: ${STRIPE_CONNECT_V2_EVENTS_SECRET:}
     live-enabled: ${STRIPE_CONNECT_LIVE_ENABLED:false}
     checkout-expiry-minutes: ${STRIPE_CONNECT_CHECKOUT_EXPIRY_MINUTES:60}
 
