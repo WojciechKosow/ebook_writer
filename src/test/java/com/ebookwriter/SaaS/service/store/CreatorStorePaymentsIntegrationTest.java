@@ -431,8 +431,8 @@ class CreatorStorePaymentsIntegrationTest {
         ArgumentCaptor<String> url = ArgumentCaptor.forClass(String.class);
         verify(mailService, atLeastOnce()).sendStorePurchaseEmail(eq("buyer@example.com"), any(), any(), url.capture());
         String link = url.getValue();
-        assertTrue(link.startsWith("http://localhost:5173/download/"), link);
-        return link.substring(link.lastIndexOf('/') + 1);
+        assertTrue(link.startsWith("http://localhost:5173/download#"), link);
+        return link.substring(link.indexOf('#') + 1);
     }
 
     private void setPro(User user, String status) {
