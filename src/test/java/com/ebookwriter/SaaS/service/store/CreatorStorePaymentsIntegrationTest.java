@@ -44,10 +44,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * signs them, so {@code Webhook.constructEvent} verifies them for real.
  */
 @SpringBootTest
-@TestPropertySource(properties = "stripe.connect.webhook-secret=" + CreatorStorePaymentsIntegrationTest.SECRET)
+@TestPropertySource(properties = {
+        "stripe.connect.webhook-secret=" + CreatorStorePaymentsIntegrationTest.SECRET,
+        "stripe.connect.v2-events-secret=" + CreatorStorePaymentsIntegrationTest.V2_SECRET})
 class CreatorStorePaymentsIntegrationTest {
 
     static final String SECRET = "whsec_connect_test_secret";
+    static final String V2_SECRET = "whsec_connect_v2_events_secret";
     static final long PRICE = 1299;
     static final byte[] PDF = "%PDF-1.4 test ebook".getBytes(StandardCharsets.UTF_8);
 
@@ -369,6 +372,32 @@ class CreatorStorePaymentsIntegrationTest {
     }
 
     @Test
+    void accountsV2EventFetchesTheAccountOnceAndRejectsForgeries() throws Exception {
+        store.setChargesEnabled(false);
+        storeRepository.save(store);
+        when(stripe.retrieveAccount(account)).thenReturn(
+                new StripeConnectGateway.AccountState(account, true, true, List.of()));
+        String payload = """
+                {"id":"%s","object":"v2.core.event","type":"v2.core.account[configuration.merchant].capability_status_updated",
+                 "livemode":false,"created":"2026-10-14T20:00:00.000Z",
+                 "related_object":{"id":"%s","type":"v2.core.account","url":"/v2/core/accounts/%s"}}
+                """.formatted(evt(), account, account);
+
+        mvc.perform(post("/api/stripe/connect/account-events").contentType(MediaType.APPLICATION_JSON)
+                        .content(payload).header("Stripe-Signature", "t=1,v1=deadbeef"))
+                .andExpect(status().isBadRequest());
+        verify(stripe, never()).retrieveAccount(anyString());
+
+        for (int i = 0; i < 2; i++) {
+            mvc.perform(post("/api/stripe/connect/account-events").contentType(MediaType.APPLICATION_JSON)
+                            .content(payload).header("Stripe-Signature", sign(payload, V2_SECRET)))
+                    .andExpect(status().isOk());
+        }
+        verify(stripe, times(1)).retrieveAccount(account);
+        assertTrue(storeRepository.findById(store.getId()).orElseThrow().isChargesEnabled());
+    }
+
+    @Test
     void returningFromStripeIsNotEnoughToBeReady() throws Exception {
         store.setChargesEnabled(false);
         storeRepository.save(store);
@@ -494,10 +523,14 @@ class CreatorStorePaymentsIntegrationTest {
     }
 
     private static String sign(String payload) {
+        return sign(payload, SECRET);
+    }
+
+    private static String sign(String payload, String secret) {
         long timestamp = System.currentTimeMillis() / 1000L;
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             String v1 = HexFormat.of().formatHex(mac.doFinal((timestamp + "." + payload).getBytes(StandardCharsets.UTF_8)));
             return "t=" + timestamp + ",v1=" + v1;
         } catch (Exception e) {

@@ -49,6 +49,8 @@ public class SecurityConfig {
                         // Stripe Connect webhook (creator store payments): its own
                         // signing secret, see StripeConnectWebhookService.
                         .requestMatchers("/api/stripe/connect/webhook").permitAll()
+                        // Accounts v2 events (own signing secret).
+                        .requestMatchers("/api/stripe/connect/account-events").permitAll()
                         // Creator stores, buyer side: public store pages, checkout,
                         // order status polling and token-authorised downloads.
                         // Buyers have no Scrivetta account.

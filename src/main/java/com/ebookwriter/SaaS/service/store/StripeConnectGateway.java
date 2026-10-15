@@ -11,7 +11,7 @@ import java.util.List;
  */
 public interface StripeConnectGateway {
 
-    /** Create a connected account (controller properties, full Stripe Dashboard). Returns acct_... */
+    /** Create a connected account (Accounts v2: merchant, full Stripe Dashboard, Stripe-collected fees/losses). Returns acct_... */
     String createAccount(String email, String country, String storeId) throws StripeException;
 
     /** A fresh, single-use Stripe-hosted onboarding link for the account. */

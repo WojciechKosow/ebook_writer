@@ -3,12 +3,13 @@ package com.ebookwriter.SaaS.service.store;
 import com.ebookwriter.SaaS.config.properties.StripeConnectProperties;
 import com.stripe.StripeClient;
 import com.stripe.exception.StripeException;
-import com.stripe.model.Account;
-import com.stripe.model.AccountLink;
 import com.stripe.model.checkout.Session;
+import com.stripe.model.v2.core.Account;
+import com.stripe.model.v2.core.AccountLink;
 import com.stripe.net.RequestOptions;
-import com.stripe.param.AccountCreateParams;
-import com.stripe.param.AccountLinkCreateParams;
+import com.stripe.param.v2.core.AccountCreateParams;
+import com.stripe.param.v2.core.AccountLinkCreateParams;
+import com.stripe.param.v2.core.AccountRetrieveParams;
 import com.stripe.param.checkout.SessionCreateParams;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Real Stripe implementation of {@link StripeConnectGateway}. Uses its own
@@ -49,52 +51,91 @@ public class StripeConnectClient implements StripeConnectGateway {
         }
     }
 
+    /**
+     * Accounts v2 (Stripe refuses v1 account creation for new Connect platforms).
+     * Same model as the v1 controller properties: Stripe collects fees from the
+     * account and covers losses, the author gets the full Stripe Dashboard (Stripe
+     * collects requirements), and the account is a merchant accepting cards.
+     */
     @Override
     public String createAccount(String email, String country, String storeId) throws StripeException {
         AccountCreateParams.Builder params = AccountCreateParams.builder()
-                .setController(AccountCreateParams.Controller.builder()
-                        .setLosses(AccountCreateParams.Controller.Losses.builder()
-                                .setPayments(AccountCreateParams.Controller.Losses.Payments.STRIPE)
+                .setDashboard(AccountCreateParams.Dashboard.FULL)
+                .setDefaults(AccountCreateParams.Defaults.builder()
+                        .setResponsibilities(AccountCreateParams.Defaults.Responsibilities.builder()
+                                .setFeesCollector(AccountCreateParams.Defaults.Responsibilities.FeesCollector.STRIPE)
+                                .setLossesCollector(AccountCreateParams.Defaults.Responsibilities.LossesCollector.STRIPE)
                                 .build())
-                        .setFees(AccountCreateParams.Controller.Fees.builder()
-                                .setPayer(AccountCreateParams.Controller.Fees.Payer.ACCOUNT)
-                                .build())
-                        .setRequirementCollection(AccountCreateParams.Controller.RequirementCollection.STRIPE)
-                        .setStripeDashboard(AccountCreateParams.Controller.StripeDashboard.builder()
-                                .setType(AccountCreateParams.Controller.StripeDashboard.Type.FULL)
+                        .build())
+                .setConfiguration(AccountCreateParams.Configuration.builder()
+                        .setMerchant(AccountCreateParams.Configuration.Merchant.builder()
+                                .setCapabilities(AccountCreateParams.Configuration.Merchant.Capabilities.builder()
+                                        .setCardPayments(AccountCreateParams.Configuration.Merchant.Capabilities.CardPayments.builder()
+                                                .setRequested(true)
+                                                .build())
+                                        .build())
                                 .build())
                         .build())
                 .putMetadata("store_id", storeId);
         if (!isBlank(email)) {
-            params.setEmail(email);
+            params.setContactEmail(email);
         }
         if (!isBlank(country)) {
-            params.setCountry(country);
+            params.setIdentity(AccountCreateParams.Identity.builder().setCountry(country).build());
         }
-        return client().v1().accounts().create(params.build()).getId();
+        return client().v2().core().accounts().create(params.build()).getId();
     }
 
     @Override
     public String createAccountLink(String accountId, String refreshUrl, String returnUrl) throws StripeException {
-        AccountLink link = client().v1().accountLinks().create(AccountLinkCreateParams.builder()
+        AccountLink link = client().v2().core().accountLinks().create(AccountLinkCreateParams.builder()
                 .setAccount(accountId)
-                .setRefreshUrl(refreshUrl)
-                .setReturnUrl(returnUrl)
-                .setType(AccountLinkCreateParams.Type.ACCOUNT_ONBOARDING)
+                .setUseCase(AccountLinkCreateParams.UseCase.builder()
+                        .setType(AccountLinkCreateParams.UseCase.Type.ACCOUNT_ONBOARDING)
+                        .setAccountOnboarding(AccountLinkCreateParams.UseCase.AccountOnboarding.builder()
+                                .addConfiguration(AccountLinkCreateParams.UseCase.AccountOnboarding.Configuration.MERCHANT)
+                                .setRefreshUrl(refreshUrl)
+                                .setReturnUrl(returnUrl)
+                                .build())
+                        .build())
                 .build());
         return link.getUrl();
     }
 
+    /**
+     * Ready to sell = the merchant {@code card_payments} capability is active (the
+     * v2 equivalent of {@code charges_enabled}). "Currently due" = requirements
+     * waiting on the author with a currently/past-due deadline.
+     */
     @Override
     public AccountState retrieveAccount(String accountId) throws StripeException {
-        Account account = client().v1().accounts().retrieve(accountId);
-        List<String> due = account.getRequirements() != null && account.getRequirements().getCurrentlyDue() != null
-                ? account.getRequirements().getCurrentlyDue()
-                : List.of();
-        return new AccountState(account.getId(),
-                Boolean.TRUE.equals(account.getChargesEnabled()),
-                Boolean.TRUE.equals(account.getDetailsSubmitted()),
-                due);
+        Account account = client().v2().core().accounts().retrieve(accountId, AccountRetrieveParams.builder()
+                .addInclude(AccountRetrieveParams.Include.CONFIGURATION__MERCHANT)
+                .addInclude(AccountRetrieveParams.Include.REQUIREMENTS)
+                .build());
+        return toState(account);
+    }
+
+    static AccountState toState(Account account) {
+        String cardStatus = Optional.ofNullable(account.getConfiguration())
+                .map(Account.Configuration::getMerchant)
+                .map(Account.Configuration.Merchant::getCapabilities)
+                .map(Account.Configuration.Merchant.Capabilities::getCardPayments)
+                .map(Account.Configuration.Merchant.Capabilities.CardPayments::getStatus)
+                .orElse(null);
+        List<Account.Requirements.Entry> entries = account.getRequirements() != null
+                && account.getRequirements().getEntries() != null
+                ? account.getRequirements().getEntries() : List.of();
+        List<Account.Requirements.Entry> onUser = entries.stream()
+                .filter(e -> "user".equals(e.getAwaitingActionFrom()))
+                .toList();
+        List<String> due = onUser.stream()
+                .filter(e -> e.getMinimumDeadline() != null
+                        && ("currently_due".equals(e.getMinimumDeadline().getStatus())
+                        || "past_due".equals(e.getMinimumDeadline().getStatus())))
+                .map(e -> e.getDescription() != null ? e.getDescription() : "requirement")
+                .toList();
+        return new AccountState(account.getId(), "active".equals(cardStatus), onUser.isEmpty(), due);
     }
 
     @Override
