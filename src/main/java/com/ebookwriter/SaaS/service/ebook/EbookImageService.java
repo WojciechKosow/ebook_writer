@@ -282,7 +282,7 @@ public class EbookImageService {
      * declared MIME). Returns the normalised content type, or null if the bytes
      * are not a supported image.
      */
-    static String detectContentType(byte[] b) {
+    public static String detectContentType(byte[] b) {
         if (b == null || b.length < 4) {
             return null;
         }

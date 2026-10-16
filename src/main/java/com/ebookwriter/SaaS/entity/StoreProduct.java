@@ -40,6 +40,14 @@ public class StoreProduct {
     private String description;
 
     /** Price in the smallest currency unit (cents). */
+    /** "What you'll be able to do" — one point per line. */
+    @Column(columnDefinition = "TEXT")
+    private String highlights;
+
+    /** Position in the store (ascending); the first active product is featured. */
+    @Column(nullable = false, columnDefinition = "integer not null default 0")
+    private int sortOrder;
+
     @Column(nullable = false)
     private long priceCents;
 

@@ -9,9 +9,9 @@ import java.util.UUID;
 
 public interface StoreProductRepository extends JpaRepository<StoreProduct, UUID> {
 
-    List<StoreProduct> findByStoreIdOrderByCreatedAtAsc(UUID storeId);
+    List<StoreProduct> findByStoreIdOrderBySortOrderAscCreatedAtAsc(UUID storeId);
 
-    List<StoreProduct> findByStoreIdAndActiveTrueOrderByCreatedAtAsc(UUID storeId);
+    List<StoreProduct> findByStoreIdAndActiveTrueOrderBySortOrderAscCreatedAtAsc(UUID storeId);
 
     Optional<StoreProduct> findByIdAndStoreId(UUID id, UUID storeId);
 

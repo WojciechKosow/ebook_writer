@@ -282,7 +282,7 @@ class CreatorStorePaymentsIntegrationTest {
         long before = orderRepository.count();
         checkoutRequest(product.getId()).andExpect(status().isConflict());
         mvc.perform(get("/api/public/stores/" + store.getSlug()))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.purchasable").value(false));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.store.purchasable").value(false));
         assertEquals(before, orderRepository.count());
         verify(stripe, never()).createCheckoutSession(anyString(), any());
     }

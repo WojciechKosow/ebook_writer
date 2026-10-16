@@ -85,6 +85,12 @@ public class StoreService {
         Store store = requireOwn(user);
         store.setName(request.name().trim());
         store.setDescription(blankToNull(request.description()));
+        store.setHeadline(blankToNull(request.headline()));
+        store.setAuthorName(blankToNull(request.authorName()));
+        store.setContactEmail(blankToNull(request.contactEmail()));
+        store.setInstagramUrl(blankToNull(request.instagramUrl()));
+        store.setTiktokUrl(blankToNull(request.tiktokUrl()));
+        store.setWebsiteUrl(blankToNull(request.websiteUrl()));
         return toDashboard(storeRepository.save(store));
     }
 
@@ -120,9 +126,13 @@ public class StoreService {
             title = ebook.getTitle() != null && !ebook.getTitle().isBlank() ? ebook.getTitle().trim() : "Untitled ebook";
         }
         product.setTitle(truncate(title, 200));
-        product.setDescription(blankToNull(request.description()));
+        product.setDescription(blankToNull(request.description()) != null
+                ? blankToNull(request.description())
+                : blankToNull(ebook.getDescription()));
         product.setPriceCents(validPrice(request.priceCents()));
         product.setCurrency(CURRENCY);
+        product.setSortOrder(productRepository.findByStoreIdOrderBySortOrderAscCreatedAtAsc(store.getId()).stream()
+                .mapToInt(StoreProduct::getSortOrder).max().orElse(-1) + 1);
         productRepository.save(product);
         return toDashboard(store);
     }
@@ -142,6 +152,9 @@ public class StoreService {
         if (request.description() != null) {
             product.setDescription(blankToNull(request.description()));
         }
+        if (request.highlights() != null) {
+            product.setHighlights(blankToNull(request.highlights()));
+        }
         if (request.priceCents() != null) {
             product.setPriceCents(validPrice(request.priceCents()));
         }
@@ -149,6 +162,32 @@ public class StoreService {
             product.setActive(request.active());
         }
         productRepository.save(product);
+        return toDashboard(store);
+    }
+
+    /** Swap a product with its neighbour; the first active product is the store's featured one. */
+    @Transactional
+    public StoreDashboardResponse moveProduct(User user, UUID productId, boolean up) {
+        Store store = requireOwn(user);
+        List<StoreProduct> products = new java.util.ArrayList<>(
+                productRepository.findByStoreIdOrderBySortOrderAscCreatedAtAsc(store.getId()));
+        int i = -1;
+        for (int k = 0; k < products.size(); k++) {
+            if (products.get(k).getId().equals(productId)) {
+                i = k;
+            }
+        }
+        if (i < 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found");
+        }
+        int j = up ? i - 1 : i + 1;
+        if (j >= 0 && j < products.size()) {
+            java.util.Collections.swap(products, i, j);
+        }
+        for (int k = 0; k < products.size(); k++) {
+            products.get(k).setSortOrder(k);
+        }
+        productRepository.saveAll(products);
         return toDashboard(store);
     }
 
@@ -224,17 +263,78 @@ public class StoreService {
 
     @Transactional(readOnly = true)
     public PublicStoreResponse getPublic(String slug) {
-        Store store = storeRepository.findBySlug(slug)
+        Store store = requirePublished(slug);
+        List<PublicStoreResponse.Product> products = productRepository
+                .findByStoreIdAndActiveTrueOrderBySortOrderAscCreatedAtAsc(store.getId()).stream()
+                .map(this::toPublicProduct)
+                .toList();
+        return new PublicStoreResponse(profile(store), products);
+    }
+
+    /** One ebook's page: details from the product and the finished book itself. */
+    @Transactional(readOnly = true)
+    public PublicProductResponse getPublicProduct(String slug, UUID productId) {
+        Store store = requirePublished(slug);
+        StoreProduct product = productRepository.findByIdAndStoreId(productId, store.getId())
+                .filter(StoreProduct::isActive)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ebook not found"));
+        Ebook ebook = ebookRepository.findById(product.getEbookId()).orElse(null);
+        List<PublicProductResponse.Chapter> chapters = ebook == null ? List.of() : ebook.getChapters().stream()
+                .filter(c -> c.getTitle() != null && !c.getTitle().isBlank())
+                .sorted(java.util.Comparator.comparingInt(EbookChapter::getChapterNumber))
+                .map(c -> new PublicProductResponse.Chapter(c.getChapterNumber(), c.getTitle().trim()))
+                .toList();
+        List<String> highlights = product.getHighlights() == null ? List.of()
+                : product.getHighlights().lines().map(String::trim).filter(l -> !l.isEmpty()).limit(12).toList();
+        return new PublicProductResponse(profile(store), product.getId(), product.getTitle(),
+                ebook != null ? blankToNull(ebook.getSubtitle()) : null, product.getDescription(), highlights,
+                product.getPriceCents(), product.getCurrency(), pageCount(ebook),
+                ebook != null ? blankToNull(ebook.getLanguage()) : null,
+                ebook != null ? ebook.getUpdatedAt() : null, coverUrl(product, ebook), chapters,
+                moreFrom(store, product.getId()));
+    }
+
+    /** Other active ebooks of a store, for "More from …". */
+    @Transactional(readOnly = true)
+    public List<PublicStoreResponse.Product> moreFrom(Store store, UUID exceptProductId) {
+        if (!store.isPublished()) {
+            return List.of();
+        }
+        return productRepository.findByStoreIdAndActiveTrueOrderBySortOrderAscCreatedAtAsc(store.getId()).stream()
+                .filter(p -> !p.getId().equals(exceptProductId))
+                .map(this::toPublicProduct)
+                .toList();
+    }
+
+    public StoreProfile profile(Store store) {
+        String reason = unavailableReason(store);
+        return new StoreProfile(store.getSlug(), store.getName(), store.getDescription(), store.getHeadline(),
+                store.getAuthorName(), store.getContactEmail(), store.getInstagramUrl(), store.getTiktokUrl(),
+                store.getWebsiteUrl(), StoreImageService.url(store, StoreImageService.Kind.LOGO),
+                StoreImageService.url(store, StoreImageService.Kind.PHOTO), reason == null, reason);
+    }
+
+    private PublicStoreResponse.Product toPublicProduct(StoreProduct p) {
+        Ebook ebook = ebookRepository.findById(p.getEbookId()).orElse(null);
+        return new PublicStoreResponse.Product(p.getId(), p.getTitle(),
+                ebook != null ? blankToNull(ebook.getSubtitle()) : null, p.getDescription(),
+                p.getPriceCents(), p.getCurrency(), pageCount(ebook),
+                ebook != null ? blankToNull(ebook.getLanguage()) : null, coverUrl(p, ebook));
+    }
+
+    static String coverUrl(StoreProduct product, Ebook ebook) {
+        return "/api/public/products/" + product.getId() + "/cover?v="
+                + (ebook != null ? ProductCoverService.version(ebook) : "0");
+    }
+
+    private static int pageCount(Ebook ebook) {
+        return ebook == null ? 0 : Math.max(0, ebook.getActualPageCount());
+    }
+
+    private Store requirePublished(String slug) {
+        return storeRepository.findBySlug(slug)
                 .filter(Store::isPublished)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Store not found"));
-        String reason = unavailableReason(store);
-        List<PublicStoreResponse.Product> products = productRepository
-                .findByStoreIdAndActiveTrueOrderByCreatedAtAsc(store.getId()).stream()
-                .map(p -> new PublicStoreResponse.Product(p.getId(), p.getTitle(), p.getDescription(),
-                        p.getPriceCents(), p.getCurrency()))
-                .toList();
-        return new PublicStoreResponse(store.getSlug(), store.getName(), store.getDescription(),
-                reason == null, reason, products);
     }
 
     /**
@@ -263,9 +363,18 @@ public class StoreService {
     }
 
     private StoreDashboardResponse toDashboard(Store store) {
-        List<StoreProductDTO> products = productRepository.findByStoreIdOrderByCreatedAtAsc(store.getId())
-                .stream().map(StoreProductDTO::from).toList();
+        List<StoreProductDTO> products = productRepository.findByStoreIdOrderBySortOrderAscCreatedAtAsc(store.getId())
+                .stream().map(p -> {
+                    Ebook ebook = ebookRepository.findById(p.getEbookId()).orElse(null);
+                    return new StoreProductDTO(p.getId(), p.getEbookId(), p.getTitle(), p.getDescription(),
+                            p.getHighlights(), p.getPriceCents(), p.getCurrency(), p.isActive(), p.getSortOrder(),
+                            pageCount(ebook), coverUrl(p, ebook));
+                }).toList();
         return new StoreDashboardResponse(store.getId(), store.getSlug(), store.getName(), store.getDescription(),
+                store.getHeadline(), store.getAuthorName(), store.getContactEmail(), store.getInstagramUrl(),
+                store.getTiktokUrl(), store.getWebsiteUrl(),
+                StoreImageService.url(store, StoreImageService.Kind.LOGO),
+                StoreImageService.url(store, StoreImageService.Kind.PHOTO),
                 store.isPublished(), subscriptionService.isPro(store.getOwnerId()), stripeStatus(store), products);
     }
 
