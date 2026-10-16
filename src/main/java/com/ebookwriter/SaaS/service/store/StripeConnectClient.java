@@ -135,6 +135,11 @@ public class StripeConnectClient implements StripeConnectGateway {
                         || "past_due".equals(e.getMinimumDeadline().getStatus())))
                 .map(e -> e.getDescription() != null ? e.getDescription() : "requirement")
                 .toList();
+        if (!"active".equals(cardStatus)) {
+            // Why it isn't ready yet: e.g. "pending" with entries awaiting "stripe" = Stripe still verifying.
+            log.info("[StripeConnect] Account {} card_payments={} requirements awaiting user={} other={}",
+                    account.getId(), cardStatus, onUser.size(), entries.size() - onUser.size());
+        }
         return new AccountState(account.getId(), "active".equals(cardStatus), onUser.isEmpty(), due);
     }
 

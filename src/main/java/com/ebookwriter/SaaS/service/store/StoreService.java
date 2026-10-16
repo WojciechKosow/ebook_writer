@@ -379,12 +379,13 @@ public class StoreService {
     }
 
     static StripeStatusDTO stripeStatus(Store store) {
-        StripeConnectState state = store.getStripeAccountId() == null ? StripeConnectState.NOT_CONNECTED
-                : store.isChargesEnabled() ? StripeConnectState.READY
-                : StripeConnectState.ACTION_REQUIRED;
         List<String> due = store.getRequirementsCurrentlyDue() == null || store.getRequirementsCurrentlyDue().isBlank()
                 ? List.of()
                 : Arrays.asList(store.getRequirementsCurrentlyDue().split(","));
+        StripeConnectState state = store.getStripeAccountId() == null ? StripeConnectState.NOT_CONNECTED
+                : store.isChargesEnabled() ? StripeConnectState.READY
+                : store.isDetailsSubmitted() && due.isEmpty() ? StripeConnectState.PENDING_VERIFICATION
+                : StripeConnectState.ACTION_REQUIRED;
         return new StripeStatusDTO(state, store.isChargesEnabled(), store.isDetailsSubmitted(), due,
                 store.getStripeSyncedAt());
     }

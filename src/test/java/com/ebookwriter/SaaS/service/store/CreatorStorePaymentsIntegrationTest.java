@@ -411,6 +411,19 @@ class CreatorStorePaymentsIntegrationTest {
     }
 
     @Test
+    void submittedButNotYetActiveIsPendingVerification() throws Exception {
+        store.setChargesEnabled(false);
+        storeRepository.save(store);
+        when(stripe.retrieveAccount(account)).thenReturn(
+                new StripeConnectGateway.AccountState(account, false, true, List.of()));
+
+        mvc.perform(post("/api/store/stripe/sync").with(asAuthor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stripe.state").value("PENDING_VERIFICATION"))
+                .andExpect(jsonPath("$.stripe.chargesEnabled").value(false));
+    }
+
+    @Test
     void connectCreatesTheAccountOnceAndReturnsAFreshLink() throws Exception {
         store.setStripeAccountId(null);
         store.setChargesEnabled(false);
