@@ -42,8 +42,36 @@ public class Store {
     @Column(nullable = false, length = 80)
     private String name;
 
+    /** The "about the author" text shown on the store. */
     @Column(columnDefinition = "TEXT")
     private String description;
+
+    /** Hero line: what readers get ("Bake bread you're proud of…"). */
+    @Column(length = 160)
+    private String headline;
+
+    /** The author's name as buyers see it ("by Jane Morrow"). */
+    @Column(length = 80)
+    private String authorName;
+
+    /** Public contact address for buyers (questions, refunds). */
+    @Column(length = 254)
+    private String contactEmail;
+
+    @Column(length = 500)
+    private String instagramUrl;
+
+    @Column(length = 500)
+    private String tiktokUrl;
+
+    @Column(length = 500)
+    private String websiteUrl;
+
+    /** Private R2 keys of the store's logo / author photo (served via the public API). */
+    private String logoKey;
+    private String logoContentType;
+    private String photoKey;
+    private String photoContentType;
 
     private boolean published;
 

@@ -42,6 +42,7 @@ public class DownloadGrantService {
     private final StoreRepository storeRepository;
     private final EbookRepository ebookRepository;
     private final EbookPdfRepository pdfRepository;
+    private final StoreService storeService;
 
     /** Create the grant for a just-paid order. Returns the raw token (to email; never stored). */
     @Transactional
@@ -75,9 +76,18 @@ public class DownloadGrantService {
         DownloadGrant grant = requireUsable(token);
         StoreOrder order = orderRepository.findById(grant.getOrderId()).orElseThrow(this::notFound);
         StoreProduct product = productRepository.findById(order.getProductId()).orElseThrow(this::notFound);
-        String storeName = storeRepository.findById(order.getStoreId()).map(Store::getName).orElse(null);
-        return new DownloadInfoResponse(product.getTitle(), storeName,
-                grant.getMaxDownloads() - grant.getDownloadsUsed(), grant.getExpiresAt());
+        Store store = storeRepository.findById(order.getStoreId()).orElse(null);
+        Ebook ebook = ebookRepository.findById(product.getEbookId()).orElse(null);
+        long size = pdfRepository.findById(product.getEbookId()).map(p -> (long) p.getData().length).orElse(0L);
+        return new DownloadInfoResponse(product.getTitle(),
+                store != null ? store.getName() : null,
+                store != null ? store.getSlug() : null,
+                store != null ? store.getAuthorName() : null,
+                store != null ? store.getContactEmail() : null,
+                store != null ? StoreImageService.url(store, StoreImageService.Kind.LOGO) : null,
+                StoreService.coverUrl(product, ebook), size,
+                grant.getMaxDownloads() - grant.getDownloadsUsed(), grant.getExpiresAt(),
+                store != null ? storeService.moreFrom(store, product.getId()) : java.util.List.of());
     }
 
     /** Consume one download and return the file. */

@@ -9,6 +9,15 @@ public record StoreDashboardResponse(
         String slug,
         String name,
         String description,
+        String headline,
+        String authorName,
+        String contactEmail,
+        String instagramUrl,
+        String tiktokUrl,
+        String websiteUrl,
+        /** Relative API paths, or null when not uploaded. */
+        String logoUrl,
+        String photoUrl,
         boolean published,
         /** Whether the author has Scrivetta PRO (required to publish and to sell). */
         boolean pro,

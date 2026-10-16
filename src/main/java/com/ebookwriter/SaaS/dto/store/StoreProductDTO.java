@@ -1,7 +1,5 @@
 package com.ebookwriter.SaaS.dto.store;
 
-import com.ebookwriter.SaaS.entity.StoreProduct;
-
 import java.util.UUID;
 
 public record StoreProductDTO(
@@ -9,12 +7,14 @@ public record StoreProductDTO(
         UUID ebookId,
         String title,
         String description,
+        String highlights,
         long priceCents,
         String currency,
-        boolean active
+        boolean active,
+        int sortOrder,
+        /** Pages of the finished PDF (0 if unknown). */
+        int pageCount,
+        /** Relative API path of the cover image (first page of the PDF). */
+        String coverUrl
 ) {
-    public static StoreProductDTO from(StoreProduct p) {
-        return new StoreProductDTO(p.getId(), p.getEbookId(), p.getTitle(), p.getDescription(),
-                p.getPriceCents(), p.getCurrency(), p.isActive());
-    }
 }

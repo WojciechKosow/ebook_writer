@@ -4,12 +4,17 @@ import com.ebookwriter.SaaS.dto.store.StoreDashboardResponse;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.request.*;
 import com.ebookwriter.SaaS.security.CurrentUserService;
+import com.ebookwriter.SaaS.service.store.StoreImageService;
 import com.ebookwriter.SaaS.service.store.StoreService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
 import java.util.UUID;
@@ -24,6 +29,7 @@ import java.util.UUID;
 public class StoreController {
 
     private final StoreService storeService;
+    private final StoreImageService imageService;
     private final CurrentUserService currentUserService;
 
     /** 204 when the author has no store yet. */
@@ -63,6 +69,37 @@ public class StoreController {
     public StoreDashboardResponse updateProduct(Authentication authentication, @PathVariable UUID productId,
                                                 @Valid @RequestBody StoreProductUpdateRequest request) {
         return storeService.updateProduct(currentUserService.require(authentication), productId, request);
+    }
+
+    @PostMapping("/products/{productId}/move")
+    public StoreDashboardResponse moveProduct(Authentication authentication, @PathVariable UUID productId,
+                                              @Valid @RequestBody StoreProductMoveRequest request) {
+        return storeService.moveProduct(currentUserService.require(authentication), productId,
+                "up".equals(request.direction()));
+    }
+
+    /** Upload the store logo or author photo ({@code kind} = logo | photo). */
+    @PostMapping(value = "/images/{kind}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public StoreDashboardResponse uploadImage(Authentication authentication, @PathVariable String kind,
+                                              @RequestParam("file") MultipartFile file) {
+        User user = currentUserService.require(authentication);
+        imageService.upload(user, kind(kind), file);
+        return storeService.getOwn(user).orElseThrow();
+    }
+
+    @DeleteMapping("/images/{kind}")
+    public StoreDashboardResponse removeImage(Authentication authentication, @PathVariable String kind) {
+        User user = currentUserService.require(authentication);
+        imageService.remove(user, kind(kind));
+        return storeService.getOwn(user).orElseThrow();
+    }
+
+    static StoreImageService.Kind kind(String kind) {
+        return switch (kind) {
+            case "logo" -> StoreImageService.Kind.LOGO;
+            case "photo" -> StoreImageService.Kind.PHOTO;
+            default -> throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown image");
+        };
     }
 
     /** "Connect Stripe" / "Continue in Stripe": returns a fresh Stripe-hosted onboarding link. */

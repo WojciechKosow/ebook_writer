@@ -4,18 +4,15 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * A published store as buyers see it. {@code purchasable} is false with an
- * honest {@code unavailableReason} when the store can't take payments right now;
- * checkout re-checks everything server-side regardless.
+ * A published store as buyers see it. Checkout re-checks everything
+ * server-side regardless of {@code store.purchasable}.
  */
 public record PublicStoreResponse(
-        String slug,
-        String name,
-        String description,
-        boolean purchasable,
-        String unavailableReason,
+        StoreProfile store,
         List<Product> products
 ) {
-    public record Product(UUID id, String title, String description, long priceCents, String currency) {
+    public record Product(UUID id, String title, String subtitle, String description,
+                          long priceCents, String currency, int pageCount, String language,
+                          String coverUrl) {
     }
 }
