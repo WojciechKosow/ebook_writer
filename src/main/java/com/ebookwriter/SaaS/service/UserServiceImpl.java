@@ -4,10 +4,12 @@ import com.ebookwriter.SaaS.dto.UserDTO;
 import com.ebookwriter.SaaS.entity.CreditBalance;
 import com.ebookwriter.SaaS.entity.TokenType;
 import com.ebookwriter.SaaS.entity.User;
+import com.ebookwriter.SaaS.entity.UserSubscription;
 import com.ebookwriter.SaaS.entity.UserToken;
 import com.ebookwriter.SaaS.exceptions.EmailAlreadyExistsException;
 import com.ebookwriter.SaaS.repository.CreditBalanceRepository;
 import com.ebookwriter.SaaS.repository.UserRepository;
+import com.ebookwriter.SaaS.repository.UserSubscriptionRepository;
 import com.ebookwriter.SaaS.repository.UserTokenRepository;
 import com.ebookwriter.SaaS.request.LoginRequest;
 import com.ebookwriter.SaaS.request.PasswordResetRequest;
@@ -45,6 +47,10 @@ public class UserServiceImpl implements UserService {
     private final RequestContextUtil requestContextUtil;
     private final RefreshTokenService refreshTokenService;
     private final CreditBalanceRepository creditBalanceRepository;
+    private final UserSubscriptionRepository userSubscriptionRepository;
+
+    /** Placeholder id of the test PRO subscription (not a real Stripe subscription). */
+    private static final String TEST_PRO_SUBSCRIPTION_ID = "sub_manual_test";
 
     @Override
     public AuthResponse register(RegisterRequest request) {
@@ -136,6 +142,18 @@ public class UserServiceImpl implements UserService {
                                     .build()));
             creditBalance.setBalance(1000);
             creditBalanceRepository.save(creditBalance);
+
+            // Test PRO for the creator store (publishing/selling require PRO).
+            // Never overwrites a real Stripe subscription.
+            UserSubscription subscription = userSubscriptionRepository.findById(user.getId())
+                    .orElseGet(() -> UserSubscription.builder().userId(user.getId()).build());
+            String subscriptionId = subscription.getStripeSubscriptionId();
+            if (subscriptionId == null || subscriptionId.isBlank() || TEST_PRO_SUBSCRIPTION_ID.equals(subscriptionId)) {
+                subscription.setStripeSubscriptionId(TEST_PRO_SUBSCRIPTION_ID);
+                subscription.setStatus("active");
+                subscription.setCancelAtPeriodEnd(false);
+                userSubscriptionRepository.save(subscription);
+            }
         }
 
         String accessToken = jwtProvider.generateToken(user.getEmail(), request.isRememberMe());
