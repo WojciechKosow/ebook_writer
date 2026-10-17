@@ -23,7 +23,7 @@ public record StoreDashboardResponse(
         boolean pro,
         StripeStatusDTO stripe,
         List<StoreProductDTO> products,
-        /** The store page design (JSON), null for the classic look. */
+        /** The store page design (JSON), null for the default (Scrivetta) style. */
         String themeSettings,
         /** Chapters of the first active ebook, so the design editor previews what buyers see. */
         List<PublicProductResponse.Chapter> featuredChapters

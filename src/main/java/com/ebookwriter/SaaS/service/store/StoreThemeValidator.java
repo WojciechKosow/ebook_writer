@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
  */
 public final class StoreThemeValidator {
 
-    public static final Set<String> STYLES = Set.of("classic", "literary", "code", "minimal", "modern", "bold");
+    public static final Set<String> STYLES = Set.of("literary", "code", "minimal", "modern", "bold");
     static final int MAX_CSS_LENGTH = 20_000;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -30,7 +30,7 @@ public final class StoreThemeValidator {
     private StoreThemeValidator() {
     }
 
-    /** The document to store, or null for the classic look. */
+    /** The document to store, or null for the default (Scrivetta) style. */
     public static String validate(String settings) {
         if (settings == null || settings.isBlank()) {
             return null;

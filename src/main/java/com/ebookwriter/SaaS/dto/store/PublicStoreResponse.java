@@ -10,7 +10,7 @@ import java.util.UUID;
 public record PublicStoreResponse(
         StoreProfile store,
         List<Product> products,
-        /** The store page design (JSON), null for the classic look. */
+        /** The store page design (JSON), null for the default (Scrivetta) style. */
         String themeSettings,
         /** Chapters of the first (featured) ebook, for designs that show its contents. */
         List<PublicProductResponse.Chapter> featuredChapters
