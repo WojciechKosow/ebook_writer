@@ -120,6 +120,46 @@ class StoreProfileAndPagesIntegrationTest {
     }
 
     @Test
+    void designIsSavedAndShownOnThePublicStore() throws Exception {
+        String design = "{\"v\":1,\"active\":\"code\",\"themes\":{\"code\":{\"accent\":\"#8AB4FF\","
+                + "\"customCss\":\".hero h1 { letter-spacing: -0.05em; }\"}}}";
+        mvc.perform(put("/api/store/theme").with(asAuthor()).contentType(MediaType.APPLICATION_JSON)
+                        .content(new com.fasterxml.jackson.databind.ObjectMapper()
+                                .writeValueAsString(java.util.Map.of("settings", design))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.themeSettings").value(design))
+                .andExpect(jsonPath("$.featuredChapters[0].title").value("Making a starter"));
+
+        mvc.perform(get("/api/public/stores/" + store.getSlug()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.themeSettings").value(design))
+                .andExpect(jsonPath("$.featuredChapters[0].title").value("Making a starter"))
+                .andExpect(jsonPath("$.featuredChapters[1].title").value("Reading the dough"));
+
+        mvc.perform(put("/api/store/theme").with(asAuthor()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"settings\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.themeSettings").doesNotExist());
+    }
+
+    @Test
+    void designMustBeAKnownStyleWithSafeCss() throws Exception {
+        for (String design : java.util.List.of(
+                "not json",
+                "[1,2]",
+                "{\"active\":\"neon\"}",
+                "{\"active\":\"bold\",\"themes\":{\"bold\":{\"customCss\":\"body{background:url(https://evil.example/x)}\"}}}",
+                "{\"active\":\"bold\",\"themes\":{\"bold\":{\"customCss\":\"@import 'https://evil.example/x.css';\"}}}",
+                "{\"active\":\"bold\",\"themes\":{\"bold\":{\"customCss\":\"</style><script>alert(1)</script>\"}}}",
+                "{\"active\":\"bold\",\"themes\":{\"bold\":{\"customCss\":\"a{b:\\\\75 rl(x)}\"}}}")) {
+            mvc.perform(put("/api/store/theme").with(asAuthor()).contentType(MediaType.APPLICATION_JSON)
+                            .content(new com.fasterxml.jackson.databind.ObjectMapper()
+                                    .writeValueAsString(java.util.Map.of("settings", design))))
+                    .andExpect(status().isBadRequest());
+        }
+    }
+
+    @Test
     void linksMustBeHttps() throws Exception {
         mvc.perform(put("/api/store").with(asAuthor()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"X\",\"instagramUrl\":\"javascript:alert(1)\"}"))

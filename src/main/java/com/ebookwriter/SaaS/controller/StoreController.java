@@ -49,6 +49,12 @@ public class StoreController {
         return storeService.update(currentUserService.require(authentication), request);
     }
 
+    /** Save the store page design (style, texts, colors, custom CSS). */
+    @PutMapping("/theme")
+    public StoreDashboardResponse updateTheme(Authentication authentication, @Valid @RequestBody StoreThemeRequest request) {
+        return storeService.updateTheme(currentUserService.require(authentication), request.settings());
+    }
+
     @PostMapping("/publish")
     public StoreDashboardResponse publish(Authentication authentication) {
         return storeService.setPublished(currentUserService.require(authentication), true);

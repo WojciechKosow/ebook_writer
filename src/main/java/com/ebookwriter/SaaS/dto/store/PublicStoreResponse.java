@@ -9,7 +9,11 @@ import java.util.UUID;
  */
 public record PublicStoreResponse(
         StoreProfile store,
-        List<Product> products
+        List<Product> products,
+        /** The store page design (JSON), null for the classic look. */
+        String themeSettings,
+        /** Chapters of the first (featured) ebook, for designs that show its contents. */
+        List<PublicProductResponse.Chapter> featuredChapters
 ) {
     public record Product(UUID id, String title, String subtitle, String description,
                           long priceCents, String currency, int pageCount, String language,
