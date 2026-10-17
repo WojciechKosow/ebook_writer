@@ -7,12 +7,30 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.HtmlUtils;
 
+import java.time.Year;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
 @Service
 public class MailServiceImpl implements MailService {
+
+    // Scrivetta "Ink & Paper" palette (mirrors the frontend's --ip-* tokens).
+    private static final String BG = "#f3efe6";
+    private static final String CARD = "#fffdf8";
+    private static final String INK = "#1b1814";
+    private static final String INK_2 = "#4b453c";
+    private static final String MUTED = "#6b6357";
+    private static final String HAIR = "#e4dccd";
+    private static final String ACCENT = "#3a2f95";
+    private static final String BRASS = "#8a5c1f";
+    private static final String DETAILS_BG = "#fbf9f4";
+
+    private static final String SERIF = "Georgia, 'Times New Roman', Times, serif";
+    private static final String SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
     private final WebClient postmarkWebClient;
 
@@ -29,17 +47,30 @@ public class MailServiceImpl implements MailService {
         this.postmarkWebClient = postmarkWebClient;
     }
 
-    private void send(String to, String subject, String content) {
+    /** One labelled row in an email's summary box (e.g. "Ebook" → title). Values are plain text. */
+    private record Detail(String label, String value) {
+    }
+
+    /** Everything one transactional email shows; body and note may contain trusted inline HTML. */
+    private record Email(String preheader, String heading, String bodyHtml, List<Detail> details,
+                         String buttonLabel, String url, String noteHtml) {
+    }
+
+    private void send(String to, String subject, Email email) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("From", appName + " <" + mailFrom + ">");
+        payload.put("To", to);
+        payload.put("Subject", subject);
+        payload.put("HtmlBody", renderHtml(email));
+        // A plain-text part improves deliverability and serves text-only clients.
+        payload.put("TextBody", renderText(email));
+        payload.put("MessageStream", "outbound");
+        // Transactional links must reach the user unchanged — no click-tracking redirects.
+        payload.put("TrackLinks", "None");
         try {
             postmarkWebClient.post()
                     .uri("/email")
-                    .bodyValue(Map.of(
-                            "From", appName + " <" + mailFrom + ">",
-                            "To", to,
-                            "Subject", subject,
-                            "HtmlBody", content,
-                            "MessageStream", "outbound"
-                    ))
+                    .bodyValue(payload)
                     .retrieve()
                     .toBodilessEntity()
                     .block();
@@ -57,88 +88,188 @@ public class MailServiceImpl implements MailService {
 
     @Override
     public void sendVerificationEmail(String to, UUID tokenId, String token) {
-        String subject = "Verify your email to activate your account";
-        String confirmationUrl = frontendUrl + "/verify?tokenId=" + tokenId + "&token=" + token;
-        String content = emailTemplate(
+        String subject = "Confirm your email for " + appName;
+        String confirmationUrl = baseUrl() + "/verify?tokenId=" + tokenId + "&token=" + token;
+        send(to, subject, new Email(
+                "One click to activate your " + appName + " account.",
                 "Confirm your email",
-                "Thanks for signing up for <strong>" + appName + "</strong>.<br>"
-                        + "Before you get started, we just need to confirm your email address.",
-                "Verify Email",
+                "Thanks for signing up for <strong>" + esc(appName) + "</strong>. "
+                        + "Before you get started, please confirm that this is your email address.",
+                List.of(),
+                "Confirm email address",
                 confirmationUrl,
                 "If you didn't create an account, you can safely ignore this email."
-        );
-        send(to, subject, content);
+        ));
     }
 
     @Override
     public void sendPasswordResetEmail(String to, UUID tokenId, String token) {
-        String subject = "Reset your password";
-        String passwordResetUrl = frontendUrl + "/reset-password?tokenId=" + tokenId + "&token=" + token;
-        String content = emailTemplate(
+        String subject = "Reset your " + appName + " password";
+        String passwordResetUrl = baseUrl() + "/reset-password?tokenId=" + tokenId + "&token=" + token;
+        send(to, subject, new Email(
+                "Use this link to choose a new password.",
                 "Reset your password",
-                "We received a request to reset the password for your <strong>" + appName + "</strong> account.<br>"
-                        + "If you made this request, click the button below to set a new password.",
-                "Reset Password",
+                "We received a request to reset the password for your <strong>" + esc(appName) + "</strong> account. "
+                        + "Click the button below to choose a new one.",
+                List.of(),
+                "Choose a new password",
                 passwordResetUrl,
-                "If you didn't request a password reset, you can safely ignore this email."
-        );
-        send(to, subject, content);
+                "If you didn't request a password reset, you can safely ignore this email — your password won't change."
+        ));
     }
 
     @Override
     public void sendStorePurchaseEmail(String to, String productTitle, String storeName, String downloadUrl) {
-        String title = HtmlUtils.htmlEscape(productTitle != null ? productTitle : "your ebook");
-        String seller = storeName != null && !storeName.isBlank()
-                ? " from <strong>" + HtmlUtils.htmlEscape(storeName) + "</strong>" : "";
-        String subject = "Your download: " + (productTitle != null ? productTitle : "your ebook");
-        String content = emailTemplate(
-                "Thanks for your purchase",
-                "Your payment for <strong>" + title + "</strong>" + seller + " is confirmed.<br>"
-                        + "Use the button below to download your ebook. The link works for 30 days "
-                        + "and up to 5 downloads, so save the file somewhere safe.",
+        String title = productTitle != null && !productTitle.isBlank() ? productTitle : "your ebook";
+        boolean hasSeller = storeName != null && !storeName.isBlank();
+        String subject = "Your ebook is ready: " + title;
+
+        List<Detail> details = new ArrayList<>();
+        details.add(new Detail("Ebook", title));
+        if (hasSeller) {
+            details.add(new Detail("Sold by", storeName));
+        }
+        details.add(new Detail("Link valid for", "30 days"));
+        details.add(new Detail("Downloads", "Up to 5"));
+
+        send(to, subject, new Email(
+                "Your payment is confirmed — download " + title + " now.",
+                "Thank you for your purchase",
+                "Your payment is confirmed and your copy of <strong>" + esc(title) + "</strong> is ready. "
+                        + "Download it now and keep the file somewhere safe.",
+                details,
                 "Download your ebook",
                 downloadUrl,
-                "Keep this link private — anyone with it can download your copy."
-        );
-        send(to, subject, content);
+                "This link is personal — anyone who has it can download your copy, so please don't share it."
+        ));
     }
 
-    private String emailTemplate(String heading, String body, String buttonLabel, String url, String footerNote) {
+    private String baseUrl() {
+        return frontendUrl.replaceAll("/+$", "");
+    }
+
+    private static String esc(String s) {
+        return HtmlUtils.htmlEscape(s);
+    }
+
+    private String renderHtml(Email email) {
+        String url = esc(email.url());
+        StringBuilder details = new StringBuilder();
+        if (!email.details().isEmpty()) {
+            details.append("""
+                    <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0"
+                           style="margin:28px 0 4px;background:%s;border:1px solid %s;border-radius:10px;">
+                    """.formatted(DETAILS_BG, HAIR));
+            for (int i = 0; i < email.details().size(); i++) {
+                Detail d = email.details().get(i);
+                String border = i == 0 ? "" : "border-top:1px solid " + HAIR + ";";
+                details.append("""
+                        <tr>
+                          <td style="padding:12px 18px;%sfont-family:%s;font-size:13px;color:%s;white-space:nowrap;vertical-align:top;">%s</td>
+                          <td style="padding:12px 18px;%sfont-family:%s;font-size:14px;color:%s;font-weight:600;text-align:right;">%s</td>
+                        </tr>
+                        """.formatted(border, SANS, MUTED, esc(d.label()), border, SANS, INK, esc(d.value())));
+            }
+            details.append("</table>");
+        }
+
         return """
-                <div style="font-family: Arial, sans-serif; background-color: #f5f6fa; padding: 40px;">
-                    <table align="center" width="600" style="background: #ffffff; border-radius: 8px; padding: 40px;">
-                        <tr>
-                            <td style="font-size: 20px; font-weight: bold; color: #333333; text-align: center; padding-bottom: 16px;">
-                                %s
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1">
+                  <meta name="x-apple-disable-message-reformatting">
+                  <meta name="color-scheme" content="light">
+                  <meta name="supported-color-schemes" content="light">
+                  <title>%1$s</title>
+                  <style>
+                    @media only screen and (max-width: 620px) {
+                      .sv-card { padding: 32px 24px !important; }
+                      .sv-outer { padding: 24px 12px !important; }
+                    }
+                  </style>
+                </head>
+                <body style="margin:0;padding:0;background:%2$s;-webkit-text-size-adjust:100%%;">
+                  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;mso-hide:all;">%3$s&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;&#8199;&#847;</div>
+                  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="background:%2$s;">
+                    <tr>
+                      <td align="center" class="sv-outer" style="padding:40px 16px;">
+                        <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+                          <tr>
+                            <td align="center" style="padding:0 0 24px;font-family:%4$s;font-size:26px;letter-spacing:0.5px;color:%5$s;">
+                              <a href="%6$s" style="color:%5$s;text-decoration:none;">%7$s</a>
                             </td>
-                        </tr>
-                        <tr>
-                            <td style="font-size: 15px; color: #555555; text-align: center;">
-                                %s
+                          </tr>
+                          <tr>
+                            <td class="sv-card" style="background:%8$s;border:1px solid %9$s;border-radius:14px;padding:44px 48px;">
+                              <div style="height:3px;width:40px;background:%10$s;border-radius:2px;margin:0 0 24px;"></div>
+                              <h1 style="margin:0 0 16px;font-family:%4$s;font-size:26px;line-height:1.25;font-weight:normal;color:%11$s;">%1$s</h1>
+                              <p style="margin:0;font-family:%12$s;font-size:16px;line-height:1.6;color:%13$s;">%14$s</p>
+                              %15$s
+                              <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:32px 0 0;">
+                                <tr>
+                                  <td align="center" bgcolor="%5$s" style="border-radius:8px;">
+                                    <a href="%16$s" target="_blank"
+                                       style="display:inline-block;padding:14px 30px;font-family:%12$s;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">%17$s</a>
+                                  </td>
+                                </tr>
+                              </table>
+                              <p style="margin:32px 0 0;padding-top:24px;border-top:1px solid %9$s;font-family:%12$s;font-size:13px;line-height:1.6;color:%18$s;">
+                                Button not working? Copy this link into your browser:<br>
+                                <a href="%16$s" style="color:%5$s;word-break:break-all;">%16$s</a>
+                              </p>
+                              <p style="margin:16px 0 0;font-family:%12$s;font-size:13px;line-height:1.6;color:%18$s;">%19$s</p>
                             </td>
-                        </tr>
-                        <tr>
-                            <td style="text-align: center; padding: 30px 0;">
-                                <a href="%s"
-                                   style="background-color: #4CAF50; color: white; padding: 14px 28px;
-                                          text-decoration: none; border-radius: 6px; font-size: 16px;">
-                                    %s
-                                </a>
+                          </tr>
+                          <tr>
+                            <td align="center" style="padding:24px 16px 0;font-family:%12$s;font-size:12px;line-height:1.6;color:%18$s;">
+                              Sent by <a href="%6$s" style="color:%18$s;text-decoration:underline;">%7$s</a> &middot; &copy; %20$s %7$s
                             </td>
-                        </tr>
-                        <tr>
-                            <td style="font-size: 13px; color: #777777; text-align: center; padding-top: 20px;">
-                                If the button doesn't work, copy and paste this link into your browser:<br>
-                                <a href="%s" style="color: #4CAF50;">%s</a>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td style="font-size: 12px; color: #aaaaaa; text-align: center; padding-top: 40px;">
-                                %s
-                            </td>
-                        </tr>
-                    </table>
-                </div>
-                """.formatted(heading, body, url, buttonLabel, url, url, footerNote);
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+                </body>
+                </html>
+                """.formatted(
+                esc(email.heading()),       // 1
+                BG,                          // 2
+                esc(email.preheader()),     // 3
+                SERIF,                       // 4
+                ACCENT,                      // 5
+                esc(baseUrl()),             // 6
+                esc(appName),               // 7
+                CARD,                        // 8
+                HAIR,                        // 9
+                BRASS,                       // 10
+                INK,                         // 11
+                SANS,                        // 12
+                INK_2,                       // 13
+                email.bodyHtml(),            // 14
+                details,                     // 15
+                url,                         // 16
+                esc(email.buttonLabel()),   // 17
+                MUTED,                       // 18
+                email.noteHtml(),            // 19
+                Year.now().getValue()        // 20
+        );
+    }
+
+    private String renderText(Email email) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(email.heading()).append("\n\n");
+        sb.append(HtmlUtils.htmlUnescape(email.bodyHtml().replaceAll("<[^>]+>", ""))).append("\n\n");
+        for (Detail d : email.details()) {
+            sb.append(d.label()).append(": ").append(d.value()).append("\n");
+        }
+        if (!email.details().isEmpty()) {
+            sb.append("\n");
+        }
+        sb.append(email.buttonLabel()).append(":\n").append(email.url()).append("\n\n");
+        sb.append(HtmlUtils.htmlUnescape(email.noteHtml().replaceAll("<[^>]+>", ""))).append("\n\n");
+        sb.append("— ").append(appName).append("\n").append(baseUrl()).append("\n");
+        return sb.toString();
     }
 }
