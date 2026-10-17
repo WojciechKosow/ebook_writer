@@ -93,6 +93,15 @@ public class StoreController {
         return storeService.getOwn(user).orElseThrow();
     }
 
+    /** Use an image from the asset library as the store logo or author photo. */
+    @PostMapping("/images/{kind}/from-library/{assetId}")
+    public StoreDashboardResponse useLibraryImage(Authentication authentication, @PathVariable String kind,
+                                                  @PathVariable UUID assetId) {
+        User user = currentUserService.require(authentication);
+        imageService.useFromLibrary(user, kind(kind), assetId);
+        return storeService.getOwn(user).orElseThrow();
+    }
+
     @DeleteMapping("/images/{kind}")
     public StoreDashboardResponse removeImage(Authentication authentication, @PathVariable String kind) {
         User user = currentUserService.require(authentication);

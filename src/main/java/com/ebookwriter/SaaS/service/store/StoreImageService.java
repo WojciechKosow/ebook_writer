@@ -4,6 +4,7 @@ import com.ebookwriter.SaaS.entity.Store;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.StoreRepository;
 import com.ebookwriter.SaaS.service.ebook.EbookImageService;
+import com.ebookwriter.SaaS.service.library.AssetLibraryService;
 import com.ebookwriter.SaaS.service.storage.R2StorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,7 +24,8 @@ import java.util.UUID;
  * The store's logo and author photo. Stored in the private R2 bucket and served
  * through the public store API. Only raster formats (PNG, JPEG, WebP) are
  * accepted — never SVG, which can carry script — and the type is taken from the
- * file's bytes, not the client.
+ * file's bytes, not the client. Uploads are kept in the user's asset library
+ * too, and a library image can be used here instead of uploading again.
  */
 @Slf4j
 @Service
@@ -38,6 +40,7 @@ public class StoreImageService {
 
     private final StoreRepository storeRepository;
     private final R2StorageService storage;
+    private final AssetLibraryService assetLibraryService;
 
     @Transactional
     public void upload(User user, Kind kind, MultipartFile file) {
@@ -48,6 +51,23 @@ public class StoreImageService {
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Could not read the file");
         }
+        String type = validate(bytes);
+        int[] dimensions = EbookImageService.readDimensions(bytes);
+        // Kept in the user's library too, for reuse in books and elsewhere.
+        assetLibraryService.remember(user.getId(), bytes, type,
+                EbookImageService.sanitizeFilename(file.getOriginalFilename()), dimensions[0], dimensions[1]);
+        replace(store, kind, bytes, type);
+    }
+
+    /** Use an image from the user's asset library (the store gets its own copy). */
+    @Transactional
+    public void useFromLibrary(User user, Kind kind, UUID libraryAssetId) {
+        Store store = requireOwn(user);
+        AssetLibraryService.Loaded loaded = assetLibraryService.use(user.getId(), libraryAssetId);
+        replace(store, kind, loaded.bytes(), validate(loaded.bytes()));
+    }
+
+    private static String validate(byte[] bytes) {
         if (bytes.length == 0 || bytes.length > MAX_BYTES) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Images can be up to 3 MB");
         }
@@ -55,6 +75,10 @@ public class StoreImageService {
         if (type == null || !ALLOWED.contains(type)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use a PNG, JPG or WebP image");
         }
+        return type;
+    }
+
+    private void replace(Store store, Kind kind, byte[] bytes, String type) {
         String key = "stores/" + store.getId() + "/" + kind.name().toLowerCase() + "-" + UUID.randomUUID()
                 + "." + EXT.get(type);
         storage.upload(key, bytes, type);

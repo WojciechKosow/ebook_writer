@@ -7,8 +7,10 @@ import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.entity.EbookImagePlacement;
 import com.ebookwriter.SaaS.entity.EbookImageRole;
 import com.ebookwriter.SaaS.entity.EbookStatus;
+import com.ebookwriter.SaaS.entity.LibraryAsset;
 import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.service.library.AssetLibraryService;
 import com.ebookwriter.SaaS.service.storage.R2StorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +39,9 @@ import java.util.UUID;
  * the cover changes on a book that has already finished generating, the PDF is
  * re-rendered (uncapped, free — like manual edits) so the download always
  * matches the book's current assets.
+ *
+ * <p>Uploads are also kept in the user's {@link AssetLibraryService library}, and
+ * a library image can be added to any book ({@link #addFromLibrary}).
  */
 @Slf4j
 @Service
@@ -63,32 +68,44 @@ public class EbookImageService {
     private final R2StorageService storage;
     private final PdfGenerationService pdfGenerationService;
     private final AssetUsageService assetUsageService;
+    private final AssetLibraryService assetLibraryService;
 
     @Transactional
     public EbookImageDTO upload(UUID ebookId, UUID userId, MultipartFile file, EbookImageRole role) {
         Ebook ebook = requireOwnedEbook(ebookId, userId);
-        byte[] bytes = readBytes(file);
+        byte[] bytes = readUpload(file);
+        String contentType = validateImage(bytes);
+        int[] dimensions = readDimensions(bytes);
+        String filename = sanitizeFilename(file.getOriginalFilename());
 
-        // Trust the bytes, not the client's declared type: sniff the real format
-        // and reject anything that isn't an accepted image.
-        String contentType = detectContentType(bytes);
-        if (contentType == null || !ALLOWED_CONTENT_TYPES.contains(contentType)) {
-            throw new IllegalArgumentException(
-                    "Unsupported or unrecognised image. Allowed: PNG, JPEG, WebP, GIF, SVG.");
-        }
-        if (bytes.length > MAX_IMAGE_BYTES) {
-            throw new IllegalArgumentException(
-                    "Image is too large (max " + (MAX_IMAGE_BYTES / (1024 * 1024)) + " MB)");
-        }
+        // Every upload also lands in the user's library, so it can be reused in
+        // other books (and the store) without uploading it again.
+        assetLibraryService.remember(userId, bytes, contentType, filename, dimensions[0], dimensions[1]);
+        return EbookImageDTO.from(store(ebook, bytes, contentType, filename, dimensions, role));
+    }
 
+    /**
+     * Add an image from the user's library to this book. The book gets its own
+     * copy of the bytes, so removing it from the library later (or the library
+     * expiring) never breaks the book.
+     */
+    @Transactional
+    public EbookImageDTO addFromLibrary(UUID ebookId, UUID userId, UUID libraryAssetId, EbookImageRole role) {
+        Ebook ebook = requireOwnedEbook(ebookId, userId);
+        AssetLibraryService.Loaded loaded = assetLibraryService.use(userId, libraryAssetId);
+        LibraryAsset source = loaded.asset();
+        return EbookImageDTO.from(store(ebook, loaded.bytes(), source.getContentType(),
+                source.getOriginalFilename(), new int[]{source.getWidth(), source.getHeight()}, role));
+    }
+
+    private EbookImage store(Ebook ebook, byte[] bytes, String contentType, String filename,
+                             int[] dimensions, EbookImageRole role) {
         // The R2 object key just needs to be unique — keep it independent of the
         // entity id, which is DB-generated on insert. (Presetting the @GeneratedValue
         // id would make Spring Data treat the entity as existing and issue an UPDATE
         // that matches no row, failing with a stale-state error.)
-        String key = objectKey(ebookId, UUID.randomUUID(), EXTENSIONS.get(contentType));
+        String key = objectKey(ebook.getId(), UUID.randomUUID(), EXTENSIONS.get(contentType));
         storage.upload(key, bytes, contentType);
-
-        int[] dimensions = readDimensions(bytes);
 
         EbookImage image = EbookImage.builder()
                 .ebook(ebook)
@@ -98,20 +115,20 @@ public class EbookImageService {
                 .role(role == null ? EbookImageRole.GENERAL : role)
                 .placement(EbookImagePlacement.UNUSED)
                 .contentType(contentType)
-                .originalFilename(sanitizeFilename(file.getOriginalFilename()))
+                .originalFilename(filename)
                 .sizeBytes(bytes.length)
                 .width(dimensions[0])
                 .height(dimensions[1])
                 .build();
         image = imageRepository.save(image);
 
-        // A freshly uploaded asset is unused (not the cover, not referenced in any
+        // A freshly added asset is unused (not the cover, not referenced in any
         // chapter), so it cannot change the rendered PDF — no re-render needed. It
         // becomes visible in the download once it is placed via a content save,
         // set as the cover, etc., each of which re-renders.
-        log.info("Uploaded asset {} for ebook {} ({}, {} KB)",
-                image.getId(), ebookId, contentType, bytes.length / 1024);
-        return EbookImageDTO.from(image);
+        log.info("Added asset {} to ebook {} ({}, {} KB)",
+                image.getId(), ebook.getId(), contentType, bytes.length / 1024);
+        return image;
     }
 
     @Transactional(readOnly = true)
@@ -266,7 +283,7 @@ public class EbookImageService {
         }
     }
 
-    private static byte[] readBytes(MultipartFile file) {
+    public static byte[] readUpload(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("No image file was provided");
         }
@@ -275,6 +292,23 @@ public class EbookImageService {
         } catch (IOException e) {
             throw new IllegalStateException("Could not read uploaded image: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Check uploaded bytes are an accepted image within the size limit and return
+     * its content type. Trusts the bytes, not the client's declared type.
+     */
+    public static String validateImage(byte[] bytes) {
+        String contentType = detectContentType(bytes);
+        if (contentType == null || !ALLOWED_CONTENT_TYPES.contains(contentType)) {
+            throw new IllegalArgumentException(
+                    "Unsupported or unrecognised image. Allowed: PNG, JPEG, WebP, GIF, SVG.");
+        }
+        if (bytes.length > MAX_IMAGE_BYTES) {
+            throw new IllegalArgumentException(
+                    "Image is too large (max " + (MAX_IMAGE_BYTES / (1024 * 1024)) + " MB)");
+        }
+        return contentType;
     }
 
     /**
@@ -315,7 +349,7 @@ public class EbookImageService {
     }
 
     /** Best-effort pixel dimensions; {@code [0, 0]} if they can't be read (e.g. SVG). */
-    private static int[] readDimensions(byte[] bytes) {
+    public static int[] readDimensions(byte[] bytes) {
         try {
             BufferedImage img = ImageIO.read(new ByteArrayInputStream(bytes));
             if (img != null) {
@@ -331,7 +365,7 @@ public class EbookImageService {
         return "ebooks/" + ebookId + "/images/" + imageId + "." + ext;
     }
 
-    private static String sanitizeFilename(String name) {
+    public static String sanitizeFilename(String name) {
         if (name == null || name.isBlank()) {
             return null;
         }

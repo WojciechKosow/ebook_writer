@@ -241,3 +241,9 @@ credits:
   # estimates and plans are capped at it, and the hold is
   # min(balance, this) + max-overdraft (trued up to the real page count).
   max-generation-budget: ${CREDITS_MAX_GENERATION_BUDGET:400}
+
+# Asset library: every uploaded image is kept once per user for reuse. PRO keeps
+# the library; without PRO an asset is purged this many hours after it was last
+# uploaded or used (upgrading before then keeps it).
+library:
+  free-retention-hours: ${LIBRARY_FREE_RETENTION_HOURS:24}
