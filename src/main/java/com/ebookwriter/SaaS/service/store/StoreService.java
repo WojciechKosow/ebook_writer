@@ -94,6 +94,17 @@ public class StoreService {
         return toDashboard(storeRepository.save(store));
     }
 
+    /**
+     * Save the store page design. Blank resets to the classic look. The document
+     * is opaque to the backend apart from {@link StoreThemeValidator}'s checks.
+     */
+    @Transactional
+    public StoreDashboardResponse updateTheme(User user, String settings) {
+        Store store = requireOwn(user);
+        store.setThemeSettings(StoreThemeValidator.validate(settings));
+        return toDashboard(storeRepository.save(store));
+    }
+
     /** Publishing requires Scrivetta PRO. */
     @Transactional
     public StoreDashboardResponse setPublished(User user, boolean published) {
@@ -268,7 +279,7 @@ public class StoreService {
                 .findByStoreIdAndActiveTrueOrderBySortOrderAscCreatedAtAsc(store.getId()).stream()
                 .map(this::toPublicProduct)
                 .toList();
-        return new PublicStoreResponse(profile(store), products);
+        return new PublicStoreResponse(profile(store), products, store.getThemeSettings(), featuredChapters(store));
     }
 
     /** One ebook's page: details from the product and the finished book itself. */
@@ -279,11 +290,7 @@ public class StoreService {
                 .filter(StoreProduct::isActive)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ebook not found"));
         Ebook ebook = ebookRepository.findById(product.getEbookId()).orElse(null);
-        List<PublicProductResponse.Chapter> chapters = ebook == null ? List.of() : ebook.getChapters().stream()
-                .filter(c -> c.getTitle() != null && !c.getTitle().isBlank())
-                .sorted(java.util.Comparator.comparingInt(EbookChapter::getChapterNumber))
-                .map(c -> new PublicProductResponse.Chapter(c.getChapterNumber(), c.getTitle().trim()))
-                .toList();
+        List<PublicProductResponse.Chapter> chapters = ebook == null ? List.of() : chapters(ebook);
         List<String> highlights = product.getHighlights() == null ? List.of()
                 : product.getHighlights().lines().map(String::trim).filter(l -> !l.isEmpty()).limit(12).toList();
         return new PublicProductResponse(profile(store), product.getId(), product.getTitle(),
@@ -292,6 +299,23 @@ public class StoreService {
                 ebook != null ? blankToNull(ebook.getLanguage()) : null,
                 ebook != null ? ebook.getUpdatedAt() : null, coverUrl(product, ebook), chapters,
                 moreFrom(store, product.getId()));
+    }
+
+    /** Chapters of the store's first active ebook (the one designs feature). */
+    private List<PublicProductResponse.Chapter> featuredChapters(Store store) {
+        return productRepository.findByStoreIdAndActiveTrueOrderBySortOrderAscCreatedAtAsc(store.getId()).stream()
+                .findFirst()
+                .flatMap(p -> ebookRepository.findById(p.getEbookId()))
+                .map(StoreService::chapters)
+                .orElse(List.of());
+    }
+
+    private static List<PublicProductResponse.Chapter> chapters(Ebook ebook) {
+        return ebook.getChapters().stream()
+                .filter(c -> c.getTitle() != null && !c.getTitle().isBlank())
+                .sorted(java.util.Comparator.comparingInt(EbookChapter::getChapterNumber))
+                .map(c -> new PublicProductResponse.Chapter(c.getChapterNumber(), c.getTitle().trim()))
+                .toList();
     }
 
     /** Other active ebooks of a store, for "More from …". */
@@ -375,7 +399,8 @@ public class StoreService {
                 store.getTiktokUrl(), store.getWebsiteUrl(),
                 StoreImageService.url(store, StoreImageService.Kind.LOGO),
                 StoreImageService.url(store, StoreImageService.Kind.PHOTO),
-                store.isPublished(), subscriptionService.isPro(store.getOwnerId()), stripeStatus(store), products);
+                store.isPublished(), subscriptionService.isPro(store.getOwnerId()), stripeStatus(store), products,
+                store.getThemeSettings(), featuredChapters(store));
     }
 
     static StripeStatusDTO stripeStatus(Store store) {

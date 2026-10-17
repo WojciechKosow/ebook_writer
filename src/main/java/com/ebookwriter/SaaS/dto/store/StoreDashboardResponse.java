@@ -22,6 +22,10 @@ public record StoreDashboardResponse(
         /** Whether the author has Scrivetta PRO (required to publish and to sell). */
         boolean pro,
         StripeStatusDTO stripe,
-        List<StoreProductDTO> products
+        List<StoreProductDTO> products,
+        /** The store page design (JSON), null for the classic look. */
+        String themeSettings,
+        /** Chapters of the first active ebook, so the design editor previews what buyers see. */
+        List<PublicProductResponse.Chapter> featuredChapters
 ) {
 }
