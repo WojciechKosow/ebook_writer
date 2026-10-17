@@ -49,6 +49,18 @@ public class EbookImageController {
         return ResponseEntity.status(HttpStatus.CREATED).body(dto);
     }
 
+    /** Add an image from the user's asset library (the book gets its own copy). */
+    @PostMapping("/from-library/{assetId}")
+    public ResponseEntity<EbookImageDTO> addFromLibrary(
+            @PathVariable UUID ebookId,
+            @PathVariable UUID assetId,
+            @RequestParam(value = "role", required = false) EbookImageRole role,
+            Authentication authentication) {
+        User user = currentUser(authentication);
+        EbookImageDTO dto = imageService.addFromLibrary(ebookId, user.getId(), assetId, role);
+        return ResponseEntity.status(HttpStatus.CREATED).body(dto);
+    }
+
     /** List all images attached to the ebook. */
     @GetMapping
     public ResponseEntity<List<EbookImageDTO>> list(@PathVariable UUID ebookId,

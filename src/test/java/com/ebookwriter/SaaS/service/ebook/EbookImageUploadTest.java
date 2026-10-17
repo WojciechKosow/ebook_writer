@@ -7,6 +7,7 @@ import com.ebookwriter.SaaS.entity.EbookImageRole;
 import com.ebookwriter.SaaS.entity.EbookStatus;
 import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.service.library.AssetLibraryService;
 import com.ebookwriter.SaaS.service.storage.R2StorageService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,6 +47,7 @@ class EbookImageUploadTest {
     @Mock R2StorageService storage;
     @Mock PdfGenerationService pdfGenerationService;
     @Mock AssetUsageService assetUsageService;
+    @Mock AssetLibraryService assetLibraryService;
 
     @InjectMocks EbookImageService service;
 
