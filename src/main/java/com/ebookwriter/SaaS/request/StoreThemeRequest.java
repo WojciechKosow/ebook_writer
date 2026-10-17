@@ -4,7 +4,7 @@ import jakarta.validation.constraints.Size;
 
 /**
  * The store page design as a JSON document (see {@code Store.themeSettings}).
- * Null or blank resets the store to the classic look.
+ * Null or blank resets the store to the default (Scrivetta) style.
  */
 public record StoreThemeRequest(
         @Size(max = StoreThemeRequest.MAX_LENGTH, message = "This design is too large") String settings

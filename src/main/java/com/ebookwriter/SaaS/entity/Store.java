@@ -92,7 +92,7 @@ public class Store {
     /**
      * The store page's look, as the author designed it: a JSON document
      * ({@code {"v":1,"active":"code","themes":{...}}}) that only the frontend
-     * interprets. Null = the classic look. Validated by {@link com.ebookwriter.SaaS.service.store.StoreThemeValidator}.
+     * interprets. Null = the default (Scrivetta) style. Validated by {@link com.ebookwriter.SaaS.service.store.StoreThemeValidator}.
      */
     @Column(columnDefinition = "TEXT")
     private String themeSettings;

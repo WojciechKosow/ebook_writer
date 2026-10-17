@@ -95,7 +95,7 @@ public class StoreService {
     }
 
     /**
-     * Save the store page design. Blank resets to the classic look. The document
+     * Save the store page design. Blank resets to the default (Scrivetta) style. The document
      * is opaque to the backend apart from {@link StoreThemeValidator}'s checks.
      */
     @Transactional

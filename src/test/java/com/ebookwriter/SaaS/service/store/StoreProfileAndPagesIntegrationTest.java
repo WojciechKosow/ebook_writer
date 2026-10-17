@@ -148,6 +148,7 @@ class StoreProfileAndPagesIntegrationTest {
                 "not json",
                 "[1,2]",
                 "{\"active\":\"neon\"}",
+                "{\"active\":\"classic\"}",
                 "{\"active\":\"bold\",\"themes\":{\"bold\":{\"customCss\":\"body{background:url(https://evil.example/x)}\"}}}",
                 "{\"active\":\"bold\",\"themes\":{\"bold\":{\"customCss\":\"@import 'https://evil.example/x.css';\"}}}",
                 "{\"active\":\"bold\",\"themes\":{\"bold\":{\"customCss\":\"</style><script>alert(1)</script>\"}}}",
