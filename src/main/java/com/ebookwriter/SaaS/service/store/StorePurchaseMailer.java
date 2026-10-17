@@ -30,7 +30,7 @@ public class StorePurchaseMailer {
             return;
         }
         // Fragment, not path: never sent to servers or recorded by analytics.
-        String url = frontendUrl + "/download#" + event.downloadToken();
+        String url = frontendUrl.replaceAll("/+$", "") + "/download#" + event.downloadToken();
         try {
             mailService.sendStorePurchaseEmail(event.buyerEmail(), event.productTitle(), event.storeName(), url);
             log.info("[StoreDownload] Download link sent for order {}", event.orderId());
