@@ -19,6 +19,8 @@ public record PublicProductResponse(
         LocalDateTime updatedAt,
         String coverUrl,
         List<Chapter> chapters,
+        /** The formats buyers get (e.g. PDF, EPUB, ZIP), in delivery order, without duplicates. */
+        List<String> formats,
         /** Other active ebooks of the same store. */
         List<PublicStoreResponse.Product> more
 ) {

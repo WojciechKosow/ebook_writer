@@ -32,7 +32,8 @@ public class StorePurchaseMailer {
         // Fragment, not path: never sent to servers or recorded by analytics.
         String url = frontendUrl.replaceAll("/+$", "") + "/download#" + event.downloadToken();
         try {
-            mailService.sendStorePurchaseEmail(event.buyerEmail(), event.productTitle(), event.storeName(), url);
+            mailService.sendStorePurchaseEmail(event.buyerEmail(), event.productTitle(), event.storeName(), url,
+                    event.linkedToAccount());
             log.info("[StoreDownload] Download link sent for order {}", event.orderId());
         } catch (Exception e) {
             // TODO(store): delivery failure handling (resend) is a follow-up — the

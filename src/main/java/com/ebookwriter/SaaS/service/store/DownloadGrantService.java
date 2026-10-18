@@ -1,6 +1,7 @@
 package com.ebookwriter.SaaS.service.store;
 
 import com.ebookwriter.SaaS.dto.store.DownloadInfoResponse;
+import com.ebookwriter.SaaS.dto.store.ProductFileDTO;
 import com.ebookwriter.SaaS.entity.*;
 import com.ebookwriter.SaaS.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -17,14 +18,17 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.UUID;
 
 /**
- * Download access for paid store orders. The raw token exists only in the
- * buyer's email; the database keeps its SHA-256 hash. A grant is valid for
- * {@value #VALIDITY_DAYS} days and {@value #MAX_DOWNLOADS} downloads, and a full
- * refund revokes it. The file is only ever streamed by the backend — there is
- * no public path to it.
+ * Guest download access for paid store orders (buyers need no account). The raw
+ * token exists only in the buyer's email; the database keeps its SHA-256 hash. A
+ * grant is valid for {@value #VALIDITY_DAYS} days and {@value #MAX_DOWNLOADS}
+ * downloads per file the product had when it was bought (each file download
+ * counts one), and a full refund revokes it. Files are only ever streamed by the
+ * backend — there is no public path to them. Buyers with a verified account get
+ * unlimited downloads in My Purchases instead ({@link PurchaseService}).
  */
 @Slf4j
 @Service
@@ -41,18 +45,30 @@ public class DownloadGrantService {
     private final StoreProductRepository productRepository;
     private final StoreRepository storeRepository;
     private final EbookRepository ebookRepository;
-    private final EbookPdfRepository pdfRepository;
     private final StoreService storeService;
+    private final ProductFileService fileService;
 
-    /** Create the grant for a just-paid order. Returns the raw token (to email; never stored). */
+    /**
+     * Create the grant for a just-paid order. Returns the raw token (to email;
+     * never stored), or null when the order already has one — a retried webhook
+     * never issues a second link.
+     */
     @Transactional
     public String issue(UUID orderId) {
+        if (grantRepository.findByOrderId(orderId).isPresent()) {
+            log.info("[StoreDownload] Order {} already has a download grant — not issuing another", orderId);
+            return null;
+        }
+        int files = orderRepository.findById(orderId)
+                .flatMap(o -> productRepository.findById(o.getProductId()))
+                .map(p -> fileService.deliverables(p).size())
+                .orElse(1);
         String token = newToken();
         DownloadGrant grant = new DownloadGrant();
         grant.setOrderId(orderId);
         grant.setTokenHash(hash(token));
         grant.setExpiresAt(LocalDateTime.now().plusDays(VALIDITY_DAYS));
-        grant.setMaxDownloads(MAX_DOWNLOADS);
+        grant.setMaxDownloads(MAX_DOWNLOADS * Math.max(1, files));
         grant.setDownloadsUsed(0);
         grantRepository.save(grant);
         return token;
@@ -77,36 +93,50 @@ public class DownloadGrantService {
         StoreOrder order = orderRepository.findById(grant.getOrderId()).orElseThrow(this::notFound);
         StoreProduct product = productRepository.findById(order.getProductId()).orElseThrow(this::notFound);
         Store store = storeRepository.findById(order.getStoreId()).orElse(null);
-        Ebook ebook = ebookRepository.findById(product.getEbookId()).orElse(null);
-        long size = pdfRepository.findById(product.getEbookId()).map(p -> (long) p.getData().length).orElse(0L);
+        Ebook ebook = storeService.ebookOf(product);
+        List<ProductFileDTO> files = fileService.deliverables(product).stream().map(StoreService::toFileDTO).toList();
+        long size = files.stream().mapToLong(ProductFileDTO::sizeBytes).sum();
         return new DownloadInfoResponse(product.getTitle(),
                 store != null ? store.getName() : null,
                 store != null ? store.getSlug() : null,
                 store != null ? store.getAuthorName() : null,
                 store != null ? store.getContactEmail() : null,
                 store != null ? StoreImageService.url(store, StoreImageService.Kind.LOGO) : null,
-                StoreService.coverUrl(product, ebook), size,
+                StoreService.coverUrl(product, ebook), size, files,
                 grant.getMaxDownloads() - grant.getDownloadsUsed(), grant.getExpiresAt(),
-                store != null ? storeService.moreFrom(store, product.getId()) : java.util.List.of());
+                store != null ? storeService.moreFrom(store, product.getId()) : List.of());
     }
 
-    /** Consume one download and return the file. */
+    /**
+     * Consume one download and open one of the product's current files
+     * ({@code fileId} as listed by {@link #info}; null = the first file, for links
+     * from before products had several files). The file is opened before the
+     * download is counted, so a missing file never uses one up.
+     */
     @Transactional
-    public FileDownload download(String token) {
+    public ProductFileService.FileStream download(String token, String fileId) {
         DownloadGrant grant = requireUsable(token);
         StoreOrder order = orderRepository.findById(grant.getOrderId()).orElseThrow(this::notFound);
-        StoreProduct product = productRepository.findById(order.getProductId()).orElseThrow(this::notFound);
-        EbookPdf pdf = pdfRepository.findById(product.getEbookId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.GONE, "This file is no longer available."));
+        StoreProduct product = productRepository.findById(order.getProductId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.GONE, "This product is no longer available."));
+        ProductFileService.FileStream file = fileId == null ? fileService.openPrimary(product) : fileService.open(product, fileId);
 
         // Atomic: two concurrent requests can never exceed the download limit.
         if (grantRepository.consume(grant.getId(), LocalDateTime.now()) != 1) {
+            closeQuietly(file);
             throw new ResponseStatusException(HttpStatus.GONE, "This download link has expired or been used up.");
         }
-        String title = ebookRepository.findById(product.getEbookId()).map(Ebook::getTitle).orElse(product.getTitle());
-        log.info("[StoreDownload] Order {} downloaded ({} of {})",
-                order.getId(), grant.getDownloadsUsed() + 1, grant.getMaxDownloads());
-        return new FileDownload(pdf.getData(), safeFilename(title) + ".pdf");
+        log.info("[StoreDownload] Order {} downloaded {} ({} of {})",
+                order.getId(), fileId == null ? "primary file" : fileId, grant.getDownloadsUsed() + 1, grant.getMaxDownloads());
+        return file;
+    }
+
+    private static void closeQuietly(ProductFileService.FileStream file) {
+        try {
+            file.stream().close();
+        } catch (java.io.IOException ignored) {
+            // nothing to do
+        }
     }
 
     private DownloadGrant requireUsable(String token) {
@@ -146,12 +176,4 @@ public class DownloadGrantService {
         }
     }
 
-    private static String safeFilename(String title) {
-        String base = title != null && !title.isBlank() ? title : "ebook";
-        String cleaned = base.replaceAll("[^a-zA-Z0-9-_ ]", "").trim().replaceAll("\\s+", "_");
-        return cleaned.isBlank() ? "ebook" : cleaned;
-    }
-
-    public record FileDownload(byte[] bytes, String filename) {
-    }
 }

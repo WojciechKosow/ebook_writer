@@ -53,6 +53,7 @@ public class StoreService {
     private final EbookPdfRepository pdfRepository;
     private final SubscriptionService subscriptionService;
     private final StripeConnectGateway stripe;
+    private final ProductFileService fileService;
 
     @Value("${app.frontend-url}")
     private String frontendUrl;
@@ -118,28 +119,42 @@ public class StoreService {
 
     // ---- Author: products --------------------------------------------------
 
+    /**
+     * Put a product on sale: one of the author's finished ebooks ({@code ebookId}),
+     * or — without an ebook — a standalone product that delivers uploaded files
+     * only. A standalone product starts hidden until it has a file.
+     */
     @Transactional
     public StoreDashboardResponse addProduct(User user, StoreProductCreateRequest request) {
         Store store = requireOwn(user);
-        Ebook ebook = ebookRepository.findByIdAndUserId(request.ebookId(), user.getId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ebook not found"));
-        if (ebook.getStatus() != EbookStatus.COMPLETED || !pdfRepository.existsById(ebook.getId())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only finished ebooks can be sold");
-        }
-        if (productRepository.existsByStoreIdAndEbookId(store.getId(), ebook.getId())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "This ebook is already in your store");
-        }
         StoreProduct product = new StoreProduct();
         product.setStoreId(store.getId());
-        product.setEbookId(ebook.getId());
         String title = blankToNull(request.title());
-        if (title == null) {
-            title = ebook.getTitle() != null && !ebook.getTitle().isBlank() ? ebook.getTitle().trim() : "Untitled ebook";
+        String description = blankToNull(request.description());
+        if (request.ebookId() != null) {
+            Ebook ebook = ebookRepository.findByIdAndUserId(request.ebookId(), user.getId())
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ebook not found"));
+            if (ebook.getStatus() != EbookStatus.COMPLETED || !pdfRepository.existsById(ebook.getId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Only finished ebooks can be sold");
+            }
+            if (productRepository.existsByStoreIdAndEbookId(store.getId(), ebook.getId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "This ebook is already in your store");
+            }
+            product.setEbookId(ebook.getId());
+            if (title == null) {
+                title = ebook.getTitle() != null && !ebook.getTitle().isBlank() ? ebook.getTitle().trim() : "Untitled ebook";
+            }
+            if (description == null) {
+                description = blankToNull(ebook.getDescription());
+            }
+        } else {
+            if (title == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Give the product a title");
+            }
+            product.setActive(false);
         }
         product.setTitle(truncate(title, 200));
-        product.setDescription(blankToNull(request.description()) != null
-                ? blankToNull(request.description())
-                : blankToNull(ebook.getDescription()));
+        product.setDescription(description);
         product.setPriceCents(validPrice(request.priceCents()));
         product.setCurrency(CURRENCY);
         product.setSortOrder(productRepository.findByStoreIdOrderBySortOrderAscCreatedAtAsc(store.getId()).stream()
@@ -170,6 +185,10 @@ public class StoreService {
             product.setPriceCents(validPrice(request.priceCents()));
         }
         if (request.active() != null) {
+            if (request.active() && !fileService.isDeliverable(product)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Add a downloadable file before showing this product");
+            }
             product.setActive(request.active());
         }
         productRepository.save(product);
@@ -289,7 +308,7 @@ public class StoreService {
         StoreProduct product = productRepository.findByIdAndStoreId(productId, store.getId())
                 .filter(StoreProduct::isActive)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ebook not found"));
-        Ebook ebook = ebookRepository.findById(product.getEbookId()).orElse(null);
+        Ebook ebook = ebookOf(product);
         List<PublicProductResponse.Chapter> chapters = ebook == null ? List.of() : chapters(ebook);
         List<String> highlights = product.getHighlights() == null ? List.of()
                 : product.getHighlights().lines().map(String::trim).filter(l -> !l.isEmpty()).limit(12).toList();
@@ -298,6 +317,7 @@ public class StoreService {
                 product.getPriceCents(), product.getCurrency(), pageCount(ebook),
                 ebook != null ? blankToNull(ebook.getLanguage()) : null,
                 ebook != null ? ebook.getUpdatedAt() : null, coverUrl(product, ebook), chapters,
+                fileService.deliverables(product).stream().map(f -> f.format().name()).distinct().toList(),
                 moreFrom(store, product.getId()));
     }
 
@@ -305,7 +325,8 @@ public class StoreService {
     private List<PublicProductResponse.Chapter> featuredChapters(Store store) {
         return productRepository.findByStoreIdAndActiveTrueOrderBySortOrderAscCreatedAtAsc(store.getId()).stream()
                 .findFirst()
-                .flatMap(p -> ebookRepository.findById(p.getEbookId()))
+                .map(this::ebookOf)
+                .filter(java.util.Objects::nonNull)
                 .map(StoreService::chapters)
                 .orElse(List.of());
     }
@@ -339,14 +360,25 @@ public class StoreService {
     }
 
     private PublicStoreResponse.Product toPublicProduct(StoreProduct p) {
-        Ebook ebook = ebookRepository.findById(p.getEbookId()).orElse(null);
+        Ebook ebook = ebookOf(p);
         return new PublicStoreResponse.Product(p.getId(), p.getTitle(),
                 ebook != null ? blankToNull(ebook.getSubtitle()) : null, p.getDescription(),
                 p.getPriceCents(), p.getCurrency(), pageCount(ebook),
                 ebook != null ? blankToNull(ebook.getLanguage()) : null, coverUrl(p, ebook));
     }
 
+    /**
+     * Relative public URL of a product's cover: its own uploaded cover, else the
+     * ebook's first page; null for a standalone product without a cover.
+     */
     static String coverUrl(StoreProduct product, Ebook ebook) {
+        if (product.getCoverKey() != null) {
+            return "/api/public/products/" + product.getId() + "/cover?v="
+                    + Integer.toHexString(product.getCoverKey().hashCode());
+        }
+        if (product.getEbookId() == null) {
+            return null;
+        }
         return "/api/public/products/" + product.getId() + "/cover?v="
                 + (ebook != null ? ProductCoverService.version(ebook) : "0");
     }
@@ -387,12 +419,18 @@ public class StoreService {
     }
 
     private StoreDashboardResponse toDashboard(Store store) {
-        List<StoreProductDTO> products = productRepository.findByStoreIdOrderBySortOrderAscCreatedAtAsc(store.getId())
-                .stream().map(p -> {
-                    Ebook ebook = ebookRepository.findById(p.getEbookId()).orElse(null);
+        List<StoreProduct> all = productRepository.findByStoreIdOrderBySortOrderAscCreatedAtAsc(store.getId());
+        java.util.Map<UUID, List<ProductFile>> files = fileService.currentByProduct(
+                all.stream().map(StoreProduct::getId).toList());
+        List<StoreProductDTO> products = all.stream().map(p -> {
+                    Ebook ebook = ebookOf(p);
+                    List<ProductFileDTO> own = files.getOrDefault(p.getId(), List.of()).stream()
+                            .map(StoreService::toFileDTO).toList();
+                    boolean hasPdf = p.getEbookId() != null && pdfRepository.existsById(p.getEbookId());
                     return new StoreProductDTO(p.getId(), p.getEbookId(), p.getTitle(), p.getDescription(),
                             p.getHighlights(), p.getPriceCents(), p.getCurrency(), p.isActive(), p.getSortOrder(),
-                            pageCount(ebook), coverUrl(p, ebook));
+                            pageCount(ebook), coverUrl(p, ebook), p.getCoverKey() != null, own,
+                            hasPdf || !own.isEmpty());
                 }).toList();
         return new StoreDashboardResponse(store.getId(), store.getSlug(), store.getName(), store.getDescription(),
                 store.getHeadline(), store.getAuthorName(), store.getContactEmail(), store.getInstagramUrl(),
@@ -401,6 +439,20 @@ public class StoreService {
                 StoreImageService.url(store, StoreImageService.Kind.PHOTO),
                 store.isPublished(), subscriptionService.isPro(store.getOwnerId()), stripeStatus(store), products,
                 store.getThemeSettings(), featuredChapters(store));
+    }
+
+    static ProductFileDTO toFileDTO(ProductFile f) {
+        return new ProductFileDTO(f.getId().toString(), f.getOriginalFilename(), f.getFormat(), f.getSizeBytes(),
+                f.getVersion(), f.getCreatedAt());
+    }
+
+    static ProductFileDTO toFileDTO(ProductFileService.DeliverableFile f) {
+        return new ProductFileDTO(f.id(), f.filename(), f.format(), f.sizeBytes(), f.version(), f.updatedAt());
+    }
+
+    /** The product's ebook, or null for a standalone product (or a missing ebook). */
+    Ebook ebookOf(StoreProduct product) {
+        return product.getEbookId() == null ? null : ebookRepository.findById(product.getEbookId()).orElse(null);
     }
 
     static StripeStatusDTO stripeStatus(Store store) {

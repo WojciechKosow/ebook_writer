@@ -5,20 +5,25 @@ import com.ebookwriter.SaaS.dto.store.PublicProductResponse;
 import com.ebookwriter.SaaS.dto.store.PublicStoreResponse;
 import com.ebookwriter.SaaS.dto.store.StoreCheckoutResponse;
 import com.ebookwriter.SaaS.dto.store.StoreOrderStatusResponse;
+import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.request.StoreCheckoutRequest;
 import com.ebookwriter.SaaS.repository.StoreProductRepository;
+import com.ebookwriter.SaaS.repository.UserRepository;
 import com.ebookwriter.SaaS.service.store.DownloadGrantService;
+import com.ebookwriter.SaaS.service.store.PurchaseService;
 import com.ebookwriter.SaaS.service.store.ProductCoverService;
 import com.ebookwriter.SaaS.service.store.StoreImageService;
 import com.ebookwriter.SaaS.service.store.StoreCheckoutService;
 import com.ebookwriter.SaaS.service.store.StoreService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.Resource;
 import org.springframework.http.CacheControl;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -27,8 +32,9 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Buyer-facing, unauthenticated store endpoints (permitAll under /api/public).
- * Buyers need no Scrivetta account; the download token is the only credential
- * for a file.
+ * Buyers need no Scrivetta account; the emailed download token (guests) or a
+ * short-lived signed link from My Purchases (signed-in buyers) is the only
+ * credential for a file.
  */
 @RestController
 @RequestMapping("/api/public")
@@ -41,6 +47,8 @@ public class PublicStoreController {
     private final StoreImageService imageService;
     private final ProductCoverService coverService;
     private final StoreProductRepository productRepository;
+    private final PurchaseService purchaseService;
+    private final UserRepository userRepository;
 
     @GetMapping("/stores/{slug}")
     public PublicStoreResponse store(@PathVariable String slug) {
@@ -64,23 +72,32 @@ public class PublicStoreController {
                 .body(image.bytes());
     }
 
-    /** The ebook's cover: the first page of its PDF. */
+    /** The product's cover: the author's own cover, else the first page of the ebook's PDF. */
     @GetMapping("/products/{productId}/cover")
     public ResponseEntity<byte[]> cover(@PathVariable UUID productId) {
-        byte[] jpeg = productRepository.findById(productId)
-                .flatMap(p -> coverService.cover(p.getEbookId()))
+        StoreImageService.Image image = productRepository.findById(productId)
+                .flatMap(p -> imageService.productCover(p)
+                        .or(() -> p.getEbookId() == null ? java.util.Optional.empty()
+                                : coverService.cover(p.getEbookId()).map(jpeg -> new StoreImageService.Image(jpeg, "image/jpeg"))))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Cover not found"));
         return ResponseEntity.ok()
-                .contentType(MediaType.IMAGE_JPEG)
+                .contentType(MediaType.parseMediaType(image.contentType()))
                 .cacheControl(CacheControl.maxAge(1, TimeUnit.DAYS).cachePublic())
                 .header("X-Content-Type-Options", "nosniff")
-                .body(jpeg);
+                .body(image.bytes());
     }
 
-    /** The client sends only the product id. */
+    /**
+     * The client sends only the product id. A signed-in buyer (optional bearer
+     * token) gets the order linked to their account.
+     */
     @PostMapping("/checkout")
-    public StoreCheckoutResponse checkout(@Valid @RequestBody StoreCheckoutRequest request) {
-        return checkoutService.checkout(request.productId());
+    public StoreCheckoutResponse checkout(@Valid @RequestBody StoreCheckoutRequest request,
+                                          Authentication authentication) {
+        User buyer = authentication != null && authentication.isAuthenticated()
+                && !(authentication instanceof AnonymousAuthenticationToken)
+                ? userRepository.findByEmail(authentication.getName()).orElse(null) : null;
+        return checkoutService.checkout(request.productId(), buyer);
     }
 
     @GetMapping("/orders/{orderId}")
@@ -93,16 +110,21 @@ public class PublicStoreController {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(downloadGrantService.info(token));
     }
 
-    /** Counts one download. */
+    /** The product's first file (download links from before products had several files). Counts one download. */
     @GetMapping("/downloads/{token}/file")
-    public ResponseEntity<byte[]> download(@PathVariable String token) {
-        DownloadGrantService.FileDownload file = downloadGrantService.download(token);
-        return ResponseEntity.ok()
-                .cacheControl(CacheControl.noStore())
-                .header("Referrer-Policy", "no-referrer")
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + file.filename() + "\"")
-                .contentType(MediaType.APPLICATION_PDF)
-                .contentLength(file.bytes().length)
-                .body(file.bytes());
+    public ResponseEntity<Resource> download(@PathVariable String token) {
+        return FileResponses.attachment(downloadGrantService.download(token, null));
+    }
+
+    /** One of the product's files, as listed by the download info. Counts one download. */
+    @GetMapping("/downloads/{token}/files/{fileId}")
+    public ResponseEntity<Resource> downloadFile(@PathVariable String token, @PathVariable String fileId) {
+        return FileResponses.attachment(downloadGrantService.download(token, fileId));
+    }
+
+    /** A My Purchases download: the short-lived signed link is the credential; access is re-checked. */
+    @GetMapping("/purchase-files")
+    public ResponseEntity<Resource> purchaseFile(@RequestParam(value = "token", required = false) String token) {
+        return FileResponses.attachment(purchaseService.download(token));
     }
 }

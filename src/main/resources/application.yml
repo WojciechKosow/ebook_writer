@@ -242,6 +242,15 @@ credits:
   # min(balance, this) + max-overdraft (trued up to the real page count).
   max-generation-budget: ${CREDITS_MAX_GENERATION_BUDGET:400}
 
+# Store product files (PDF / EPUB / ZIP sold in creator stores). Stored unmodified
+# in the private R2 bucket above and streamed to buyers only through the API
+# (emailed guest token, or a short-lived signed link from My Purchases). Keep
+# max-file-bytes ≤ the multipart limits (spring.servlet.multipart).
+store:
+  files:
+    max-file-bytes: ${STORE_FILES_MAX_FILE_BYTES:209715200}        # 200 MB
+    max-files-per-product: ${STORE_FILES_MAX_FILES_PER_PRODUCT:10}
+
 # Asset library: every uploaded image is kept once per user for reuse. PRO keeps
 # the library; without PRO an asset is purged this many hours after it was last
 # uploaded or used (upgrading before then keeps it).

@@ -119,26 +119,32 @@ public class MailServiceImpl implements MailService {
     }
 
     @Override
-    public void sendStorePurchaseEmail(String to, String productTitle, String storeName, String downloadUrl) {
-        String title = productTitle != null && !productTitle.isBlank() ? productTitle : "your ebook";
+    public void sendStorePurchaseEmail(String to, String productTitle, String storeName, String downloadUrl,
+                                       boolean linkedToAccount) {
+        String title = productTitle != null && !productTitle.isBlank() ? productTitle : "your purchase";
         boolean hasSeller = storeName != null && !storeName.isBlank();
-        String subject = "Your ebook is ready: " + title;
+        String subject = "Your download is ready: " + title;
 
         List<Detail> details = new ArrayList<>();
-        details.add(new Detail("Ebook", title));
+        details.add(new Detail("Product", title));
         if (hasSeller) {
             details.add(new Detail("Sold by", storeName));
         }
         details.add(new Detail("Link valid for", "30 days"));
-        details.add(new Detail("Downloads", "Up to 5"));
+        details.add(new Detail("Downloads", "Up to 5 per file"));
 
+        String account = linkedToAccount
+                ? " It's also saved in <strong>My Purchases</strong> in your Scrivetta account, where you can "
+                        + "download it again any time."
+                : " Want it kept for good? Create a free Scrivetta account with this email address — your purchase "
+                        + "appears in <strong>My Purchases</strong> and you can download it any time.";
         send(to, subject, new Email(
                 "Your payment is confirmed — download " + title + " now.",
                 "Thank you for your purchase",
                 "Your payment is confirmed and your copy of <strong>" + esc(title) + "</strong> is ready. "
-                        + "Download it now and keep the file somewhere safe.",
+                        + "Download it now and keep the files somewhere safe." + account,
                 details,
-                "Download your ebook",
+                "Download your files",
                 downloadUrl,
                 "This link is personal — anyone who has it can download your copy, so please don't share it."
         ));

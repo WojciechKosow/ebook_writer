@@ -10,6 +10,8 @@ import com.ebookwriter.SaaS.repository.StoreOrderRepository;
 import com.ebookwriter.SaaS.repository.StoreProductRepository;
 import com.ebookwriter.SaaS.repository.StoreRepository;
 import com.ebookwriter.SaaS.repository.StripeWebhookEventRepository;
+import com.ebookwriter.SaaS.repository.UserRepository;
+import com.ebookwriter.SaaS.entity.User;
 import com.stripe.exception.EventDataObjectDeserializationException;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.exception.StripeException;
@@ -59,6 +61,7 @@ public class StripeConnectWebhookService {
     private final StoreRepository storeRepository;
     private final StoreService storeService;
     private final DownloadGrantService grantService;
+    private final UserRepository userRepository;
     private final ApplicationEventPublisher publisher;
 
     /**
@@ -140,6 +143,11 @@ public class StripeConnectWebhookService {
             email = session.getCustomerEmail();
         }
         order.setBuyerEmail(email);
+        if (order.getBuyerUserId() == null && email != null) {
+            // A verified account with the buyer's email gets it in My Purchases.
+            userRepository.findFirstByEmailIgnoreCase(email).filter(User::isEnabled)
+                    .ifPresent(u -> order.setBuyerUserId(u.getId()));
+        }
         order.setPaymentIntentId(session.getPaymentIntent());
         if (session.getConsent() != null && "accepted".equals(session.getConsent().getTermsOfService())) {
             // Stripe records acceptance at completion; the event's creation time is that moment.
@@ -152,9 +160,12 @@ public class StripeConnectWebhookService {
         orderRepository.saveAndFlush(order);
 
         String token = grantService.issue(order.getId());
-        String productTitle = productRepository.findById(order.getProductId()).map(StoreProduct::getTitle).orElse(null);
-        String storeName = storeRepository.findById(order.getStoreId()).map(Store::getName).orElse(null);
-        publisher.publishEvent(new StorePurchaseCompletedEvent(order.getId(), email, productTitle, storeName, token));
+        if (token != null) {
+            String productTitle = productRepository.findById(order.getProductId()).map(StoreProduct::getTitle).orElse(null);
+            String storeName = storeRepository.findById(order.getStoreId()).map(Store::getName).orElse(null);
+            publisher.publishEvent(new StorePurchaseCompletedEvent(order.getId(), email, productTitle, storeName, token,
+                    order.getBuyerUserId() != null));
+        }
         log.info("[StripeConnect] Order {} PAID (session {}, account {})",
                 order.getId(), session.getId(), order.getStripeAccountId());
     }
