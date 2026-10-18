@@ -21,7 +21,8 @@ import java.util.UUID;
 @Table(name = "store_order", indexes = {
         @Index(columnList = "checkoutSessionId", unique = true),
         @Index(columnList = "paymentIntentId"),
-        @Index(columnList = "storeId")
+        @Index(columnList = "storeId"),
+        @Index(columnList = "buyerUserId")
 })
 public class StoreOrder {
 
@@ -48,6 +49,14 @@ public class StoreOrder {
     private String paymentIntentId;
 
     private String buyerEmail;
+
+    /**
+     * The buyer's Scrivetta account, once known: set at checkout when the buyer
+     * was signed in, by the webhook when a verified account has the buyer's
+     * email, or when a verified account with that email first opens My Purchases.
+     * Access still requires {@link StoreOrderStatus#PAID}.
+     */
+    private UUID buyerUserId;
 
     /** Amount in cents. */
     @Column(nullable = false)

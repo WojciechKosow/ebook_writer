@@ -12,6 +12,8 @@ public record StorePurchaseCompletedEvent(
         String buyerEmail,
         String productTitle,
         String storeName,
-        String downloadToken
+        String downloadToken,
+        /** Whether the order is already linked to the buyer's Scrivetta account (My Purchases). */
+        boolean linkedToAccount
 ) {
 }

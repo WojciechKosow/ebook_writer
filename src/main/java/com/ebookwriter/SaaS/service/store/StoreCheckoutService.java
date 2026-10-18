@@ -7,7 +7,7 @@ import com.ebookwriter.SaaS.entity.Store;
 import com.ebookwriter.SaaS.entity.StoreOrder;
 import com.ebookwriter.SaaS.entity.StoreOrderStatus;
 import com.ebookwriter.SaaS.entity.StoreProduct;
-import com.ebookwriter.SaaS.repository.EbookPdfRepository;
+import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.StoreOrderRepository;
 import com.ebookwriter.SaaS.repository.StoreProductRepository;
 import com.ebookwriter.SaaS.repository.StoreRepository;
@@ -46,7 +46,7 @@ public class StoreCheckoutService {
     private final StoreRepository storeRepository;
     private final StoreProductRepository productRepository;
     private final StoreOrderRepository orderRepository;
-    private final EbookPdfRepository pdfRepository;
+    private final ProductFileService fileService;
     private final StoreService storeService;
     private final StripeConnectGateway stripe;
     private final StripeConnectProperties connectProperties;
@@ -58,9 +58,13 @@ public class StoreCheckoutService {
      * Create a PENDING order and its Checkout Session. Re-checks server-side that
      * the store is published, its author has active PRO and Stripe has enabled
      * charges. On any failure the transaction rolls back, leaving no order behind.
+     *
+     * <p>{@code buyer} is the signed-in Scrivetta user, or null for a guest. A
+     * verified buyer's order is linked to their account up front (and Checkout
+     * uses their account email), so it shows in My Purchases once PAID.
      */
     @Transactional
-    public StoreCheckoutResponse checkout(UUID productId) {
+    public StoreCheckoutResponse checkout(UUID productId, User buyer) {
         StoreProduct product = productRepository.findById(productId)
                 .filter(StoreProduct::isActive)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found"));
@@ -72,9 +76,10 @@ public class StoreCheckoutService {
         if (reason != null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, reason);
         }
-        if (!pdfRepository.existsById(product.getEbookId())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "This ebook isn't available right now.");
+        if (!fileService.isDeliverable(product)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This product isn't available right now.");
         }
+        User account = buyer != null && buyer.isEnabled() ? buyer : null;
 
         StoreOrder order = new StoreOrder();
         order.setStoreId(store.getId());
@@ -83,11 +88,19 @@ public class StoreCheckoutService {
         order.setAmount(product.getPriceCents());
         order.setCurrency(product.getCurrency());
         order.setStatus(StoreOrderStatus.PENDING);
+        if (account != null) {
+            order.setBuyerUserId(account.getId());
+        }
         order = orderRepository.saveAndFlush(order);
 
         String orderId = order.getId().toString();
         String base = frontendUrl + "/store/" + store.getSlug();
-        SessionCreateParams params = SessionCreateParams.builder()
+        SessionCreateParams.Builder builder = SessionCreateParams.builder();
+        if (account != null) {
+            // The receipt and the order go to the account's (verified) email.
+            builder.setCustomerEmail(account.getEmail());
+        }
+        SessionCreateParams params = builder
                 .setMode(SessionCreateParams.Mode.PAYMENT)
                 // Cards only: every payment settles synchronously, so
                 // checkout.session.completed with payment_status=paid is final.

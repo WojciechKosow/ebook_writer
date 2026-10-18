@@ -194,7 +194,7 @@ class CreatorStorePaymentsIntegrationTest {
         webhook(payload).andExpect(status().isOk());
 
         assertEquals(hashAfterFirst, grantRepository.findByOrderId(order.getId()).orElseThrow().getTokenHash());
-        verify(mailService, times(1)).sendStorePurchaseEmail(anyString(), any(), any(), anyString());
+        verify(mailService, times(1)).sendStorePurchaseEmail(anyString(), any(), any(), anyString(), anyBoolean());
     }
 
     // ---- Mismatched account -------------------------------------------------------
@@ -471,7 +471,7 @@ class CreatorStorePaymentsIntegrationTest {
 
     private String sentToken() {
         ArgumentCaptor<String> url = ArgumentCaptor.forClass(String.class);
-        verify(mailService, atLeastOnce()).sendStorePurchaseEmail(eq("buyer@example.com"), any(), any(), url.capture());
+        verify(mailService, atLeastOnce()).sendStorePurchaseEmail(eq("buyer@example.com"), any(), any(), url.capture(), anyBoolean());
         String link = url.getValue();
         assertTrue(link.startsWith("http://localhost:5173/download#"), link);
         return link.substring(link.indexOf('#') + 1);

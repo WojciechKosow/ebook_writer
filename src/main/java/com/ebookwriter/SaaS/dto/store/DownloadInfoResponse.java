@@ -12,7 +12,10 @@ public record DownloadInfoResponse(
         String contactEmail,
         String logoUrl,
         String coverUrl,
+        /** Total size of all files. */
         long fileSizeBytes,
+        /** Every file the buyer can download; each download counts one. */
+        List<ProductFileDTO> files,
         int downloadsRemaining,
         LocalDateTime expiresAt,
         /** Other ebooks still on sale in the store (empty when it is unpublished). */

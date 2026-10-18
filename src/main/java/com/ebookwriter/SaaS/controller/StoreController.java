@@ -4,6 +4,7 @@ import com.ebookwriter.SaaS.dto.store.StoreDashboardResponse;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.request.*;
 import com.ebookwriter.SaaS.security.CurrentUserService;
+import com.ebookwriter.SaaS.service.store.ProductFileService;
 import com.ebookwriter.SaaS.service.store.StoreImageService;
 import com.ebookwriter.SaaS.service.store.StoreService;
 import jakarta.validation.Valid;
@@ -30,6 +31,7 @@ public class StoreController {
 
     private final StoreService storeService;
     private final StoreImageService imageService;
+    private final ProductFileService fileService;
     private final CurrentUserService currentUserService;
 
     /** 204 when the author has no store yet. */
@@ -82,6 +84,58 @@ public class StoreController {
                                               @Valid @RequestBody StoreProductMoveRequest request) {
         return storeService.moveProduct(currentUserService.require(authentication), productId,
                 "up".equals(request.direction()));
+    }
+
+    // ---- Product files (PDF, EPUB, ZIP) and cover ---------------------------------
+
+    /** Add a downloadable file to a product. */
+    @PostMapping(value = "/products/{productId}/files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public StoreDashboardResponse uploadFile(Authentication authentication, @PathVariable UUID productId,
+                                             @RequestParam("file") MultipartFile file) {
+        User user = currentUserService.require(authentication);
+        fileService.upload(user, productId, file);
+        return storeService.getOwn(user).orElseThrow();
+    }
+
+    /** Replace a file with a new version; buyers get the new one, existing purchases keep working. */
+    @PostMapping(value = "/products/{productId}/files/{fileId}/replace", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public StoreDashboardResponse replaceFile(Authentication authentication, @PathVariable UUID productId,
+                                              @PathVariable UUID fileId, @RequestParam("file") MultipartFile file) {
+        User user = currentUserService.require(authentication);
+        fileService.replace(user, productId, fileId, file);
+        return storeService.getOwn(user).orElseThrow();
+    }
+
+    @DeleteMapping("/products/{productId}/files/{fileId}")
+    public StoreDashboardResponse removeFile(Authentication authentication, @PathVariable UUID productId,
+                                             @PathVariable UUID fileId) {
+        User user = currentUserService.require(authentication);
+        fileService.remove(user, productId, fileId);
+        return storeService.getOwn(user).orElseThrow();
+    }
+
+    /** The product's own cover/thumbnail (PNG, JPG or WebP) — separate from its files. */
+    @PostMapping(value = "/products/{productId}/cover", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public StoreDashboardResponse uploadCover(Authentication authentication, @PathVariable UUID productId,
+                                              @RequestParam("file") MultipartFile file) {
+        User user = currentUserService.require(authentication);
+        imageService.uploadProductCover(user, productId, file);
+        return storeService.getOwn(user).orElseThrow();
+    }
+
+    @PostMapping("/products/{productId}/cover/from-library/{assetId}")
+    public StoreDashboardResponse useLibraryCover(Authentication authentication, @PathVariable UUID productId,
+                                                  @PathVariable UUID assetId) {
+        User user = currentUserService.require(authentication);
+        imageService.useLibraryProductCover(user, productId, assetId);
+        return storeService.getOwn(user).orElseThrow();
+    }
+
+    @DeleteMapping("/products/{productId}/cover")
+    public StoreDashboardResponse removeCover(Authentication authentication, @PathVariable UUID productId) {
+        User user = currentUserService.require(authentication);
+        imageService.removeProductCover(user, productId);
+        return storeService.getOwn(user).orElseThrow();
     }
 
     /** Upload the store logo or author photo ({@code kind} = logo | photo). */

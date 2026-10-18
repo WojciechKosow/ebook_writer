@@ -1,7 +1,9 @@
 package com.ebookwriter.SaaS.service.store;
 
 import com.ebookwriter.SaaS.entity.Store;
+import com.ebookwriter.SaaS.entity.StoreProduct;
 import com.ebookwriter.SaaS.entity.User;
+import com.ebookwriter.SaaS.repository.StoreProductRepository;
 import com.ebookwriter.SaaS.repository.StoreRepository;
 import com.ebookwriter.SaaS.service.ebook.EbookImageService;
 import com.ebookwriter.SaaS.service.library.AssetLibraryService;
@@ -26,6 +28,9 @@ import java.util.UUID;
  * accepted — never SVG, which can carry script — and the type is taken from the
  * file's bytes, not the client. Uploads are kept in the user's asset library
  * too, and a library image can be used here instead of uploading again.
+ *
+ * <p>Also a product's own cover/thumbnail — kept apart from its downloadable
+ * files, under the same rules.
  */
 @Slf4j
 @Service
@@ -39,6 +44,7 @@ public class StoreImageService {
     private static final Map<String, String> EXT = Map.of("image/png", "png", "image/jpeg", "jpg", "image/webp", "webp");
 
     private final StoreRepository storeRepository;
+    private final StoreProductRepository productRepository;
     private final R2StorageService storage;
     private final AssetLibraryService assetLibraryService;
 
@@ -107,6 +113,66 @@ public class StoreImageService {
         }
         storeRepository.save(store);
         deleteQuietly(old);
+    }
+
+    // ---- Product cover ---------------------------------------------------------
+
+    /** Upload a product's own cover (replaces the ebook's first page as its cover). */
+    @Transactional
+    public void uploadProductCover(User user, UUID productId, MultipartFile file) {
+        StoreProduct product = requireOwnProduct(user, productId);
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Could not read the file");
+        }
+        String type = validate(bytes);
+        int[] dimensions = EbookImageService.readDimensions(bytes);
+        assetLibraryService.remember(user.getId(), bytes, type,
+                EbookImageService.sanitizeFilename(file.getOriginalFilename()), dimensions[0], dimensions[1]);
+        replaceProductCover(product, bytes, type);
+    }
+
+    @Transactional
+    public void useLibraryProductCover(User user, UUID productId, UUID libraryAssetId) {
+        StoreProduct product = requireOwnProduct(user, productId);
+        AssetLibraryService.Loaded loaded = assetLibraryService.use(user.getId(), libraryAssetId);
+        replaceProductCover(product, loaded.bytes(), validate(loaded.bytes()));
+    }
+
+    @Transactional
+    public void removeProductCover(User user, UUID productId) {
+        StoreProduct product = requireOwnProduct(user, productId);
+        String old = product.getCoverKey();
+        product.setCoverKey(null);
+        product.setCoverContentType(null);
+        productRepository.save(product);
+        deleteQuietly(old);
+    }
+
+    /** A product's own cover, if it has one. */
+    public Optional<Image> productCover(StoreProduct product) {
+        if (product.getCoverKey() == null || product.getCoverContentType() == null) {
+            return Optional.empty();
+        }
+        return storage.download(product.getCoverKey()).map(bytes -> new Image(bytes, product.getCoverContentType()));
+    }
+
+    private void replaceProductCover(StoreProduct product, byte[] bytes, String type) {
+        String key = "products/" + product.getId() + "/cover-" + UUID.randomUUID() + "." + EXT.get(type);
+        storage.upload(key, bytes, type);
+        String old = product.getCoverKey();
+        product.setCoverKey(key);
+        product.setCoverContentType(type);
+        productRepository.save(product);
+        deleteQuietly(old);
+    }
+
+    private StoreProduct requireOwnProduct(User user, UUID productId) {
+        Store store = requireOwn(user);
+        return productRepository.findByIdAndStoreId(productId, store.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found"));
     }
 
     /** The image of a store, for the public store page. */

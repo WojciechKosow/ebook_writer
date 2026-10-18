@@ -9,10 +9,11 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * An ebook for sale in a {@link Store}. In the MVP a product is always a
- * finished Scrivetta ebook of the store owner; the file delivered is that
- * ebook's current PDF. The price lives here, in our database — Checkout is
- * built from it, the client never sends it.
+ * A digital product for sale in a {@link Store}: either a finished Scrivetta
+ * ebook of the store owner (its current PDF is delivered) or a standalone
+ * product with no ebook, or both — plus any number of uploaded
+ * {@link ProductFile}s (PDF, EPUB, ZIP). The price lives here, in our database —
+ * Checkout is built from it, the client never sends it.
  */
 @Entity
 @Getter
@@ -30,7 +31,7 @@ public class StoreProduct {
     @Column(nullable = false)
     private UUID storeId;
 
-    @Column(nullable = false)
+    /** The Scrivetta ebook whose PDF is delivered, or null for a standalone product (uploaded files only). */
     private UUID ebookId;
 
     @Column(nullable = false, length = 200)
@@ -39,7 +40,6 @@ public class StoreProduct {
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    /** Price in the smallest currency unit (cents). */
     /** "What you'll be able to do" — one point per line. */
     @Column(columnDefinition = "TEXT")
     private String highlights;
@@ -48,6 +48,7 @@ public class StoreProduct {
     @Column(nullable = false, columnDefinition = "integer not null default 0")
     private int sortOrder;
 
+    /** Price in the smallest currency unit (cents). */
     @Column(nullable = false)
     private long priceCents;
 
@@ -56,6 +57,13 @@ public class StoreProduct {
     private String currency;
 
     private boolean active = true;
+
+    /**
+     * Private R2 key of the author's own cover/thumbnail (separate from the
+     * downloadable files). Null = the ebook's first page, or no cover.
+     */
+    private String coverKey;
+    private String coverContentType;
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

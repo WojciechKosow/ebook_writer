@@ -20,7 +20,8 @@ Publishing a store and selling both require active Scrivetta PRO
 | Backend re-checks published + PRO + `charges_enabled`, creates a `PENDING` `store_order` and a Checkout Session **on the connected account** | `StoreCheckoutService` |
 | Stripe sends `checkout.session.completed` (`payment_status=paid`) → order `PAID`, download grant, email with the link | `/api/stripe/connect/webhook` |
 | Success page polls our order status until `PAID` | `GET /api/public/orders/{id}` |
-| Buyer downloads through the backend (token: 30 days, max 5 downloads) | `GET /api/public/downloads/{token}/file` |
+| Guest buyer downloads each file through the backend (token: 30 days, 5 downloads per file) | `GET /api/public/downloads/{token}/files/{fileId}` |
+| Signed-in buyer with a verified account: **My Purchases**, unlimited downloads | `GET /api/purchases`, see [product-files.md](product-files.md) |
 
 Connected accounts are created with **Accounts v2** (`POST /v2/core/accounts`). Stripe refuses
 v1 account creation for new Connect platforms, so the original v1 controller properties map to:
@@ -131,12 +132,14 @@ Then:
 `stores` (incl. `stripe_account_id`, `charges_enabled`, `details_submitted`,
 `requirements_currently_due`, `stripe_synced_at`), `store_products`, `store_order`,
 `download_grant` (only the SHA-256 of the token is stored) and `stripe_webhook_event`.
-See `docs/migrations/2026-10-14-creator-store-payments.sql`.
+See `docs/migrations/2026-10-14-creator-store-payments.sql`; product files, covers and
+`store_order.buyer_user_id` are in `docs/migrations/2026-10-18-product-files.sql`.
 
 ## Known gaps (MVP)
 
 - If the buyer email fails to send, the order stays `PAID` but the buyer has no link
   (logged as an error). Resending is a follow-up.
-- Products are Scrivetta ebooks only; the delivered file is the ebook's current PDF.
+- Products can be Scrivetta ebooks (their current PDF is delivered) and/or carry uploaded
+  PDF/EPUB/ZIP files — see [product-files.md](product-files.md).
 - Test mode only. Going live needs explicit production configuration
   (`STRIPE_CONNECT_LIVE_ENABLED=true`, a live key and a live Connect webhook).

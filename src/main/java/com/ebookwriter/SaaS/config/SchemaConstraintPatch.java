@@ -23,6 +23,9 @@ import java.util.List;
  * application, so dropping these DB checks is safe and removes the drift for
  * good — without a manual migration.
  *
+ * <p>Also relaxes NOT NULL columns that became optional ({@link #RELAXED_COLUMNS}) —
+ * {@code ddl-auto=update} adds columns but never changes an existing one.
+ *
  * <p>Idempotent ({@code DROP CONSTRAINT IF EXISTS}) and never fatal: runs after
  * Hibernate's schema update and tolerates a constraint (or table) that isn't
  * there, so it is a no-op on a fresh database.
@@ -56,7 +59,15 @@ public class SchemaConstraintPatch implements ApplicationRunner {
             new String[]{"book_blueprints", "book_blueprints_status_check"},
             new String[]{"ebooks", "ebooks_generation_mode_check"},
             new String[]{"ebooks", "ebooks_depth_check"},
-            new String[]{"blueprint_questions", "blueprint_questions_status_check"});
+            new String[]{"blueprint_questions", "blueprint_questions_status_check"},
+            new String[]{"store_product_files", "store_product_files_format_check"});
+
+    /**
+     * (table, column) pairs that are nullable now. store_products.ebook_id: a
+     * product can be standalone (uploaded files only, no Scrivetta ebook).
+     */
+    private static final List<String[]> RELAXED_COLUMNS = List.<String[]>of(
+            new String[]{"store_products", "ebook_id"});
 
     @Override
     public void run(ApplicationArguments args) {
@@ -66,6 +77,14 @@ public class SchemaConstraintPatch implements ApplicationRunner {
                 jdbcTemplate.execute(sql);
             } catch (RuntimeException e) {
                 // e.g. the table doesn't exist yet on a brand-new DB — harmless.
+                log.debug("[schema] Skipped '{}': {}", sql, e.getMessage());
+            }
+        }
+        for (String[] tc : RELAXED_COLUMNS) {
+            String sql = "ALTER TABLE " + tc[0] + " ALTER COLUMN " + tc[1] + " DROP NOT NULL";
+            try {
+                jdbcTemplate.execute(sql);
+            } catch (RuntimeException e) {
                 log.debug("[schema] Skipped '{}': {}", sql, e.getMessage());
             }
         }

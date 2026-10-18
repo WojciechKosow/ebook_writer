@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
@@ -15,6 +16,8 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
+import java.io.InputStream;
+import java.nio.file.Path;
 import java.util.Optional;
 
 /**
@@ -59,6 +62,53 @@ public class R2StorageService {
             throw new StorageException("Failed to upload object " + key + ": "
                     + e.awsErrorDetails().errorMessage(), e);
         }
+    }
+
+    /**
+     * Upload a file from disk under {@code key}, streamed (never held in memory) —
+     * for large store product files.
+     */
+    public void upload(String key, Path file, long size, String contentType) {
+        requireConfigured();
+        try {
+            r2Client.putObject(PutObjectRequest.builder()
+                            .bucket(properties.getBucket())
+                            .key(key)
+                            .contentType(contentType)
+                            .contentLength(size)
+                            .build(),
+                    RequestBody.fromFile(file));
+        } catch (NoSuchBucketException e) {
+            throw new StorageException(bucketMissingMessage(), e);
+        } catch (S3Exception e) {
+            throw new StorageException("Failed to upload object " + key + ": "
+                    + e.awsErrorDetails().errorMessage(), e);
+        }
+    }
+
+    /**
+     * Open the object at {@code key} as a stream (the caller closes it), or empty
+     * if it does not exist. For streaming large files straight to a response.
+     */
+    public Optional<StoredObject> openStream(String key) {
+        requireConfigured();
+        try {
+            ResponseInputStream<GetObjectResponse> in = r2Client.getObject(GetObjectRequest.builder()
+                    .bucket(properties.getBucket())
+                    .key(key)
+                    .build());
+            Long length = in.response().contentLength();
+            return Optional.of(new StoredObject(in, length != null ? length : -1));
+        } catch (NoSuchKeyException e) {
+            return Optional.empty();
+        } catch (S3Exception e) {
+            throw new StorageException("Failed to download object " + key + ": "
+                    + e.awsErrorDetails().errorMessage(), e);
+        }
+    }
+
+    /** An open object: its bytes and length (-1 when unknown). */
+    public record StoredObject(InputStream stream, long length) {
     }
 
     /** Download the object at {@code key}, or empty if it does not exist. */
