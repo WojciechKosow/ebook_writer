@@ -104,7 +104,9 @@ public class DownloadGrantService {
                 store != null ? StoreImageService.url(store, StoreImageService.Kind.LOGO) : null,
                 StoreService.coverUrl(product, ebook), size, files,
                 grant.getMaxDownloads() - grant.getDownloadsUsed(), grant.getExpiresAt(),
-                store != null ? storeService.moreFrom(store, product.getId()) : List.of());
+                store != null ? storeService.moreFrom(store, product.getId()) : List.of(),
+                store != null ? storeService.profile(store) : null,
+                store != null ? store.getThemeSettings() : null, product.getPageSettings());
     }
 
     /**

@@ -10,6 +10,10 @@ public record StoreOrderStatusResponse(
         StoreOrderStatus status,
         String productTitle,
         String storeSlug,
-        String storeName
+        String storeName,
+        /** The product's page design (JSON) — the success page shows the author's thank-you. Public anyway. */
+        String pageSettings,
+        UUID productId,
+        String coverUrl
 ) {
 }

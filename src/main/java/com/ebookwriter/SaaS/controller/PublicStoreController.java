@@ -60,6 +60,14 @@ public class PublicStoreController {
         return storeService.getPublicProduct(slug, productId);
     }
 
+    /** A chapter the author offers as a free preview of the product. */
+    @GetMapping("/stores/{slug}/products/{productId}/preview/{number}")
+    public com.ebookwriter.SaaS.dto.store.SampleChapterResponse sample(@PathVariable String slug,
+                                                                       @PathVariable UUID productId,
+                                                                       @PathVariable int number) {
+        return storeService.publicSample(slug, productId, number);
+    }
+
     /** The store's logo or author photo. */
     @GetMapping("/stores/{slug}/images/{kind}")
     public ResponseEntity<byte[]> storeImage(@PathVariable String slug, @PathVariable String kind) {

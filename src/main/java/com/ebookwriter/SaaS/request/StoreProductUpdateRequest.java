@@ -9,6 +9,8 @@ public record StoreProductUpdateRequest(
         /** "What you'll be able to do", one point per line. */
         @Size(max = 1500) String highlights,
         Long priceCents,
-        Boolean active
+        Boolean active,
+        /** The page design (JSON). Null = unchanged, blank = back to defaults. */
+        @Size(max = 30_000, message = "This page design is too large") String pageSettings
 ) {
 }
