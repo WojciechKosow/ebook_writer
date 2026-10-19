@@ -300,6 +300,8 @@ class CreatorStorePaymentsIntegrationTest {
 
     @Test
     void publishingRequiresPro() throws Exception {
+        store.setPublished(false);
+        storeRepository.save(store);
         setPro(author, "past_due");
         mvc.perform(post("/api/store/publish").with(asAuthor())).andExpect(status().isForbidden());
     }

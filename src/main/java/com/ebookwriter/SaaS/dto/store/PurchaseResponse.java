@@ -19,6 +19,9 @@ public record PurchaseResponse(
         LocalDateTime purchasedAt,
         /** Whether the product's page is still on sale (buyers keep their files either way). */
         boolean onSale,
-        List<ProductFileDTO> files
+        /** Files (account perks included); {@code updated} marks one replaced since the purchase. */
+        List<ProductFileDTO> files,
+        /** When the latest of those updates happened, or null. */
+        LocalDateTime updatedAt
 ) {
 }

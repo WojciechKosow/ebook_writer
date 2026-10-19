@@ -94,6 +94,10 @@ public class ProductFileService {
         file.setVersion(old.getVersion() + 1);
         file.setReplacesId(old.getId());
         file.setSortOrder(old.getSortOrder());
+        // Same extra, new bytes: the name buyers see, its note and who gets it stay.
+        file.setLabel(old.getLabel());
+        file.setNote(old.getNote());
+        file.setAccountOnly(old.isAccountOnly());
         old.setRemovedAt(LocalDateTime.now());
         old.setRemovedReason("REPLACED");
         fileRepository.save(old);
@@ -130,6 +134,12 @@ public class ProductFileService {
         log.info("[StoreFiles] Product {}: removed file {}", product.getId(), file.getId());
     }
 
+    /** Save a file's details (the store's publish applies the draft's names and perks). */
+    @Transactional
+    public ProductFile save(ProductFile file) {
+        return fileRepository.save(file);
+    }
+
     /** Current uploaded files of a product, in display order. */
     @Transactional(readOnly = true)
     public List<ProductFile> current(UUID productId) {
@@ -157,20 +167,38 @@ public class ProductFileService {
         return hasEbookPdf(product) || fileRepository.countByProductIdAndRemovedAtIsNull(product.getId()) > 0;
     }
 
-    /** What a buyer of this product gets right now: the ebook's PDF (if any), then the uploaded files. */
+    /**
+     * What a buyer with a Scrivetta account gets right now: the ebook's PDF (if
+     * any), then the uploaded files — account perks included.
+     */
     @Transactional(readOnly = true)
     public List<DeliverableFile> deliverables(StoreProduct product) {
+        return deliverables(product, true);
+    }
+
+    /** What a buyer gets; {@code withPerks} false = a guest (the emailed link), without the account perks. */
+    @Transactional(readOnly = true)
+    public List<DeliverableFile> deliverables(StoreProduct product, boolean withPerks) {
         List<DeliverableFile> files = new ArrayList<>();
         if (product.getEbookId() != null) {
             pdfRepository.findById(product.getEbookId()).ifPresent(pdf -> files.add(new DeliverableFile(
                     EBOOK_PDF_ID, ebookFilename(product), ProductFileFormat.PDF, pdf.getData().length, 1,
-                    ebookRepository.findById(product.getEbookId()).map(Ebook::getUpdatedAt).orElse(null))));
+                    ebookRepository.findById(product.getEbookId()).map(Ebook::getUpdatedAt).orElse(null),
+                    null, null, false)));
         }
         for (ProductFile f : current(product.getId())) {
-            files.add(new DeliverableFile(f.getId().toString(), f.getOriginalFilename(), f.getFormat(),
-                    f.getSizeBytes(), f.getVersion(), f.getCreatedAt()));
+            if (withPerks || !f.isAccountOnly()) {
+                files.add(new DeliverableFile(f.getId().toString(), f.getOriginalFilename(), f.getFormat(),
+                        f.getSizeBytes(), f.getVersion(), f.getCreatedAt(), f.getLabel(), f.getNote(), f.isAccountOnly()));
+            }
         }
         return files;
+    }
+
+    /** The account perks a guest doesn't get (shown to them as "comes with a free account"). */
+    @Transactional(readOnly = true)
+    public List<DeliverableFile> perks(StoreProduct product) {
+        return deliverables(product, true).stream().filter(DeliverableFile::accountOnly).toList();
     }
 
     /**
@@ -214,10 +242,10 @@ public class ProductFileService {
                 file.getOriginalFilename(), file.getFormat().contentType());
     }
 
-    /** The primary file (the first deliverable) — for the original single-file download link. */
+    /** The primary file (the first file a guest gets) — for the original single-file download link. */
     @Transactional(readOnly = true)
     public FileStream openPrimary(StoreProduct product) {
-        List<DeliverableFile> files = deliverables(product);
+        List<DeliverableFile> files = deliverables(product, false);
         if (files.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.GONE, "This file is no longer available.");
         }
@@ -281,6 +309,7 @@ public class ProductFileService {
         Store store = storeRepository.findByOwnerId(user.getId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "You don't have a store yet"));
         return productRepository.findByIdAndStoreId(productId, store.getId())
+                .filter(p -> p.getRemovedAt() == null)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found"));
     }
 
@@ -342,7 +371,8 @@ public class ProductFileService {
 
     /** A file a buyer can download, as listed to them. */
     public record DeliverableFile(String id, String filename, ProductFileFormat format, long sizeBytes,
-                                  int version, LocalDateTime updatedAt) {
+                                  int version, LocalDateTime updatedAt, String label, String note,
+                                  boolean accountOnly) {
     }
 
     /** An opened file: the caller streams and closes it. */

@@ -69,6 +69,21 @@ public class ProductFile {
     @Column(nullable = false)
     private int sortOrder;
 
+    /** The name buyers see ("For e-readers"); null = the filename. Carried over to a replacement. */
+    @Column(length = 120)
+    private String label;
+
+    /** What it's for, one line ("Read it on Kindle, Kobo or Apple Books"). */
+    @Column(length = 300)
+    private String note;
+
+    /**
+     * An account perk: only buyers with a Scrivetta account get it (in My
+     * Purchases); the guest download link leaves it out.
+     */
+    @Column(nullable = false, columnDefinition = "boolean not null default false")
+    private boolean accountOnly;
+
     /** The author who uploaded it. */
     @Column(nullable = false)
     private UUID uploadedBy;

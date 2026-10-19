@@ -172,6 +172,7 @@ public class StoreImageService {
     private StoreProduct requireOwnProduct(User user, UUID productId) {
         Store store = requireOwn(user);
         return productRepository.findByIdAndStoreId(productId, store.getId())
+                .filter(p -> p.getRemovedAt() == null)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found"));
     }
 

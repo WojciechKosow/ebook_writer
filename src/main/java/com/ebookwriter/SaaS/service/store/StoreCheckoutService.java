@@ -48,6 +48,7 @@ public class StoreCheckoutService {
     private final StoreOrderRepository orderRepository;
     private final ProductFileService fileService;
     private final StoreService storeService;
+    private final DownloadGrantService grantService;
     private final StripeConnectGateway stripe;
     private final StripeConnectProperties connectProperties;
 
@@ -129,7 +130,8 @@ public class StoreCheckoutService {
                                 .build())
                         .build())
                 .setExpiresAt(Instant.now().plusSeconds(60L * expiryMinutes()).getEpochSecond())
-                .setSuccessUrl(base + "/success?order=" + orderId)
+                // Stripe fills in the session id: the success page's proof that this browser paid.
+                .setSuccessUrl(base + "/success?order=" + orderId + "&session_id={CHECKOUT_SESSION_ID}")
                 .setCancelUrl(base + "/cancel?order=" + orderId)
                 .build();
 
@@ -149,20 +151,32 @@ public class StoreCheckoutService {
         return new StoreCheckoutResponse(order.getId(), session.url());
     }
 
-    /** What the success page polls. Reads our database only — the webhook decides PAID. */
+    /**
+     * What the success page polls. Reads our database only — the webhook decides
+     * PAID. With the order's Checkout Session id, a paid order also lists its files.
+     */
     @Transactional(readOnly = true)
-    public StoreOrderStatusResponse status(UUID orderId) {
+    public StoreOrderStatusResponse status(UUID orderId, String sessionId) {
         StoreOrder order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order not found"));
         StoreProduct product = productRepository.findById(order.getProductId()).orElse(null);
         Store store = storeRepository.findById(order.getStoreId()).orElse(null);
+        boolean buyer = DownloadGrantService.sameSession(order, sessionId);
+        DownloadGrantService.OrderFiles files = buyer ? grantService.orderFiles(order) : null;
         return new StoreOrderStatusResponse(order.getId(), order.getStatus(),
                 product != null ? product.getTitle() : null,
                 store != null ? store.getSlug() : null,
                 store != null ? store.getName() : null,
                 product != null ? product.getPageSettings() : null,
                 order.getProductId(),
-                product != null ? StoreService.coverUrl(product, storeService.ebookOf(product)) : null);
+                product != null ? StoreService.coverUrl(product, storeService.ebookOf(product)) : null,
+                buyer ? order.getAmount() : null,
+                buyer ? order.getBuyerEmail() : null,
+                files != null ? files.files() : null,
+                files != null ? files.perks() : null,
+                files != null ? files.expiresAt() : null,
+                buyer ? order.getBuyerUserId() != null : null,
+                DownloadGrantService.MAX_DOWNLOADS);
     }
 
     private long expiryMinutes() {

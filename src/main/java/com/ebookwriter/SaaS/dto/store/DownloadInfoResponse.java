@@ -16,6 +16,7 @@ public record DownloadInfoResponse(
         long fileSizeBytes,
         /** Every file the buyer can download; each download counts one. */
         List<ProductFileDTO> files,
+        /** Downloads left across all files (each file also shows its own). */
         int downloadsRemaining,
         LocalDateTime expiresAt,
         /** Other ebooks still on sale in the store (empty when it is unpublished). */
@@ -24,6 +25,10 @@ public record DownloadInfoResponse(
         StoreProfile store,
         /** The store's design (JSON) and the product's page design (JSON) — for the after-purchase page. */
         String themeSettings,
-        String pageSettings
+        String pageSettings,
+        /** Account perks the guest link leaves out — shown as "comes with a free account". */
+        List<ProductFileDTO> perks,
+        /** How many times each file can be downloaded with this link. */
+        int downloadLimit
 ) {
 }

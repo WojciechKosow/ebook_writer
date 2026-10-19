@@ -1,5 +1,6 @@
 package com.ebookwriter.SaaS.dto.store;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -26,6 +27,13 @@ public record StoreDashboardResponse(
         /** The store page design (JSON), null for the default (Scrivetta) style. */
         String themeSettings,
         /** Chapters of the first active ebook, so the design editor previews what buyers see. */
-        List<PublicProductResponse.Chapter> featuredChapters
+        List<PublicProductResponse.Chapter> featuredChapters,
+        /**
+         * What "Publish changes" would apply. Every other field shows the draft
+         * (what the author is editing); these say how it differs from the live store.
+         */
+        List<PendingChange> changes,
+        /** When the draft was last saved, or null. */
+        LocalDateTime draftSavedAt
 ) {
 }

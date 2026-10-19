@@ -11,6 +11,11 @@ public interface StoreProductRepository extends JpaRepository<StoreProduct, UUID
 
     List<StoreProduct> findByStoreIdOrderBySortOrderAscCreatedAtAsc(UUID storeId);
 
+    /** The store's products, without the ones the author removed. */
+    List<StoreProduct> findByStoreIdAndRemovedAtIsNullOrderBySortOrderAscCreatedAtAsc(UUID storeId);
+
+    Optional<StoreProduct> findByStoreIdAndEbookId(UUID storeId, UUID ebookId);
+
     List<StoreProduct> findByStoreIdAndActiveTrueOrderBySortOrderAscCreatedAtAsc(UUID storeId);
 
     Optional<StoreProduct> findByIdAndStoreId(UUID id, UUID storeId);

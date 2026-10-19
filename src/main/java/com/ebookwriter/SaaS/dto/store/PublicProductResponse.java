@@ -28,7 +28,13 @@ public record PublicProductResponse(
         /** The product page design (JSON), null for defaults. */
         String pageSettings,
         /** Chapters buyers can read for free (see the preview endpoint). */
-        List<Chapter> sampleChapters
+        List<Chapter> sampleChapters,
+        /** What's included: every file a buyer gets (no download names), account perks marked. */
+        List<ProductFileDTO> included,
+        /** The guest download rule: each file this many times… */
+        int downloadLimit,
+        /** …within this many days. */
+        int downloadDays
 ) {
     public record Chapter(int number, String title) {
     }

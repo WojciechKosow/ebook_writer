@@ -29,6 +29,10 @@ public record StoreProductDTO(
         /** The ebook's chapters (empty for a standalone product). */
         List<ChapterRef> chapters,
         String subtitle,
-        String language
+        String language,
+        /** Shown to buyers right now (the live store; the fields above are the draft). */
+        boolean liveActive,
+        /** The price buyers pay right now. */
+        long livePriceCents
 ) {
 }

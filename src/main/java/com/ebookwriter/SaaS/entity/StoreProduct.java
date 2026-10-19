@@ -74,6 +74,12 @@ public class StoreProduct {
     @Column(columnDefinition = "TEXT")
     private String pageSettings;
 
+    /**
+     * Set when the author removed the product from the store. The row stays so
+     * buyers keep their purchases; it is never shown or sold again.
+     */
+    private LocalDateTime removedAt;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
