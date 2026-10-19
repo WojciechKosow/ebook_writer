@@ -136,8 +136,14 @@ public class PurchaseService {
     private PurchaseResponse toResponse(StoreOrder order) {
         StoreProduct product = productRepository.findById(order.getProductId()).orElse(null);
         Store store = storeRepository.findById(order.getStoreId()).orElse(null);
+        // A file replaced since the purchase is marked, so the buyer knows they have the new version.
         List<ProductFileDTO> files = product == null ? List.of()
-                : fileService.deliverables(product).stream().map(StoreService::toFileDTO).toList();
+                : fileService.deliverables(product).stream()
+                .map(f -> StoreService.toFileDTO(f).withUpdated(f.version() > 1 && f.updatedAt() != null
+                        && order.getPaidAt() != null && f.updatedAt().isAfter(order.getPaidAt())))
+                .toList();
+        java.time.LocalDateTime updatedAt = files.stream().filter(ProductFileDTO::updated)
+                .map(ProductFileDTO::updatedAt).max(java.util.Comparator.naturalOrder()).orElse(null);
         return new PurchaseResponse(order.getId(), order.getProductId(),
                 product != null ? product.getTitle() : "Unavailable product",
                 store != null ? store.getName() : null,
@@ -147,7 +153,7 @@ public class PurchaseService {
                 product != null ? StoreService.coverUrl(product, storeService.ebookOf(product)) : null,
                 order.getAmount(), order.getCurrency(), order.getPaidAt(),
                 product != null && product.isActive() && store != null && store.isPublished(),
-                files);
+                files, updatedAt);
     }
 
     private StoreProduct requireProduct(StoreOrder order) {

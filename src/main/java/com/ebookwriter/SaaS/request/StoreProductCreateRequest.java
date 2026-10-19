@@ -14,6 +14,8 @@ public record StoreProductCreateRequest(
         UUID ebookId,
         @NotNull Long priceCents,
         @Size(max = 200) String title,
-        @Size(max = 2000) String description
+        @Size(max = 2000) String description,
+        /** Put it first in the store (the featured product). */
+        Boolean featured
 ) {
 }

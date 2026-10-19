@@ -21,6 +21,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -88,6 +89,8 @@ class ProductPageIntegrationTest {
                 .andExpect(jsonPath("$.products[0].pageSettings").value(doc))
                 .andExpect(jsonPath("$.products[0].chapters.length()").value(3))
                 .andExpect(jsonPath("$.products[0].chapters[2].hasText").value(false));
+        mvc.perform(post("/api/store/publish").with(SecurityMockMvcRequestPostProcessors.user(author.getEmail())))
+                .andExpect(status().isOk());
 
         String page = "/api/public/stores/" + store.getSlug() + "/products/" + product.getId();
         mvc.perform(get(page)).andExpect(status().isOk())

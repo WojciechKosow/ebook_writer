@@ -107,7 +107,15 @@ class StoreProfileAndPagesIntegrationTest {
                          "contactEmail":"jane@example.com","instagramUrl":"https://instagram.com/jane",
                          "tiktokUrl":"","websiteUrl":""}"""))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.headline").value("Bake bread you're proud of"));
+                .andExpect(jsonPath("$.headline").value("Bake bread you're proud of"))
+                .andExpect(jsonPath("$.changes.length()").value(5));
+
+        // A draft until published: buyers still see the old profile.
+        mvc.perform(get("/api/public/stores/" + store.getSlug()))
+                .andExpect(jsonPath("$.store.authorName").doesNotExist());
+        mvc.perform(post("/api/store/publish").with(asAuthor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.changes.length()").value(0));
 
         mvc.perform(get("/api/public/stores/" + store.getSlug()))
                 .andExpect(status().isOk())
@@ -129,6 +137,7 @@ class StoreProfileAndPagesIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.themeSettings").value(design))
                 .andExpect(jsonPath("$.featuredChapters[0].title").value("Making a starter"));
+        mvc.perform(post("/api/store/publish").with(asAuthor())).andExpect(status().isOk());
 
         mvc.perform(get("/api/public/stores/" + store.getSlug()))
                 .andExpect(status().isOk())
@@ -176,6 +185,7 @@ class StoreProfileAndPagesIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"highlights\":\"Keep a starter alive\\n\\nShape a loaf\\n\"}"))
                 .andExpect(status().isOk());
+        mvc.perform(post("/api/store/publish").with(asAuthor())).andExpect(status().isOk());
 
         mvc.perform(get("/api/public/stores/" + store.getSlug() + "/products/" + first.getId()))
                 .andExpect(status().isOk())
@@ -209,6 +219,9 @@ class StoreProfileAndPagesIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"direction\":\"up\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.products[0].title").value("Weeknight Bread"));
+        mvc.perform(get("/api/public/stores/" + store.getSlug()))
+                .andExpect(jsonPath("$.products[0].title").value("Sourdough at Home"));
+        mvc.perform(post("/api/store/publish").with(asAuthor())).andExpect(status().isOk());
         mvc.perform(get("/api/public/stores/" + store.getSlug()))
                 .andExpect(jsonPath("$.products[0].title").value("Weeknight Bread"));
     }

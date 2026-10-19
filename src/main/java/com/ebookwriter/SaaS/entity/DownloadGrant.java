@@ -41,6 +41,13 @@ public class DownloadGrant {
 
     private int maxDownloads;
 
+    /**
+     * Downloads used per file, as {@code fileId=count} pairs separated by commas.
+     * Each file may be downloaded {@code DownloadGrantService.MAX_DOWNLOADS} times.
+     */
+    @Column(columnDefinition = "TEXT")
+    private String fileDownloads;
+
     private LocalDateTime revokedAt;
 
     private LocalDateTime createdAt;

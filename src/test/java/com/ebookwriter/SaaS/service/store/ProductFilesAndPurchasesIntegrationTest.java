@@ -261,8 +261,11 @@ class ProductFilesAndPurchasesIntegrationTest {
 
         byte[] zip = ProductFileValidatorTest.zip(Map.of("budget.csv", "a,b"));
         upload(product, "templates.zip", zip).andExpect(status().isOk());
-        mvc.perform(patch("/api/store/products/" + product.getId()).with(as(author)).contentType(MediaType.APPLICATION_JSON)
-                .content("{\"active\":true}")).andExpect(status().isOk());
+        // Added to a live store: it goes live with the next publish, now that it has a file.
+        mvc.perform(get("/api/store").with(as(author)))
+                .andExpect(jsonPath("$.changes[?(@.field=='active')].after").value("true"));
+        mvc.perform(post("/api/store/publish").with(as(author))).andExpect(status().isOk());
+        assertTrue(productRepository.findById(product.getId()).orElseThrow().isActive());
 
         // Own cover (separate from the files), served publicly.
         byte[] png = Base64.getDecoder().decode(
@@ -556,6 +559,154 @@ class ProductFilesAndPurchasesIntegrationTest {
         mvc.perform(get("/api/public/downloads/" + token + "/files/" + UUID.randomUUID())).andExpect(status().isNotFound());
         mvc.perform(get("/api/public/downloads/wrong-token/files/" + file.getId())).andExpect(status().isNotFound());
         assertEquals(2, grantRepository.findByOrderId(order.getId()).orElseThrow().getDownloadsUsed());
+    }
+
+    @Test
+    void accountPerksAreLeftOutOfTheGuestLinkButShownToAccounts() throws Exception {
+        upload(ebookProduct, "schedule.zip", ProductFileValidatorTest.zip(Map.of("week.txt", "feed"))).andExpect(status().isOk());
+        ProductFile zip = currentFiles(ebookProduct).get(0);
+        mvc.perform(patch("/api/store/products/" + ebookProduct.getId() + "/files/" + zip.getId()).with(as(author))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\":\"Starter schedule\",\"note\":\"A feeding plan\",\"accountOnly\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.products[0].files[0].label").value("Starter schedule"))
+                .andExpect(jsonPath("$.products[0].files[0].accountOnly").value(true))
+                .andExpect(jsonPath("$.changes.length()").value(3));
+        assertFalse(fileRepository.findById(zip.getId()).orElseThrow().isAccountOnly(), "a draft until published");
+        mvc.perform(post("/api/store/publish").with(as(author))).andExpect(status().isOk());
+        assertTrue(fileRepository.findById(zip.getId()).orElseThrow().isAccountOnly());
+
+        mvc.perform(get("/api/public/stores/" + store.getSlug() + "/products/" + ebookProduct.getId()))
+                .andExpect(jsonPath("$.included.length()").value(2))
+                .andExpect(jsonPath("$.included[1].label").value("Starter schedule"))
+                .andExpect(jsonPath("$.included[1].accountOnly").value(true))
+                .andExpect(jsonPath("$.included[1].filename").doesNotExist())
+                .andExpect(jsonPath("$.downloadLimit").value(5));
+
+        // Guest: the book only; the perk is listed as locked and can't be downloaded.
+        StoreOrder order = checkout(ebookProduct, null);
+        webhook(completed(evt(), order, "paid", "guest-" + suffix() + "@example.com")).andExpect(status().isOk());
+        String token = sentToken();
+        mvc.perform(get("/api/public/downloads/" + token))
+                .andExpect(jsonPath("$.files.length()").value(1))
+                .andExpect(jsonPath("$.perks[0].label").value("Starter schedule"));
+        mvc.perform(get("/api/public/downloads/" + token + "/files/" + zip.getId())).andExpect(status().isNotFound());
+
+        // Account: everything, perk included.
+        User buyer = user("perk-buyer", true);
+        StoreOrder bought = buy(ebookProduct, buyer, "paid");
+        JsonNode files = purchases(buyer).get(0).get("files");
+        assertEquals(2, files.size());
+        assertTrue(files.get(1).get("accountOnly").asBoolean());
+        downloadAsBuyer(buyer, bought, zip.getId().toString());
+    }
+
+    @Test
+    void theSuccessPageListsTheFilesOnlyForTheBuyersCheckoutSession() throws Exception {
+        StoreOrder order = checkout(ebookProduct, null);
+        String session = order.getCheckoutSessionId();
+        mvc.perform(get("/api/public/orders/" + order.getId()).param("session_id", session))
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andExpect(jsonPath("$.files").doesNotExist());
+        String email = "guest-" + suffix() + "@example.com";
+        webhook(completed(evt(), order, "paid", email)).andExpect(status().isOk());
+
+        mvc.perform(get("/api/public/orders/" + order.getId()))
+                .andExpect(jsonPath("$.status").value("PAID"))
+                .andExpect(jsonPath("$.buyerEmail").doesNotExist())
+                .andExpect(jsonPath("$.files").doesNotExist());
+        mvc.perform(get("/api/public/orders/" + order.getId()).param("session_id", session))
+                .andExpect(jsonPath("$.buyerEmail").value(email))
+                .andExpect(jsonPath("$.amount").value(PRICE))
+                .andExpect(jsonPath("$.files[0].id").value(ProductFileService.EBOOK_PDF_ID))
+                .andExpect(jsonPath("$.files[0].downloadsLeft").value(5));
+
+        String file = "/api/public/orders/" + order.getId() + "/files/" + ProductFileService.EBOOK_PDF_ID;
+        mvc.perform(get(file).param("session_id", "cs_wrong")).andExpect(status().isNotFound());
+        mvc.perform(get(file)).andExpect(status().isNotFound());
+        assertArrayEquals(EBOOK_PDF, mvc.perform(get(file).param("session_id", session))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray());
+        // Same grant as the emailed link: the count is shared.
+        mvc.perform(get("/api/public/downloads/" + sentToken()))
+                .andExpect(jsonPath("$.files[0].downloadsLeft").value(4));
+    }
+
+    @Test
+    void eachFileHasItsOwnDownloadLimit() throws Exception {
+        upload(ebookProduct, "Workbook.pdf", GUIDE_PDF).andExpect(status().isOk());
+        ProductFile workbook = currentFiles(ebookProduct).get(0);
+        StoreOrder order = checkout(ebookProduct, null);
+        webhook(completed(evt(), order, "paid", "guest-" + suffix() + "@example.com")).andExpect(status().isOk());
+        String token = sentToken();
+        for (int i = 0; i < DownloadGrantService.MAX_DOWNLOADS; i++) {
+            mvc.perform(get("/api/public/downloads/" + token + "/files/" + workbook.getId())).andExpect(status().isOk());
+        }
+        mvc.perform(get("/api/public/downloads/" + token + "/files/" + workbook.getId())).andExpect(status().isGone());
+        // The other file still has all of its downloads.
+        mvc.perform(get("/api/public/downloads/" + token))
+                .andExpect(jsonPath("$.files[0].downloadsLeft").value(5))
+                .andExpect(jsonPath("$.files[1].downloadsLeft").value(0));
+        mvc.perform(get("/api/public/downloads/" + token + "/files/" + ProductFileService.EBOOK_PDF_ID)).andExpect(status().isOk());
+    }
+
+    @Test
+    void draftChangesWaitForPublishAndCanBeDiscarded() throws Exception {
+        mvc.perform(patch("/api/store/products/" + ebookProduct.getId()).with(as(author)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"priceCents\":899}"))
+                .andExpect(jsonPath("$.products[0].priceCents").value(899))
+                .andExpect(jsonPath("$.products[0].livePriceCents").value(PRICE))
+                .andExpect(jsonPath("$.changes[0].field").value("priceCents"))
+                .andExpect(jsonPath("$.draftSavedAt").exists());
+        // Checkout charges the live price until the author publishes.
+        assertEquals(PRICE, checkout(ebookProduct, null).getAmount());
+
+        // Back to the live value: nothing pending any more.
+        mvc.perform(patch("/api/store/products/" + ebookProduct.getId()).with(as(author)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"priceCents\":" + PRICE + "}"))
+                .andExpect(jsonPath("$.changes.length()").value(0))
+                .andExpect(jsonPath("$.draftSavedAt").doesNotExist());
+
+        mvc.perform(patch("/api/store/products/" + ebookProduct.getId()).with(as(author)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"Sourdough, Simply\"}")).andExpect(status().isOk());
+        mvc.perform(post("/api/store/draft/discard").with(as(author)))
+                .andExpect(jsonPath("$.products[0].title").value("Sourdough at Home"))
+                .andExpect(jsonPath("$.changes.length()").value(0));
+
+        mvc.perform(patch("/api/store/products/" + ebookProduct.getId()).with(as(author)).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"priceCents\":899}")).andExpect(status().isOk());
+        mvc.perform(post("/api/store/publish").with(as(author))).andExpect(status().isOk());
+        assertEquals(899, checkout(ebookProduct, null).getAmount());
+    }
+
+    @Test
+    void aRemovedProductLeavesTheStoreButBuyersKeepIt() throws Exception {
+        User buyer = user("keeps-it", true);
+        StoreOrder order = buy(ebookProduct, buyer, "paid");
+        mvc.perform(delete("/api/store/products/" + ebookProduct.getId()).with(as(otherAuthor))).andExpect(status().isNotFound());
+        mvc.perform(delete("/api/store/products/" + ebookProduct.getId()).with(as(author)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.products.length()").value(0));
+        mvc.perform(get("/api/public/stores/" + store.getSlug())).andExpect(jsonPath("$.products.length()").value(0));
+        checkoutRequest(ebookProduct.getId(), null).andExpect(status().isNotFound());
+        assertArrayEquals(EBOOK_PDF, downloadAsBuyer(buyer, order, ProductFileService.EBOOK_PDF_ID));
+
+        // The ebook can be added back — as the same product.
+        mvc.perform(post("/api/store/products").with(as(author)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ebookId\":\"" + ebookProduct.getEbookId() + "\",\"priceCents\":700,\"featured\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.products[0].id").value(ebookProduct.getId().toString()))
+                .andExpect(jsonPath("$.products[0].active").value(true))
+                .andExpect(jsonPath("$.products[0].liveActive").value(false));
+    }
+
+    @Test
+    void theStoreAddressCanBeCheckedBeforeOpening() throws Exception {
+        mvc.perform(get("/api/store/slug-available").param("slug", store.getSlug()).with(as(otherAuthor)))
+                .andExpect(jsonPath("$.available").value(false));
+        mvc.perform(get("/api/store/slug-available").param("slug", "free-" + suffix()).with(as(otherAuthor)))
+                .andExpect(jsonPath("$.available").value(true));
+        mvc.perform(get("/api/store/slug-available").param("slug", "-Bad").with(as(otherAuthor)))
+                .andExpect(jsonPath("$.available").value(false));
     }
 
     // ---- Helpers ------------------------------------------------------------------

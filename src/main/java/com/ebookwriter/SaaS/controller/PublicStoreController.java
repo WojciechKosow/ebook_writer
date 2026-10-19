@@ -109,8 +109,16 @@ public class PublicStoreController {
     }
 
     @GetMapping("/orders/{orderId}")
-    public ResponseEntity<StoreOrderStatusResponse> order(@PathVariable UUID orderId) {
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(checkoutService.status(orderId));
+    public ResponseEntity<StoreOrderStatusResponse> order(@PathVariable UUID orderId,
+                                                         @RequestParam(value = "session_id", required = false) String sessionId) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(checkoutService.status(orderId, sessionId));
+    }
+
+    /** A download straight from the success page; the order's Checkout Session id is the credential. Counts one. */
+    @GetMapping("/orders/{orderId}/files/{fileId}")
+    public ResponseEntity<Resource> orderFile(@PathVariable UUID orderId, @PathVariable String fileId,
+                                              @RequestParam(value = "session_id", required = false) String sessionId) {
+        return FileResponses.attachment(downloadGrantService.downloadForOrder(orderId, sessionId, fileId));
     }
 
     @GetMapping("/downloads/{token}")

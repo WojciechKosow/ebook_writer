@@ -97,6 +97,17 @@ public class Store {
     @Column(columnDefinition = "TEXT")
     private String themeSettings;
 
+    /**
+     * Changes the author made that buyers don't see yet: everything edited in
+     * Your store and the editors autosaves here, and "Publish changes" applies it
+     * (see {@link com.ebookwriter.SaaS.service.store.StoreDraft}). Null = nothing pending.
+     */
+    @Column(columnDefinition = "TEXT")
+    private String draft;
+
+    /** When the draft was last saved. */
+    private LocalDateTime draftUpdatedAt;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

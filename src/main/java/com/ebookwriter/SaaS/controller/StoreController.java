@@ -41,6 +41,13 @@ public class StoreController {
         return storeService.getOwn(user).map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.noContent().build());
     }
 
+    /** Whether a store address is free — for the first-run form. */
+    @GetMapping("/slug-available")
+    public StoreService.SlugStatus slugAvailable(Authentication authentication, @RequestParam String slug) {
+        currentUserService.require(authentication);
+        return storeService.slugStatus(slug);
+    }
+
     @PostMapping
     public StoreDashboardResponse create(Authentication authentication, @Valid @RequestBody StoreCreateRequest request) {
         return storeService.create(currentUserService.require(authentication), request);
@@ -51,20 +58,27 @@ public class StoreController {
         return storeService.update(currentUserService.require(authentication), request);
     }
 
-    /** Save the store page design (style, texts, colors, custom CSS). */
+    /** Save the store page design (style, texts, colors, custom CSS) as a draft. */
     @PutMapping("/theme")
     public StoreDashboardResponse updateTheme(Authentication authentication, @Valid @RequestBody StoreThemeRequest request) {
         return storeService.updateTheme(currentUserService.require(authentication), request.settings());
     }
 
+    /** "Publish changes": apply every draft change and make the store public. */
     @PostMapping("/publish")
     public StoreDashboardResponse publish(Authentication authentication) {
-        return storeService.setPublished(currentUserService.require(authentication), true);
+        return storeService.publish(currentUserService.require(authentication));
     }
 
     @PostMapping("/unpublish")
     public StoreDashboardResponse unpublish(Authentication authentication) {
-        return storeService.setPublished(currentUserService.require(authentication), false);
+        return storeService.unpublish(currentUserService.require(authentication));
+    }
+
+    /** Throw away every change that isn't published yet. */
+    @PostMapping("/draft/discard")
+    public StoreDashboardResponse discardDraft(Authentication authentication) {
+        return storeService.discardDraft(currentUserService.require(authentication));
     }
 
     @PostMapping("/products")
@@ -77,6 +91,19 @@ public class StoreController {
     public StoreDashboardResponse updateProduct(Authentication authentication, @PathVariable UUID productId,
                                                 @Valid @RequestBody StoreProductUpdateRequest request) {
         return storeService.updateProduct(currentUserService.require(authentication), productId, request);
+    }
+
+    /** Remove a product from the store (buyers keep their purchases). */
+    @DeleteMapping("/products/{productId}")
+    public StoreDashboardResponse removeProduct(Authentication authentication, @PathVariable UUID productId) {
+        return storeService.removeProduct(currentUserService.require(authentication), productId);
+    }
+
+    /** The order of every product (first = featured), as a draft. */
+    @PutMapping("/products/order")
+    public StoreDashboardResponse reorderProducts(Authentication authentication,
+                                                  @Valid @RequestBody StoreProductOrderRequest request) {
+        return storeService.reorderProducts(currentUserService.require(authentication), request.productIds());
     }
 
     @PostMapping("/products/{productId}/move")
@@ -104,6 +131,13 @@ public class StoreController {
         User user = currentUserService.require(authentication);
         fileService.replace(user, productId, fileId, file);
         return storeService.getOwn(user).orElseThrow();
+    }
+
+    /** An extra's name for buyers, what it's for and whether it's an account perk (draft). */
+    @PatchMapping("/products/{productId}/files/{fileId}")
+    public StoreDashboardResponse updateFile(Authentication authentication, @PathVariable UUID productId,
+                                             @PathVariable UUID fileId, @Valid @RequestBody StoreFileUpdateRequest request) {
+        return storeService.updateFile(currentUserService.require(authentication), productId, fileId, request);
     }
 
     @DeleteMapping("/products/{productId}/files/{fileId}")
