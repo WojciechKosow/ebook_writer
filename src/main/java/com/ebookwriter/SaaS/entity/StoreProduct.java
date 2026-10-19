@@ -65,6 +65,15 @@ public class StoreProduct {
     private String coverKey;
     private String coverContentType;
 
+    /**
+     * The product page and after-purchase page as the author designed them: a
+     * JSON document only the frontend interprets, apart from the free-preview
+     * chapters. Null = defaults. Validated by
+     * {@link com.ebookwriter.SaaS.service.store.ProductPageValidator}.
+     */
+    @Column(columnDefinition = "TEXT")
+    private String pageSettings;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

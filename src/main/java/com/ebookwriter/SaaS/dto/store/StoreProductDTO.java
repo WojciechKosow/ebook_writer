@@ -23,6 +23,12 @@ public record StoreProductDTO(
         /** The uploaded downloadable files (current versions). */
         List<ProductFileDTO> files,
         /** Whether buyers would get anything (the ebook's PDF or at least one file). */
-        boolean deliverable
+        boolean deliverable,
+        /** The product page design (JSON), null for defaults. */
+        String pageSettings,
+        /** The ebook's chapters (empty for a standalone product). */
+        List<ChapterRef> chapters,
+        String subtitle,
+        String language
 ) {
 }

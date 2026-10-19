@@ -114,6 +114,14 @@ public class StoreController {
         return storeService.getOwn(user).orElseThrow();
     }
 
+    /** Any chapter of the author's ebook as the free preview would show it — for the page editor. */
+    @GetMapping("/products/{productId}/preview/{number}")
+    public com.ebookwriter.SaaS.dto.store.SampleChapterResponse sample(Authentication authentication,
+                                                                       @PathVariable UUID productId,
+                                                                       @PathVariable int number) {
+        return storeService.ownSample(currentUserService.require(authentication), productId, number);
+    }
+
     /** The product's own cover/thumbnail (PNG, JPG or WebP) — separate from its files. */
     @PostMapping(value = "/products/{productId}/cover", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public StoreDashboardResponse uploadCover(Authentication authentication, @PathVariable UUID productId,

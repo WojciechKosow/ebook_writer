@@ -159,7 +159,10 @@ public class StoreCheckoutService {
         return new StoreOrderStatusResponse(order.getId(), order.getStatus(),
                 product != null ? product.getTitle() : null,
                 store != null ? store.getSlug() : null,
-                store != null ? store.getName() : null);
+                store != null ? store.getName() : null,
+                product != null ? product.getPageSettings() : null,
+                order.getProductId(),
+                product != null ? StoreService.coverUrl(product, storeService.ebookOf(product)) : null);
     }
 
     private long expiryMinutes() {

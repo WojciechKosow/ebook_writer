@@ -54,6 +54,7 @@ public class StoreService {
     private final SubscriptionService subscriptionService;
     private final StripeConnectGateway stripe;
     private final ProductFileService fileService;
+    private final com.ebookwriter.SaaS.service.ebook.EbookContentRenderer contentRenderer;
 
     @Value("${app.frontend-url}")
     private String frontendUrl;
@@ -183,6 +184,9 @@ public class StoreService {
         }
         if (request.priceCents() != null) {
             product.setPriceCents(validPrice(request.priceCents()));
+        }
+        if (request.pageSettings() != null) {
+            product.setPageSettings(ProductPageValidator.validate(request.pageSettings(), chaptersWithText(ebookOf(product))));
         }
         if (request.active() != null) {
             if (request.active() && !fileService.isDeliverable(product)) {
@@ -318,7 +322,69 @@ public class StoreService {
                 ebook != null ? blankToNull(ebook.getLanguage()) : null,
                 ebook != null ? ebook.getUpdatedAt() : null, coverUrl(product, ebook), chapters,
                 fileService.deliverables(product).stream().map(f -> f.format().name()).distinct().toList(),
-                moreFrom(store, product.getId()));
+                moreFrom(store, product.getId()), store.getThemeSettings(), product.getPageSettings(),
+                sampleRefs(product, ebook));
+    }
+
+    /**
+     * A free-preview chapter of a product on sale. Only chapters the author put in
+     * the free preview are served; anything else is the same 404.
+     */
+    @Transactional(readOnly = true)
+    public SampleChapterResponse publicSample(String slug, UUID productId, int number) {
+        Store store = requirePublished(slug);
+        StoreProduct product = productRepository.findByIdAndStoreId(productId, store.getId())
+                .filter(StoreProduct::isActive)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Preview not found"));
+        if (!ProductPageValidator.sampleChapters(product.getPageSettings()).contains(number)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Preview not found");
+        }
+        return sample(ebookOf(product), number);
+    }
+
+    /** Any chapter of the author's own product — for the page editor, before it is put in the preview. */
+    @Transactional(readOnly = true)
+    public SampleChapterResponse ownSample(User user, UUID productId, int number) {
+        Store store = requireOwn(user);
+        StoreProduct product = productRepository.findByIdAndStoreId(productId, store.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Product not found"));
+        return sample(ebookOf(product), number);
+    }
+
+    private SampleChapterResponse sample(Ebook ebook, int number) {
+        EbookChapter chapter = ebook == null ? null : ebook.getChapters().stream()
+                .filter(c -> c.getChapterNumber() == number && c.getContent() != null && !c.getContent().isBlank())
+                .findFirst().orElse(null);
+        if (chapter == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Preview not found");
+        }
+        // The book's own HTML, reduced to safe text markup: no scripts, no styles, no
+        // images (those live in the private bucket and stay part of the paid book).
+        String html = org.jsoup.Jsoup.clean(contentRenderer.toHtml(chapter.getContent()),
+                org.jsoup.safety.Safelist.relaxed().removeTags("img"));
+        return new SampleChapterResponse(chapter.getChapterNumber(),
+                chapter.getTitle() != null ? chapter.getTitle().trim() : "Chapter " + number, html);
+    }
+
+    private static List<PublicProductResponse.Chapter> sampleRefs(StoreProduct product, Ebook ebook) {
+        List<Integer> picked = ProductPageValidator.sampleChapters(product.getPageSettings());
+        if (ebook == null || picked.isEmpty()) {
+            return List.of();
+        }
+        return chapters(ebook).stream().filter(c -> picked.contains(c.number())).toList();
+    }
+
+    static java.util.Set<Integer> chaptersWithText(Ebook ebook) {
+        if (ebook == null) {
+            return java.util.Set.of();
+        }
+        java.util.Set<Integer> out = new java.util.HashSet<>();
+        for (EbookChapter c : ebook.getChapters()) {
+            if (c.getContent() != null && !c.getContent().isBlank()) {
+                out.add(c.getChapterNumber());
+            }
+        }
+        return out;
     }
 
     /** Chapters of the store's first active ebook (the one designs feature). */
@@ -430,7 +496,9 @@ public class StoreService {
                     return new StoreProductDTO(p.getId(), p.getEbookId(), p.getTitle(), p.getDescription(),
                             p.getHighlights(), p.getPriceCents(), p.getCurrency(), p.isActive(), p.getSortOrder(),
                             pageCount(ebook), coverUrl(p, ebook), p.getCoverKey() != null, own,
-                            hasPdf || !own.isEmpty());
+                            hasPdf || !own.isEmpty(), p.getPageSettings(), chapterRefs(ebook),
+                            ebook != null ? blankToNull(ebook.getSubtitle()) : null,
+                            ebook != null ? blankToNull(ebook.getLanguage()) : null);
                 }).toList();
         return new StoreDashboardResponse(store.getId(), store.getSlug(), store.getName(), store.getDescription(),
                 store.getHeadline(), store.getAuthorName(), store.getContactEmail(), store.getInstagramUrl(),
@@ -439,6 +507,18 @@ public class StoreService {
                 StoreImageService.url(store, StoreImageService.Kind.PHOTO),
                 store.isPublished(), subscriptionService.isPro(store.getOwnerId()), stripeStatus(store), products,
                 store.getThemeSettings(), featuredChapters(store));
+    }
+
+    private static List<ChapterRef> chapterRefs(Ebook ebook) {
+        if (ebook == null) {
+            return List.of();
+        }
+        return ebook.getChapters().stream()
+                .filter(c -> c.getTitle() != null && !c.getTitle().isBlank())
+                .sorted(java.util.Comparator.comparingInt(EbookChapter::getChapterNumber))
+                .map(c -> new ChapterRef(c.getChapterNumber(), c.getTitle().trim(),
+                        c.getContent() != null && !c.getContent().isBlank()))
+                .toList();
     }
 
     static ProductFileDTO toFileDTO(ProductFile f) {

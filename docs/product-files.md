@@ -86,3 +86,30 @@ re-fulfilled, and a second download grant (and email) is never issued for an ord
 
 Schema: `docs/migrations/2026-10-18-product-files.sql` (applied automatically with
 `JPA_DDL_AUTO=update`; `store_products.ebook_id` is made nullable by `SchemaConstraintPatch`).
+
+## Product page designer
+
+`/store/products/{id}/design` (frontend) edits a product's two pages live, on phone and
+desktop, in the store's own style (the style, accent and custom CSS of the store design
+also dress these pages — `lib/store-design/page-theme.ts`):
+
+- **Product page** — title & buy box, "what you'll be able to do", **free preview**
+  (a contents list — the chapters by default, or anything the author writes, e.g. what's
+  in a bundle — plus up to 3 sample chapters anyone can read in full), about, author,
+  more from the store, questions. Sections can be hidden.
+- **After purchase** — the author's thank-you, downloads, "keep it for good", more, help.
+  Used by the emailed download page and the post-checkout success page.
+
+The words live in `store_products.page_settings` (JSON, ≤ 30 000 chars, checked by
+`ProductPageValidator`); title, description and points are saved to the product itself.
+`preview.chapters` must be chapters of the product's ebook that have text.
+
+| Endpoint | |
+|---|---|
+| `PATCH /api/store/products/{id}` with `pageSettings` (blank = defaults) | save |
+| `GET /api/store/products/{id}/preview/{n}` | any chapter, for the editor (owner only) |
+| `GET /api/public/stores/{slug}/products/{id}/preview/{n}` | a free-preview chapter — only the picked ones, only while the product is on sale |
+
+Sample chapters are rendered with the book's own renderer and cleaned with jsoup
+(`Safelist.relaxed()` without images): no scripts, no styles, and the book's images stay
+in the paid book. Migration: `docs/migrations/2026-10-19-product-page.sql`.
