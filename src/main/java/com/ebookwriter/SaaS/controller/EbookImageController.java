@@ -5,8 +5,8 @@ import com.ebookwriter.SaaS.entity.EbookImageRole;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.UserRepository;
 import com.ebookwriter.SaaS.request.EbookImageUpdateRequest;
-import com.ebookwriter.SaaS.service.ebook.CoverGenerationService;
 import com.ebookwriter.SaaS.service.ebook.EbookImageService;
+import com.ebookwriter.SaaS.service.ebook.PaidCoverService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit;
 public class EbookImageController {
 
     private final EbookImageService imageService;
-    private final CoverGenerationService coverGenerationService;
+    private final PaidCoverService paidCoverService;
     private final UserRepository userRepository;
 
     /** Upload an image. {@code role} defaults to INLINE; pass COVER for the cover. */
@@ -109,14 +109,15 @@ public class EbookImageController {
     /**
      * Regenerate the AI cover visual, keeping the title, subtitle and layout. The
      * previous AI cover is replaced; a user-uploaded cover is demoted (kept in the
-     * library). Returns the new cover asset. {@code 409}/error if image generation
-     * is not configured.
+     * library). Returns the new cover asset. Costs {@code credits.pricing.credits-per-cover}
+     * credits, returned if generation fails; {@code 402} when the balance can't
+     * cover it, {@code 409} if image generation is not configured.
      */
     @PostMapping("/cover/regenerate")
     public ResponseEntity<EbookImageDTO> regenerateCover(@PathVariable UUID ebookId,
                                                          Authentication authentication) {
         User user = currentUser(authentication);
-        return ResponseEntity.ok(coverGenerationService.regenerate(ebookId, user.getId()));
+        return ResponseEntity.ok(paidCoverService.regenerate(ebookId, user.getId()));
     }
 
     /** Clear the book's cover (keeps the asset, just unsets it as the cover). */

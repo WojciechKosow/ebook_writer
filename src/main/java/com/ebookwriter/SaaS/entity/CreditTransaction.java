@@ -18,7 +18,8 @@ import java.util.UUID;
 @AllArgsConstructor
 @Builder
 @Table(name = "credit_transactions", indexes = {
-        @Index(columnList = "userId, createdAt")
+        @Index(columnList = "userId, createdAt"),
+        @Index(columnList = "stripeReference")
 })
 public class CreditTransaction {
 
@@ -41,15 +42,37 @@ public class CreditTransaction {
     @Column(nullable = false)
     private int balanceAfter;
 
+    /**
+     * Signed part of {@link #amount} that moved the monthly subscription credits
+     * (the rest moved the purchased, non-expiring credits). E.g. a 500-credit
+     * hold taken as 300 monthly + 200 purchased has amount -500 and
+     * subscriptionAmount -300. 0 on rows written before the split existed.
+     */
+    @Builder.Default
+    @Column(nullable = false, columnDefinition = "integer not null default 0")
+    private int subscriptionAmount = 0;
+
+    /**
+     * On REFUND_CLAWBACK rows: credits the refunded payment granted that could
+     * not be reclaimed because they were already spent (the balance is never
+     * pushed below zero). Recorded for audit and so repeated refund/dispute
+     * events for the same payment stay idempotent.
+     */
+    @Builder.Default
+    @Column(nullable = false, columnDefinition = "integer not null default 0")
+    private int shortfall = 0;
+
     /** The ebook involved, for GENERATION / GENERATION_REFUND. */
     private UUID ebookId;
 
-    /** The payment order involved, for CREDIT_PURCHASE / SUBSCRIPTION_GRANT. */
+    /** The payment order involved, for CREDIT_PURCHASE. */
     private UUID paymentOrderId;
 
     /**
-     * The Stripe payment_intent this row relates to. Set on REFUND_CLAWBACK rows
-     * so repeated refund/chargeback events for the same charge stay idempotent.
+     * The Stripe object this row relates to: the invoice id on SUBSCRIPTION_GRANT
+     * rows (one allowance per paid invoice, however often the event is
+     * delivered) and the payment_intent on REFUND_CLAWBACK rows (repeated
+     * refund/chargeback events for the same charge stay idempotent).
      */
     private String stripeReference;
 

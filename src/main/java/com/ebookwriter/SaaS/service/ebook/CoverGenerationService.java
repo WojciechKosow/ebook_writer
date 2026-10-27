@@ -211,7 +211,8 @@ public class CoverGenerationService {
         return ManuscriptContext.inBook(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId));
     }
 
-    private boolean canGenerate() {
+    /** Whether a cover visual can be generated (OpenAI images and R2 are configured). */
+    public boolean canGenerate() {
         return openAiProperties.isConfigured() && storage.isConfigured();
     }
 

@@ -54,7 +54,7 @@ class ScopeEstimatorTest {
         ScopeEstimate e = brief(STANDARD);
         assertTrue(e.pagesLow() < e.pagesHigh());
         assertTrue(e.chaptersLow() < e.chaptersHigh());
-        assertEquals(e.pagesHigh(), e.requiredCredits(), "credits are needed for the high end");
+        assertEquals(e.pagesHigh(), e.requiredPages(), "the high end must be affordable to start");
     }
 
     @Test

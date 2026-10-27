@@ -69,16 +69,22 @@ public class EbookStatusResponse {
     /**
      * The <b>final</b> number of pages in the rendered PDF, set once generation
      * completes (0 while still generating). Scrivetta decides the length from the
-     * topic; this is the real result, not something the user ordered. It is also
-     * what the user is billed: 1 credit = 1 final page.
+     * topic; this is the real result, not something the user ordered. The book's
+     * pages are billed on it (at {@link #creditsPerPage}).
      */
     private int actualPageCount;
 
     /**
-     * Credits charged for this generation, known once complete. Equal to
-     * {@link #actualPageCount} (billed on the real final length).
+     * Credits held for this generation while it runs, and the credits charged
+     * once complete: its final pages, AI illustrations and AI cover.
      */
     private int creditsCharged;
+
+    /**
+     * The page rate the book is billed at. 1 for books generated under the old
+     * economy, whose {@link #creditsCharged} are old (page) credits.
+     */
+    private int creditsPerPage;
 
     /** LEGACY (brief-only) or KNOWLEDGE (written from the author's knowledge + blueprint). */
     private com.ebookwriter.SaaS.entity.GenerationMode generationMode;
@@ -121,10 +127,11 @@ public class EbookStatusResponse {
                 .approvalStage(ebook.getApprovalStage())
                 .extraCreditsToContinue(ebook.getStatus() == EbookStatus.AWAITING_APPROVAL
                         ? com.ebookwriter.SaaS.service.ebook.ScopeApproval.extraHold(ebook.getProposedHold(),
-                        ebook.getPageBudget()) : 0)
+                        ebook.getPageBudget()) * Math.max(1, ebook.getCreditsPerPage()) : 0)
                 .fitToBudget(ebook.isFitToBudget())
                 .actualPageCount(ebook.getActualPageCount())
                 .creditsCharged(ebook.getCreditsCharged())
+                .creditsPerPage(ebook.getCreditsPerPage())
                 .generationMode(ebook.getGenerationMode() == null
                         ? com.ebookwriter.SaaS.entity.GenerationMode.LEGACY : ebook.getGenerationMode())
                 .resumable(resumable)

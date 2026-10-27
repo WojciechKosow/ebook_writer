@@ -16,6 +16,7 @@ import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.repository.KnowledgeSourceRepository;
 import com.ebookwriter.SaaS.request.EbookRequest;
 import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
+import com.ebookwriter.SaaS.service.credit.CreditPricing;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -63,6 +64,7 @@ class EbookServiceTest {
     @Mock com.ebookwriter.SaaS.service.ai.OpenAiTextClient openAi;
 
     CreditProperties creditProperties;
+    CreditPricing creditPricing;
     ScopeEstimationService scopeEstimationService;
     EbookService ebookService;
 
@@ -72,11 +74,13 @@ class EbookServiceTest {
     @BeforeEach
     void setUp() {
         creditProperties = new CreditProperties();
+        // Images are not configured here, so no image reserve: 11 credits per page.
+        creditPricing = new CreditPricing(creditProperties, new com.ebookwriter.SaaS.config.properties.OpenAiProperties());
         scopeEstimationService = new ScopeEstimationService(sourceRepository, knowledgeRepository,
                 blueprintService, creditProperties, openAi, new com.ebookwriter.SaaS.config.properties.OpenAiProperties(),
                 ebookRepository);
         ebookService = new EbookService(ebookRepository, chapterRepository, pdfRepository,
-                generationService, pdfGenerationService, assetUsageService, creditService,
+                generationService, pdfGenerationService, assetUsageService, creditService, creditPricing,
                 scopeEstimationService, blueprintService);
         // No materials / blueprint → the legacy brief-only flow (what these tests cover).
         lenient().when(blueprintService.readiness(any()))
@@ -96,8 +100,13 @@ class EbookServiceTest {
         return Ebook.builder().id(ebookId).topic("Topic").depth(depth).status(EbookStatus.DRAFT).build();
     }
 
+    private int requiredPages(BookDepth depth) {
+        return scopeEstimationService.estimate(draft(depth)).requiredPages();
+    }
+
+    /** Credits needed to start: the estimate's high end at 11 credits per page. */
     private int required(BookDepth depth) {
-        return scopeEstimationService.estimate(draft(depth)).requiredCredits();
+        return creditPricing.estimateHigh(requiredPages(depth));
     }
 
     @Test
@@ -136,7 +145,7 @@ class EbookServiceTest {
         assertTrue(ex.getMessage().contains("Standard depth"), ex.getMessage());
         assertTrue(ex.getMessage().contains("needs up to " + required + " credits"), ex.getMessage());
         verify(ebookRepository, never()).claimForStart(any(), any(), any());
-        verify(creditService, never()).reserveGenerationHold(any(), any(), anyInt(), anyInt());
+        verify(creditService, never()).reserveGenerationHold(any(), any(), anyInt(), anyInt(), anyInt(), anyInt());
         verify(generationService, never()).generate(any());
     }
 
@@ -144,16 +153,22 @@ class EbookServiceTest {
     void startWithEnoughCreditsReservesACreditCeilingAndRecordsTheEstimate() {
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(draft(BookDepth.STANDARD)));
         int required = required(BookDepth.STANDARD);
+        int pages = requiredPages(BookDepth.STANDARD);
+        assertEquals(pages * 11, required, "1 page = 11 credits, no images configured");
         when(creditService.getBalance(userId)).thenReturn(required);
         when(ebookRepository.claimForStart(ebookId, EbookStatus.DRAFT, EbookStatus.PENDING)).thenReturn(1);
         when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
         when(creditService.reserveGenerationHold(eq(userId), eq(ebookId),
-                eq(creditProperties.getMaxGenerationBudget()), eq(required))).thenReturn(required + 10);
+                eq(creditProperties.getMaxGenerationBudget()), eq(pages), eq(11), eq(0)))
+                .thenReturn(new CreditService.GenerationHold(pages + 10, (pages + 10) * 11, 300));
 
         Ebook started = ebookService.start(ebookId, userId);
 
         assertEquals(EbookStatus.PENDING, started.getStatus());
-        assertEquals(required + 10, started.getPageBudget());
+        assertEquals(pages + 10, started.getPageBudget());
+        assertEquals((pages + 10) * 11, started.getCreditsCharged());
+        assertEquals(300, started.getSubscriptionCreditsHeld());
+        assertEquals(11, started.getCreditsPerPage(), "the page rate is fixed at start");
         ScopeEstimate estimate = scopeEstimationService.estimate(draft(BookDepth.STANDARD));
         assertEquals(estimate.pagesLow(), started.getEstimatedPagesLow());
         assertEquals(estimate.pagesHigh(), started.getEstimatedPagesHigh());
@@ -173,12 +188,12 @@ class EbookServiceTest {
         Ebook bounced = draft(BookDepth.STANDARD);
         bounced.setPlannedPages(90);
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(bounced));
-        when(creditService.getBalance(userId)).thenReturn(60);
+        when(creditService.getBalance(userId)).thenReturn(660);
 
         InsufficientCreditsException ex = assertThrows(InsufficientCreditsException.class,
                 () -> ebookService.start(ebookId, userId));
 
-        assertEquals(90, ex.getRequired());
+        assertEquals(90 * 11, ex.getRequired());
         assertTrue(ex.getMessage().contains("planned this book at about 90 pages"), ex.getMessage());
     }
 
@@ -189,7 +204,7 @@ class EbookServiceTest {
         d.setErrorMessage("needs more credits");
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(d));
         when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
-        when(creditService.getBalance(userId)).thenReturn(500);
+        when(creditService.getBalance(userId)).thenReturn(100_000);
 
         BookScopeResponse scope = ebookService.updateDepth(ebookId, userId, BookDepth.QUICK);
 
@@ -222,7 +237,9 @@ class EbookServiceTest {
                 info.options().stream().map(ScopeEstimateDTO::depth).toList());
         for (ScopeEstimateDTO o : info.options()) {
             assertTrue(o.pagesLow() <= o.pagesHigh());
-            assertEquals(o.pagesHigh(), o.requiredCredits());
+            assertEquals(o.pagesHigh() * 11, o.requiredCredits());
+            assertEquals(o.pagesLow() * 11, o.creditsLow());
+            assertEquals(11, o.creditsPerPage());
         }
     }
 
@@ -236,7 +253,8 @@ class EbookServiceTest {
         e.setProposedPages(proposed);
         e.setProposedHold(proposedHold);
         e.setPageBudget(pageBudget);
-        e.setCreditsCharged(pageBudget);
+        e.setCreditsPerPage(11);
+        e.setCreditsCharged(pageBudget * 11);
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(e));
         lenient().when(ebookRepository.claimStatus(ebookId, EbookStatus.AWAITING_APPROVAL, EbookStatus.PENDING)).thenReturn(1);
         lenient().when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
@@ -246,11 +264,15 @@ class EbookServiceTest {
     @Test
     void continuingALongerBookExtendsTheHoldAndRaisesTheAgreedLength() {
         Ebook e = paused(ScopeApproval.STAGE_PLAN, 41, 70, 90, 51);
+        when(creditService.extendGenerationHold(userId, ebookId, 39 * 11))
+                .thenReturn(new CreditService.Debit(39 * 11, 100));
 
         ebookService.decideScope(ebookId, userId, EbookService.ScopeDecision.CONTINUE);
 
-        verify(creditService).extendGenerationHold(userId, ebookId, 39);
+        verify(creditService).extendGenerationHold(userId, ebookId, 39 * 11);
         assertEquals(90, e.getPageBudget());
+        assertEquals(90 * 11, e.getCreditsCharged());
+        assertEquals(100, e.getSubscriptionCreditsHeld());
         assertEquals(70, e.getApprovedPages());
         assertEquals(EbookStatus.PENDING, e.getStatus());
         assertNull(e.getProposedPages());
@@ -260,7 +282,7 @@ class EbookServiceTest {
     @Test
     void continuingWithoutTheCreditsLeavesTheBookPaused() {
         paused(ScopeApproval.STAGE_WRITING, 41, 70, 90, 51);
-        doThrow(new InsufficientCreditsException(39, 0)).when(creditService).extendGenerationHold(userId, ebookId, 39);
+        doThrow(new InsufficientCreditsException(39 * 11, 0)).when(creditService).extendGenerationHold(userId, ebookId, 39 * 11);
 
         assertThrows(InsufficientCreditsException.class,
                 () -> ebookService.decideScope(ebookId, userId, EbookService.ScopeDecision.CONTINUE));

@@ -52,11 +52,12 @@ public record ScopeEstimate(BookDepth depth,
     }
 
     /**
-     * Credits a user should hold to generate the expected book without it being
-     * wound down early: the high end of the estimate (1 credit ≈ 1 page). The
-     * user is still billed only for the pages actually rendered.
+     * Pages a user must be able to pay for to generate the expected book without
+     * it being wound down early: the high end of the estimate. Converted to
+     * credits by {@code CreditPricing#estimateHigh}; the user is still billed only
+     * for what is actually produced.
      */
-    public int requiredCredits() {
+    public int requiredPages() {
         return Math.max(1, pagesHigh);
     }
 }

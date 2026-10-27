@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -27,4 +28,8 @@ public interface CreditBalanceRepository extends JpaRepository<CreditBalance, UU
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select b from CreditBalance b where b.userId = :userId")
     Optional<CreditBalance> findForUpdate(@Param("userId") UUID userId);
+
+    /** Wallets still denominated in an older credit economy (see LegacyCreditMigration). */
+    @Query("select b.userId from CreditBalance b where b.economyVersion < :version")
+    List<UUID> findUserIdsWithEconomyBelow(@Param("version") int version);
 }
