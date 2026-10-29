@@ -686,10 +686,11 @@ chapter prompt and the editorial pass (`BookDepth.writerGuidance`).
    per-book safety maximum, with a `basis` (`BRIEF`, `SOURCE_TEXT`, `KNOWLEDGE`,
    `BLUEPRINT`). Unit-tested in `ScopeEstimatorTest`.
 2. **Credits before generation.** `start` requires a balance of at least the
-   estimate's **high end** (1 credit ≈ 1 page). Below it, `402` with a message such
-   as *"At Comprehensive depth, Scrivetta estimates this book at about 120–160
-   pages, so it needs up to 160 credits to generate — you have 90."* A book is
-   never planned smaller to fit the balance.
+   estimate's **high end** in credits (`pagesHigh × 11` plus the image reserve —
+   see [PRICING.md](PRICING.md)). Below it, `402` with a message such as *"At
+   Comprehensive depth, Scrivetta estimates this book at about 120–160 pages, so
+   it needs up to 1,880 credits to generate — you have 900."* A book is never
+   planned smaller to fit the balance.
 3. **Planning follows the content.** The legacy planner gets the depth and the
    estimate explicitly marked *"not a target, not a limit"*; it sets each chapter's
    `approxPages` to what that chapter needs, and the sum is `plannedPages`. The
@@ -742,18 +743,19 @@ chapter prompt and the editorial pass (`BookDepth.writerGuidance`).
 
 ## Page-count handling & billing
 
-**1 credit = 1 final generated page.** The estimate is shown as an estimate
-("~120–160 pages, ~120–160 credits"); the real cost is read back from the
-rendered PDF, and the user pays for the pages they actually got.
+Credits are an AI usage budget (see [PRICING.md](PRICING.md)): a book is billed
+for its **final rendered pages** at the page rate (11 credits), plus its AI
+illustrations and AI cover. The estimate is shown as an estimate; the real cost
+is read back from the rendered PDF, and the user pays for what they actually got.
 
 To make the real length payable without a runaway bill, the balance may go a
 little negative: a small **overdraft**, capped centrally at
-`credits.max-overdraft` (`CREDITS_MAX_OVERDRAFT`, default **10**).
+`credits.max-overdraft` (`CREDITS_MAX_OVERDRAFT`, default **10 pages**).
 
 1. **Reserve a ceiling up front.** On **start** (`CreditService.reserveGenerationHold`)
-   we reserve `min(balance, maxGenerationBudget) + maxOverdraft` as a hold — a
-   credit ceiling, not a length. It can never drive the balance below
-   `-maxOverdraft`. The DRAFT → PENDING transition is claimed atomically
+   we reserve `min(affordable pages, maxGenerationBudget) + maxOverdraft` pages at
+   the page rate, plus the image reserve, as a hold — a credit ceiling, not a
+   length. It can never drive the balance below `-maxOverdraft × rate`. The DRAFT → PENDING transition is claimed atomically
    (`EbookRepository.claimForStart`) so a double-click can never reserve two holds.
 2. **Size words to the real layout.** Chapter word targets use
    `WORDS_PER_PAGE ≈ 200`, measured against the real PDF pipeline
@@ -762,9 +764,10 @@ little negative: a small **overdraft**, capped centrally at
    exceeds the credit ceiling (which the start gate and plan check make rare) is
    trailing content removed — whole `##` sections from the latest *earlier*
    chapter first, so the ending is preserved — and the book flagged `creditLimited`.
-4. **Bill the real page count, idempotently** (`EbookGenerationService.reconcileCredits`):
-   charge exactly the pages rendered (clamped to `[1, ceiling]`) and refund the
-   rest as a `GENERATION_ADJUSTMENT`. Claimed atomically
+4. **Bill the real result, idempotently** (`EbookGenerationService.reconcileCredits`):
+   charge the pages rendered (clamped to `[1, ceiling]`) at the book's page rate
+   plus its AI illustrations and cover (never more than held) and refund the rest
+   as a `GENERATION_ADJUSTMENT`. Claimed atomically
    (`EbookRepository.markReconciled`). A generation that fails before a PDF exists
    refunds the whole hold.
 

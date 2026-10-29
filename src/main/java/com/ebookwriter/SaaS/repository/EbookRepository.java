@@ -57,4 +57,13 @@ public interface EbookRepository extends JpaRepository<Ebook, UUID> {
     @Transactional
     @Query("update Ebook e set e.creditsReconciled = true where e.id = :id and e.creditsReconciled = false")
     int markReconciled(@Param("id") UUID id);
+
+    /**
+     * A user's books holding credits that are not settled yet (started, not
+     * reconciled, not refunded) at the given page rate — the legacy economy's
+     * in-flight holds that {@code LegacyCreditMigration} converts with the wallet.
+     */
+    @Query("select e from Ebook e where e.user.id = :userId and e.creditsCharged > 0 "
+            + "and e.creditsReconciled = false and e.creditsRefunded = false and e.creditsPerPage = :rate")
+    java.util.List<Ebook> findUnsettledHolds(@Param("userId") UUID userId, @Param("rate") int rate);
 }

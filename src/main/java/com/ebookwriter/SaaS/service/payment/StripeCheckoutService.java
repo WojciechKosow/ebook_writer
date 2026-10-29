@@ -37,6 +37,9 @@ public class StripeCheckoutService {
     /** Buy a one-time credit pack. */
     @Transactional
     public CheckoutResult createCreditPackCheckout(User user, CreditPack pack) {
+        if (pack == null || !pack.isAvailable()) {
+            throw new IllegalArgumentException("This credit pack is no longer available");
+        }
         PaymentOrder order = paymentOrderRepository.save(PaymentOrder.builder()
                 .userId(user.getId())
                 .purpose(PaymentPurpose.CREDIT_PACK)
@@ -54,7 +57,9 @@ public class StripeCheckoutService {
                                 .setCurrency(stripeProperties.getCurrency())
                                 .setUnitAmount((long) pack.getPriceCents())
                                 .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
-                                        .setName("eBook Writer — " + pack.getDisplayName())
+                                        .setName("Scrivetta credits — " + pack.getDisplayName() + " pack ("
+                                                + String.format(java.util.Locale.US, "%,d", pack.getCredits())
+                                                + " credits)")
                                         .build())
                                 .build())
                         .build())

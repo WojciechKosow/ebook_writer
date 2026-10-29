@@ -8,8 +8,12 @@ import java.util.UUID;
 
 /**
  * A user's subscription state, mirrored from Stripe via webhooks. There is a
- * single plan in V0.1, so this just tracks the Stripe subscription id, its
- * status, whether it's set to cancel at period end, and the current period end.
+ * single plan (PRO), so this tracks the Stripe subscription id, its status,
+ * whether it's set to cancel at period end, the current period end and the
+ * Price it renews on (which tells a legacy-priced subscriber apart).
+ *
+ * <p>This server-side record — never a client flag — is what PRO entitlements
+ * (the Marketplace storefront, the kept asset library) are checked against.
  */
 @Entity
 @Getter
@@ -33,6 +37,9 @@ public class UserSubscription {
     private boolean cancelAtPeriodEnd;
 
     private LocalDateTime currentPeriodEnd;
+
+    /** The Stripe Price the subscription renews on (current PRO or a legacy price). */
+    private String stripePriceId;
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

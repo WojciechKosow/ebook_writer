@@ -139,8 +139,13 @@ public class UserServiceImpl implements UserService {
                             CreditBalance.builder()
                                     .userId(user.getId())
                                     .balance(0)
+                                    .economyVersion(CreditBalance.ECONOMY_CURRENT)
                                     .build()));
-            creditBalance.setBalance(1000);
+            // Test top-up in current credits (≈ one PRO month), all as purchased
+            // credits so no monthly-credit expiry interferes with testing.
+            creditBalance.setBalance(3000);
+            creditBalance.setSubscriptionCredits(0);
+            creditBalance.setEconomyVersion(CreditBalance.ECONOMY_CURRENT);
             creditBalanceRepository.save(creditBalance);
 
             // Test PRO for the creator store (publishing/selling require PRO).

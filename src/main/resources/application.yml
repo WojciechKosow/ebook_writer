@@ -204,11 +204,18 @@ blueprint:
   stale-building-minutes: ${BLUEPRINT_STALE_BUILDING_MINUTES:30}
   max-answer-chars: ${BLUEPRINT_MAX_ANSWER_CHARS:5000}
 
-# Payments (Stripe) + credits. The $ amounts live in Stripe; credit grants here.
+# Payments (Stripe) + credits. Pack prices live in code (CreditPack, charged
+# inline); the PRO price lives in Stripe (STRIPE_SUBSCRIPTION_PRICE_ID). Pricing
+# and the credit policy: docs/PRICING.md.
 stripe:
   secret-key: ${STRIPE_SECRET_KEY:}
   webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+  # The PRO price new subscriptions are sold at ($29.99/month, recurring).
   subscription-price-id: ${STRIPE_SUBSCRIPTION_PRICE_ID:}
+  # Comma-separated older PRO prices (e.g. the retired $19.99/month price) that
+  # existing subscribers still renew on; their renewals grant
+  # credits.legacy-subscription-monthly-grant instead of the full allowance.
+  legacy-subscription-price-ids: ${STRIPE_LEGACY_SUBSCRIPTION_PRICE_IDS:}
   success-url: ${STRIPE_SUCCESS_URL:http://localhost:3000/billing/success?order={ORDER_ID}}
   cancel-url: ${STRIPE_CANCEL_URL:http://localhost:3000/billing}
   portal-return-url: ${STRIPE_PORTAL_RETURN_URL:http://localhost:3000/billing}
@@ -224,23 +231,33 @@ stripe:
     live-enabled: ${STRIPE_CONNECT_LIVE_ENABLED:false}
     checkout-expiry-minutes: ${STRIPE_CONNECT_CHECKOUT_EXPIRY_MINUTES:60}
 
+# Credits are an AI usage budget, not pages (docs/PRICING.md).
 credits:
-  # Credits granted per successful monthly subscription payment
-  # (1 credit = 1 final generated page).
-  subscription-monthly-grant: ${CREDITS_SUBSCRIPTION_MONTHLY_GRANT:150}
-  # Optional one-time grant when a wallet is first created (useful for testing).
+  # Monthly PRO credits per paid billing period. They don't roll over: the unused
+  # rest expires when the next period starts (and when PRO ends).
+  subscription-monthly-grant: ${CREDITS_SUBSCRIPTION_MONTHLY_GRANT:3000}
+  # Per period for subscribers on a legacy price (stripe.legacy-subscription-price-ids):
+  # what the old $19.99 plan bought (150 finished pages) at today's page rate, 150 x 11.
+  legacy-subscription-monthly-grant: ${CREDITS_LEGACY_SUBSCRIPTION_MONTHLY_GRANT:1650}
+  # Optional one-time grant when a wallet is first created (BASIC has no free credits).
   signup-bonus: ${CREDITS_SIGNUP_BONUS:0}
-  # The single central overdraft limit for generation. Because the AI can't
-  # guarantee an exact page count, the length estimate is only an estimate; the
-  # balance may dip up to this many credits below zero (lowest balance = -10),
-  # and never further. It bounds both the up-front hold and the render page cap.
+  # Overdraft tolerance in PAGES: a book may finish up to this many pages past what
+  # the user can strictly afford (balance floor = -this x credits-per-page), never more.
   max-overdraft: ${CREDITS_MAX_OVERDRAFT:10}
-  # Per-book safety maximum (pages). Users choose a DEPTH, never a page count;
-  # Scrivetta estimates the length from the topic and materials and the start
-  # requires credits for the estimate's high end. This only bounds a runaway:
-  # estimates and plans are capped at it, and the hold is
-  # min(balance, this) + max-overdraft (trued up to the real page count).
+  # Per-book safety maximum (pages) — bounds a runaway generation and its cost.
   max-generation-budget: ${CREDITS_MAX_GENERATION_BUDGET:400}
+  # Operation costs. Calibrated so ~3,000 credits cover our reference workload
+  # (a ~265-page text-led book, up to 6 illustrations and a cover). Knowledge
+  # analysis, the blueprint and scope checks are free.
+  pricing:
+    credits-per-page: ${CREDITS_PER_PAGE:11}
+    credits-per-image: ${CREDITS_PER_IMAGE:15}
+    credits-per-cover: ${CREDITS_PER_COVER:30}
+  # One-time conversion of legacy (1 credit = 1 page) wallets at startup.
+  migration:
+    enabled: ${CREDITS_MIGRATION_ENABLED:true}
+    # New credits per legacy credit; 0 = credits-per-page (a legacy credit bought one page).
+    legacy-credit-value: ${CREDITS_MIGRATION_LEGACY_CREDIT_VALUE:0}
 
 # Store product files (PDF / EPUB / ZIP sold in creator stores). Stored unmodified
 # in the private R2 bucket above and streamed to buyers only through the API

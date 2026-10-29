@@ -98,20 +98,39 @@ public class Ebook {
     private String errorMessage;
 
     /**
-     * Credits the user ultimately pays for this generation. Starts equal to the
-     * reserved {@link #pageBudget} (the up-front hold) and is trued up to the
-     * real rendered page count once generation finishes — because 1 credit =
-     * 1 <em>final</em> page, this is the actual page count, not the estimate.
+     * Credits held for (while generating) and finally charged for this
+     * generation. Starts as the up-front hold ({@link #pageBudget} pages at
+     * {@link #creditsPerPage} plus the image reserve) and is trued up once the
+     * book is rendered: its final pages, AI illustrations and AI cover (see
+     * {@code CreditPricing#generationCharge}).
      */
     private int creditsCharged;
 
     /**
-     * The generation ceiling reserved as the up-front hold: the most pages this
-     * book may render and the most credits it may cost. Computed as
-     * {@code min(balance, maxGenerationBudget) + maxOverdraft}: a safety ceiling
-     * on what the user can pay for, guaranteeing the balance can never drop below
-     * {@code -maxOverdraft}. Never a length target — the book is as long as its
-     * content.
+     * The part of {@link #creditsCharged} taken from the user's monthly PRO
+     * credits (the rest was purchased credits) — so a refund returns each credit
+     * to the kind it came from. 0 for books started before the split existed.
+     */
+    @Builder.Default
+    @Column(nullable = false, columnDefinition = "integer not null default 0")
+    private int subscriptionCreditsHeld = 0;
+
+    /**
+     * The page rate this generation is billed at, fixed when its hold is
+     * reserved so a config change never re-prices a running book. Books from the
+     * old economy (1 credit = 1 page) keep the DB default 1 — their recorded
+     * {@link #creditsCharged} stay in the old unit, as they were billed.
+     */
+    @Builder.Default
+    @Column(nullable = false, columnDefinition = "integer not null default 1")
+    private int creditsPerPage = 1;
+
+    /**
+     * The generation ceiling reserved with the up-front hold, in pages: the most
+     * pages this book may render. Computed as {@code min(affordable pages,
+     * maxGenerationBudget) + maxOverdraft}: a safety ceiling on what the user can
+     * pay for, guaranteeing the balance can never drop below the bounded
+     * overdraft. Never a length target — the book is as long as its content.
      */
     private int pageBudget;
 
@@ -175,7 +194,7 @@ public class Ebook {
     @Column(nullable = false, columnDefinition = "boolean not null default false")
     private boolean creditLimited = false;
 
-    /** Real number of pages in the rendered PDF; set once rendering completes. This is what the user is billed. */
+    /** Real number of pages in the rendered PDF; set once rendering completes. The book's pages are billed on it. */
     private int actualPageCount;
 
     /** True once those credits have been refunded (after a failure). */

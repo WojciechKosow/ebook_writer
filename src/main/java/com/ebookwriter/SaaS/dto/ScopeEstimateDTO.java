@@ -1,5 +1,7 @@
 package com.ebookwriter.SaaS.dto;
 
+import com.ebookwriter.SaaS.service.credit.CreditPricing;
+
 import com.ebookwriter.SaaS.entity.BookDepth;
 import com.ebookwriter.SaaS.service.ebook.ScopeEstimate;
 
@@ -14,10 +16,11 @@ import com.ebookwriter.SaaS.service.ebook.ScopeEstimate;
  * @param pagesHigh       high end of the estimated whole-book length
  * @param chaptersLow     low end of the estimated chapter count
  * @param chaptersHigh    high end of the estimated chapter count
- * @param creditsLow      estimated credit usage, low end (1 credit ≈ 1 final page)
- * @param creditsHigh     estimated credit usage, high end
+ * @param creditsLow      estimated credit usage, low end (the low page estimate and a cover)
+ * @param creditsHigh     estimated credit usage, high end (the high page estimate and the full image reserve)
  * @param requiredCredits credits needed to start this book (the high end), so it
  *                        is never wound down early for lack of credits
+ * @param creditsPerPage  the current credit cost of one finished page (for "≈ pages" hints)
  * @param basis           what the estimate is based on (BRIEF, SOURCE_TEXT, KNOWLEDGE, BLUEPRINT)
  * @param sourcePages     the provided material, in pages of source text
  * @param capped          true when the content suggested more than the per-book maximum
@@ -33,14 +36,17 @@ public record ScopeEstimateDTO(BookDepth depth,
                                int creditsLow,
                                int creditsHigh,
                                int requiredCredits,
+                               int creditsPerPage,
                                ScopeEstimate.Basis basis,
                                int sourcePages,
                                boolean capped,
                                boolean aiAssessed) {
 
-    public static ScopeEstimateDTO from(ScopeEstimate e) {
+    public static ScopeEstimateDTO from(ScopeEstimate e, CreditPricing pricing) {
+        int high = pricing.estimateHigh(e.requiredPages());
         return new ScopeEstimateDTO(e.depth(), e.depth().label(), e.depth().description(),
                 e.pagesLow(), e.pagesHigh(), e.chaptersLow(), e.chaptersHigh(),
-                e.pagesLow(), e.pagesHigh(), e.requiredCredits(), e.basis(), e.sourcePages(), e.capped(), e.aiAssessed());
+                pricing.estimateLow(e.pagesLow()), high, high, pricing.creditsPerPage(),
+                e.basis(), e.sourcePages(), e.capped(), e.aiAssessed());
     }
 }

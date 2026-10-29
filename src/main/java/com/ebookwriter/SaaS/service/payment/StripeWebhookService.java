@@ -50,6 +50,7 @@ public class StripeWebhookService {
     private final UserSubscriptionRepository userSubscriptionRepository;
     private final UserRepository userRepository;
     private final CreditService creditService;
+    private final StripeInvoiceLookup invoiceLookup;
 
     @Transactional
     public void handle(String payload, String signatureHeader) {
@@ -172,9 +173,13 @@ public class StripeWebhookService {
                 // PENDING ("payment is processing" forever). Flushing first, then
                 // never touching the order again, keeps fulfilment atomic and safe.
                 markPaid(order);
+                // Pack credits are purchased credits: they never expire and are
+                // spent after the monthly PRO credits.
                 creditService.grant(order.getUserId(), order.getCreditsGranted(),
                         CreditTransactionType.CREDIT_PURCHASE, null, order.getId(),
-                        "Purchased " + (order.getCreditPack() != null ? order.getCreditPack().getDisplayName() : "credits"));
+                        "Purchased " + (order.getCreditPack() != null
+                                ? order.getCreditPack().getDisplayName() + " pack (" + order.getCreditsGranted() + " credits)"
+                                : order.getCreditsGranted() + " credits"));
                 log.info("[Stripe] Fulfilled order {} (CREDIT_PACK) for user {}", order.getId(), order.getUserId());
             }
             case SUBSCRIPTION -> {
@@ -201,10 +206,17 @@ public class StripeWebhookService {
     }
 
     /**
-     * Grant subscription credits on every paid invoice — the first one
+     * Start a billing period on every paid subscription invoice — the first one
      * (billing_reason "subscription_create") and every renewal
-     * ("subscription_cycle"). Deduped by the Stripe event id, so one grant per
-     * successful invoice.
+     * ("subscription_cycle"): the previous period's unused monthly credits expire
+     * and the period's allowance is granted. Idempotent per <b>invoice</b> (not
+     * only per event): a re-sent or duplicated invoice.paid never grants twice,
+     * and visiting the checkout success page grants nothing at all.
+     *
+     * <p>The allowance follows the Price the invoice was paid on: the current PRO
+     * price grants {@code credits.subscription-monthly-grant}; a legacy price in
+     * {@code stripe.legacy-subscription-price-ids} grants
+     * {@code credits.legacy-subscription-monthly-grant}.
      */
     private void handleInvoicePaid(Event event) {
         if (!(extractObject(event) instanceof Invoice invoice)) {
@@ -227,13 +239,64 @@ public class StripeWebhookService {
             log.warn("[Stripe] invoice.paid for unresolved subscription {} — skipping", subscriptionId);
             return;
         }
-        creditService.grant(userId, creditProperties.getSubscriptionMonthlyGrant(),
-                CreditTransactionType.SUBSCRIPTION_GRANT, null, null,
-                "subscription_create".equals(reason)
-                        ? "Subscription — monthly credits"
-                        : "Subscription renewal — monthly credits");
-        log.info("[Stripe] Granted subscription credits ({}) to user {} for subscription {}",
-                reason, userId, subscriptionId);
+        String priceId = priceIdOf(invoice);
+        boolean legacy = isLegacyPrice(priceId);
+        int allowance = legacy
+                ? creditProperties.getLegacySubscriptionMonthlyGrant()
+                : creditProperties.getSubscriptionMonthlyGrant();
+        recordPeriod(subscriptionId, priceId, periodEndOf(invoice));
+
+        boolean granted = creditService.startSubscriptionPeriod(userId, allowance, invoice.getId(),
+                ("subscription_create".equals(reason) ? "PRO — monthly credits" : "PRO renewal — monthly credits")
+                        + (legacy ? " (legacy plan)" : ""));
+        log.info("[Stripe] invoice {} ({}) for subscription {}: {} {} monthly credits to user {}",
+                invoice.getId(), reason, subscriptionId, granted ? "granted" : "already granted",
+                allowance, userId);
+    }
+
+    /** The Price of the invoice's subscription line, if any. */
+    static String priceIdOf(Invoice invoice) {
+        if (invoice.getLines() == null || invoice.getLines().getData() == null) {
+            return null;
+        }
+        return invoice.getLines().getData().stream()
+                .map(line -> line.getPricing() != null && line.getPricing().getPriceDetails() != null
+                        ? line.getPricing().getPriceDetails().getPrice() : null)
+                .filter(java.util.Objects::nonNull)
+                .findFirst().orElse(null);
+    }
+
+    private static LocalDateTime periodEndOf(Invoice invoice) {
+        if (invoice.getLines() == null || invoice.getLines().getData() == null) {
+            return null;
+        }
+        return invoice.getLines().getData().stream()
+                .map(line -> line.getPeriod() != null ? line.getPeriod().getEnd() : null)
+                .filter(java.util.Objects::nonNull)
+                .findFirst()
+                .map(epoch -> LocalDateTime.ofEpochSecond(epoch, 0, java.time.ZoneOffset.UTC))
+                .orElse(null);
+    }
+
+    private boolean isLegacyPrice(String priceId) {
+        if (priceId == null || priceId.equals(stripeProperties.getSubscriptionPriceId())) {
+            return false;
+        }
+        return stripeProperties.getLegacySubscriptionPriceIds() != null
+                && stripeProperties.getLegacySubscriptionPriceIds().stream()
+                .map(String::strip).anyMatch(priceId::equals);
+    }
+
+    private void recordPeriod(String subscriptionId, String priceId, LocalDateTime periodEnd) {
+        userSubscriptionRepository.findByStripeSubscriptionId(subscriptionId).ifPresent(sub -> {
+            if (priceId != null) {
+                sub.setStripePriceId(priceId);
+            }
+            if (periodEnd != null) {
+                sub.setCurrentPeriodEnd(periodEnd);
+            }
+            userSubscriptionRepository.save(sub);
+        });
     }
 
     /**
@@ -335,32 +398,48 @@ public class StripeWebhookService {
     }
 
     /**
-     * Reclaim credits for a charge that was refunded or charged back. The charge
-     * is matched to what it originally granted:
-     *   - a credit-pack order (by payment_intent) → its {@code creditsGranted};
-     *   - otherwise a subscription payment → the monthly grant, with the user
-     *     resolved from the order or the Stripe customer.
-     * Reclaims {@code round(granted * fraction)} minus whatever was already
-     * reclaimed for this payment_intent, so partial refunds and a
-     * refund-then-dispute sequence stay idempotent.
+     * Reclaim credits for a charge that was refunded or charged back. The policy
+     * is explicit and never creates a debt or touches unrelated credits:
+     * <ul>
+     *   <li>a <b>credit pack</b> (matched by payment_intent) → reclaim
+     *       {@code round(packCredits × fraction)} from the user's purchased credits
+     *       that are still unspent;</li>
+     *   <li>a <b>subscription payment</b> → find the invoice it paid and reclaim
+     *       {@code round(periodAllowance × fraction)} from the monthly credits that
+     *       are still unspent — only if that invoice is the current billing period
+     *       (an older period's credits have already expired);</li>
+     *   <li>whatever was already spent is not taken back (the balance never goes
+     *       below zero): it is recorded on the ledger row as a shortfall and logged
+     *       for manual review.</li>
+     * </ul>
+     * The amount already settled for this payment_intent is subtracted, so partial
+     * refunds and a refund-then-dispute sequence stay idempotent.
      */
     private void reclaimForCharge(String paymentIntentId, String customerId,
                                   double fraction, boolean full, String label) {
         PaymentOrder order = paymentOrderRepository.findByStripePaymentIntentId(paymentIntentId).orElse(null);
+        boolean pack = order != null && order.getPurpose() == PaymentPurpose.CREDIT_PACK;
 
-        UUID userId;
-        int granted;
-        if (order != null && order.getPurpose() == PaymentPurpose.CREDIT_PACK) {
-            userId = order.getUserId();
-            granted = order.getCreditsGranted();
-        } else {
-            userId = order != null ? order.getUserId() : resolveUserByCustomer(customerId);
-            granted = creditProperties.getSubscriptionMonthlyGrant();
-        }
+        UUID userId = order != null ? order.getUserId() : resolveUserByCustomer(customerId);
         if (userId == null) {
             log.warn("[Stripe] {} for payment_intent {} — could not resolve a user, skipping",
                     label, paymentIntentId);
             return;
+        }
+
+        int granted;
+        String invoiceId = null;
+        if (pack) {
+            granted = order.getCreditsGranted();
+        } else {
+            invoiceId = invoiceLookup.invoiceForPaymentIntent(paymentIntentId).orElse(null);
+            CreditTransaction grant = creditService.subscriptionGrantFor(invoiceId).orElse(null);
+            if (grant == null) {
+                log.warn("[Stripe] {} for payment_intent {} (user {}) — no subscription grant found for it, "
+                        + "nothing reclaimed; review manually", label, paymentIntentId, userId);
+                return;
+            }
+            granted = grant.getAmount();
         }
 
         int target = (int) Math.round(granted * fraction);
@@ -372,7 +451,16 @@ public class StripeWebhookService {
             return;
         }
 
-        creditService.clawback(userId, toReclaim, paymentIntentId, label + " — credits reclaimed");
+        if (pack) {
+            creditService.clawbackPurchased(userId, toReclaim, paymentIntentId, label + " — pack credits reclaimed");
+        } else if (creditService.isCurrentSubscriptionGrant(userId, invoiceId)) {
+            creditService.clawbackSubscription(userId, toReclaim, paymentIntentId,
+                    label + " — monthly credits reclaimed");
+        } else {
+            log.info("[Stripe] {} for payment_intent {} — invoice {} is a past billing period whose credits "
+                    + "already expired; nothing to reclaim", label, paymentIntentId, invoiceId);
+            return;
+        }
 
         if (full && order != null && order.getStatus() != PaymentOrderStatus.REFUNDED) {
             order.setStatus(PaymentOrderStatus.REFUNDED);
@@ -410,7 +498,12 @@ public class StripeWebhookService {
             sub.setStatus("canceled");
             sub.setCancelAtPeriodEnd(false);
             userSubscriptionRepository.save(sub);
-            log.info("[Stripe] Subscription {} canceled", subscription.getId());
+            // PRO has ended (the paid period ran out, or dunning gave up): the
+            // monthly credits go with it. Purchased credits, books and purchases stay.
+            int expired = creditService.expireSubscriptionCredits(sub.getUserId(),
+                    "PRO ended — unused monthly credits expired");
+            log.info("[Stripe] Subscription {} canceled; {} monthly credits expired for user {}",
+                    subscription.getId(), expired, sub.getUserId());
         });
     }
 

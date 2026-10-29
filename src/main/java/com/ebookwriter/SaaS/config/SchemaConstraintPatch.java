@@ -60,7 +60,13 @@ public class SchemaConstraintPatch implements ApplicationRunner {
             new String[]{"ebooks", "ebooks_generation_mode_check"},
             new String[]{"ebooks", "ebooks_depth_check"},
             new String[]{"blueprint_questions", "blueprint_questions_status_check"},
-            new String[]{"store_product_files", "store_product_files_format_check"});
+            new String[]{"store_product_files", "store_product_files_format_check"},
+            // Credit economy redesign: CreditTransactionType grew (SUBSCRIPTION_EXPIRY,
+            // COVER_GENERATION, ECONOMY_MIGRATION) and CreditPack got the new packs.
+            new String[]{"credit_transactions", "credit_transactions_type_check"},
+            new String[]{"payment_orders", "payment_orders_credit_pack_check"},
+            new String[]{"payment_orders", "payment_orders_purpose_check"},
+            new String[]{"payment_orders", "payment_orders_status_check"});
 
     /**
      * (table, column) pairs that are nullable now. store_products.ebook_id: a

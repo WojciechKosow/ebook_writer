@@ -7,12 +7,14 @@ import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.config.properties.OpenAiProperties;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
+import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.entity.EbookImagePlacement;
 import com.ebookwriter.SaaS.entity.EbookImageRole;
 import com.ebookwriter.SaaS.entity.EbookStatus;
 import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.service.credit.CreditPricing;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,6 +72,7 @@ public class EbookGenerationService {
     private final EbookValidationService validationService;
     private final AnthropicProperties anthropicProperties;
     private final CreditService creditService;
+    private final CreditPricing creditPricing;
     private final OpenAiProperties openAiProperties;
     private final KnowledgeBookPlanner knowledgeBookPlanner;
     private final EbookImageRepository imageRepository;
@@ -215,9 +218,9 @@ public class EbookGenerationService {
             // a broken book being published as COMPLETED. Quality warnings are logged.
             validationService.validateOrThrow(ebookId, actualPages);
 
-            // Step 5 — true up the up-front hold to the real page count: charge for
-            // exactly the pages rendered (1 credit = 1 final page) and refund the
-            // unused reservation. Idempotent, so a retry never charges twice.
+            // Step 5 — true up the up-front hold to the real result: charge for the
+            // pages rendered and the AI images generated, and refund the unused
+            // reservation. Idempotent, so a retry never charges twice.
             reconcileCredits(ebookId, actualPages);
 
             updateStatus(ebookId, EbookStatus.COMPLETED, 100);
@@ -271,13 +274,15 @@ public class EbookGenerationService {
         ebookRepository.findById(ebookId).ifPresent(ebook -> {
             if (ebook.getCreditsCharged() > 0 && !ebook.isCreditsRefunded() && !ebook.isCreditsReconciled()) {
                 int held = ebook.getCreditsCharged();
+                int heldFromSubscription = ebook.getSubscriptionCreditsHeld();
                 ebookRepository.findUserIdById(ebookId).ifPresent(userId ->
-                        creditService.refundGeneration(userId, held, ebookId));
+                        creditService.refundGeneration(userId, held, heldFromSubscription, ebookId));
             }
             ebook.setStatus(EbookStatus.DRAFT);
             ebook.setProgress(0);
             ebook.setPageBudget(0);
             ebook.setCreditsCharged(0);
+            ebook.setSubscriptionCreditsHeld(0);
             ebook.setCreditsRefunded(false);
             ebook.setGenerationMode(null);
             ebook.setProposedPages(null);
@@ -478,11 +483,12 @@ public class EbookGenerationService {
     }
 
     /**
-     * True up the reserved hold to the real page count. The final charge is the
-     * actual number of pages rendered (1 credit = 1 final page), clamped to
-     * {@code [1, pageBudget]} — the ceiling was reserved so this never charges
-     * past {@code -maxOverdraft}, and a produced book always costs at least one
-     * credit. Any unused reservation is refunded.
+     * True up the reserved hold to the real result. The final charge is the
+     * pages rendered (clamped to {@code [1, pageBudget]}) at the book's page rate,
+     * plus the AI illustrations and AI cover the book actually got — never more
+     * than the credits held, which were reserved so this can never charge past
+     * the bounded overdraft. Any unused reservation is refunded, purchased
+     * credits first (see {@link CreditService#subscriptionShareOfRefund}).
      *
      * <p><b>Idempotent.</b> The true-up is claimed atomically via
      * {@link EbookRepository#markReconciled}; a second attempt (a retried worker,
@@ -495,32 +501,52 @@ public class EbookGenerationService {
             return;
         }
         ebookRepository.findById(ebookId).ifPresent(ebook -> {
-            int budget = ebook.getPageBudget();
-            int finalCharge = reconciledCharge(actualPages, budget);
-            int refund = budget - finalCharge;
+            int held = ebook.getCreditsCharged();
+            int pages = reconciledPages(actualPages, ebook.getPageBudget());
+            List<EbookImage> images = imageRepository.findByEbookIdOrderByCreatedAtAsc(ebookId);
+            int illustrations = (int) images.stream()
+                    .filter(i -> i.getRole() == EbookImageRole.ILLUSTRATION && i.getPlacedBy() == ContentSource.AI)
+                    .count();
+            boolean aiCover = images.stream()
+                    .anyMatch(i -> i.getPlacement() == EbookImagePlacement.COVER && i.getPlacedBy() == ContentSource.AI);
+            int finalCharge = reconciledCharge(
+                    creditPricing.generationCharge(pages, ebook.getCreditsPerPage(), illustrations, aiCover), held);
+            int refund = held - finalCharge;
+            int refundFromSubscription = CreditService.subscriptionShareOfRefund(
+                    refund, held, ebook.getSubscriptionCreditsHeld());
 
             ebook.setActualPageCount(actualPages);
             ebook.setCreditsCharged(finalCharge);
+            ebook.setSubscriptionCreditsHeld(ebook.getSubscriptionCreditsHeld() - refundFromSubscription);
             ebookRepository.save(ebook);
 
             if (refund > 0) {
                 ebookRepository.findUserIdById(ebookId).ifPresent(userId ->
-                        creditService.refundUnusedHold(userId, refund, ebookId));
+                        creditService.refundUnusedHold(userId, refund, refundFromSubscription, ebookId));
             }
 
-            log.info("Reconciled ebook {}: {} pages rendered, reserved {}, charged {}, refunded {}",
-                    ebookId, actualPages, budget, finalCharge, refund);
+            log.info("Reconciled ebook {}: {} pages rendered ({} billed at {}), {} AI illustrations, AI cover {}; "
+                            + "held {}, charged {}, refunded {}",
+                    ebookId, actualPages, pages, ebook.getCreditsPerPage(), illustrations, aiCover,
+                    held, finalCharge, refund);
         });
     }
 
     /**
-     * The credits a finished book is billed: the real page count (1 credit =
-     * 1 final page), never more than the reserved ceiling (which was sized so the
-     * balance cannot fall below {@code -maxOverdraft}) and never less than 1
-     * (a produced book always costs at least one credit).
+     * The pages a finished book is billed for: the real page count, never more
+     * than the reserved page ceiling and never less than 1.
      */
-    static int reconciledCharge(int actualPages, int budget) {
-        return Math.max(1, Math.min(actualPages, budget));
+    static int reconciledPages(int actualPages, int pageBudget) {
+        return Math.max(1, Math.min(actualPages, pageBudget));
+    }
+
+    /**
+     * The credits a finished book is billed: its cost, never more than the
+     * credits held (sized so the balance cannot fall below the bounded overdraft)
+     * and never less than 1 (a produced book always costs something).
+     */
+    static int reconciledCharge(int cost, int held) {
+        return Math.max(1, Math.min(cost, Math.max(1, held)));
     }
 
     private void updateStatus(UUID ebookId, EbookStatus status, int progress) {
@@ -553,7 +579,8 @@ public class EbookGenerationService {
                         && !ebook.isCreditsRefunded()
                         && !ebook.isCreditsReconciled()) {
                     ebookRepository.findUserIdById(ebookId).ifPresent(userId -> {
-                        creditService.refundGeneration(userId, ebook.getCreditsCharged(), ebookId);
+                        creditService.refundGeneration(userId, ebook.getCreditsCharged(),
+                                ebook.getSubscriptionCreditsHeld(), ebookId);
                         ebook.setCreditsRefunded(true);
                     });
                 }

@@ -115,6 +115,12 @@ class KnowledgeBookGenerationEndToEndTest {
     @Autowired BlueprintQuestionRepository questionRepository;
     @Autowired BookBlueprintService blueprintService;
     @Autowired CreditService creditService;
+    @Autowired com.ebookwriter.SaaS.service.credit.CreditPricing creditPricing;
+    @Autowired com.ebookwriter.SaaS.repository.EbookImageRepository imageRepository;
+
+    /** Credits per page and the image reserve (6 illustrations × 15 + a 30-credit cover) at the default policy. */
+    static final int RATE = 11;
+    static final int IMAGE_RESERVE = 6 * 15 + 30;
 
     @MockitoBean MailService mailService;
     @MockitoBean AnthropicService anthropic;
@@ -160,7 +166,21 @@ class KnowledgeBookGenerationEndToEndTest {
 
         user = userRepository.save(User.builder().email("gen-" + UUID.randomUUID() + "@example.com")
                 .displayName("Author").password("x").enabled(true).build());
-        creditService.grant(user.getId(), 200, CreditTransactionType.CREDIT_PURCHASE, null, null, "test credits");
+        creditService.grant(user.getId(), 200 * RATE + IMAGE_RESERVE, CreditTransactionType.CREDIT_PURCHASE,
+                null, null, "test credits");
+    }
+
+    /** What a finished book should have been charged: its pages, AI illustrations and AI cover. */
+    private int expectedCharge(Ebook ebook) {
+        List<com.ebookwriter.SaaS.entity.EbookImage> images = imageRepository.findByEbookIdOrderByCreatedAtAsc(ebook.getId());
+        int illustrations = (int) images.stream()
+                .filter(i -> i.getRole() == com.ebookwriter.SaaS.entity.EbookImageRole.ILLUSTRATION
+                        && i.getPlacedBy() == com.ebookwriter.SaaS.entity.ContentSource.AI).count();
+        boolean cover = images.stream()
+                .anyMatch(i -> i.getPlacement() == com.ebookwriter.SaaS.entity.EbookImagePlacement.COVER
+                        && i.getPlacedBy() == com.ebookwriter.SaaS.entity.ContentSource.AI);
+        int pages = Math.max(1, Math.min(ebook.getActualPageCount(), ebook.getPageBudget()));
+        return creditPricing.generationCharge(pages, RATE, illustrations, cover);
     }
 
     private RequestPostProcessor auth() {
@@ -269,7 +289,9 @@ class KnowledgeBookGenerationEndToEndTest {
         // ---- PDF + credits ----
         assertTrue(pdfRepository.existsById(ebookId));
         assertTrue(ebook.getActualPageCount() > 0);
-        assertEquals(ebook.getActualPageCount(), ebook.getCreditsCharged(), "1 credit = 1 final page");
+        assertEquals(RATE, ebook.getCreditsPerPage());
+        assertEquals(expectedCharge(ebook), ebook.getCreditsCharged(), "billed for its pages and AI images");
+        assertTrue(ebook.getCreditsCharged() > ebook.getActualPageCount() * RATE, "the AI images are billed too");
         assertEquals(balanceBefore - ebook.getCreditsCharged(), creditService.getBalance(user.getId()));
         mvc.perform(get("/api/ebooks/" + ebookId + "/download").with(auth()))
                 .andExpect(status().isOk())
@@ -384,7 +406,7 @@ class KnowledgeBookGenerationEndToEndTest {
         assertEquals(List.of("Products"), resumed.stream().map(FakeClaude.Call::chapterTitle).toList());
         assertTrue(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).stream()
                 .allMatch(c -> c.getStatus() == ChapterStatus.EDITED));
-        assertEquals(done.getActualPageCount(), done.getCreditsCharged());
+        assertEquals(expectedCharge(done), done.getCreditsCharged());
         assertEquals(balanceBefore - done.getCreditsCharged(), creditService.getBalance(user.getId()));
         mvc.perform(post("/api/ebooks/" + ebookId + "/resume").with(auth())).andExpect(status().isConflict());
     }
@@ -407,7 +429,7 @@ class KnowledgeBookGenerationEndToEndTest {
         int required = MAPPER.readTree(scopeJson).path("requiredCredits").asInt();
         assertTrue(required > 0);
         assertTrue(required <= com.ebookwriter.SaaS.service.ebook.ScopeEstimator.depthCap(
-                com.ebookwriter.SaaS.entity.BookDepth.QUICK), "the wild guess was bounded: " + required);
+                com.ebookwriter.SaaS.entity.BookDepth.QUICK) * RATE + IMAGE_RESERVE, "the wild guess was bounded: " + required);
 
         // One credit short: refused with an explanation, nothing reserved, still a draft.
         int balance = creditService.getBalance(user.getId());
@@ -424,9 +446,9 @@ class KnowledgeBookGenerationEndToEndTest {
         mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth())).andExpect(status().isAccepted());
         Ebook ebook = awaitFinished(ebookId);
         assertEquals(EbookStatus.COMPLETED, ebook.getStatus(), ebook.getErrorMessage());
-        assertEquals(ebook.getActualPageCount(), ebook.getCreditsCharged());
-        assertTrue(creditService.getBalance(user.getId()) >= -10);
-        assertTrue(ebook.getCreditsCharged() <= ebook.getPageBudget(), "never past the reserved ceiling");
+        assertEquals(expectedCharge(ebook), ebook.getCreditsCharged());
+        assertTrue(creditService.getBalance(user.getId()) >= -10 * RATE);
+        assertTrue(ebook.getActualPageCount() <= ebook.getPageBudget(), "never past the reserved ceiling");
         assertTrue(ebook.getPlannedPages() != null && ebook.getPlannedPages() > 0, "the plan's size is recorded");
         assertTrue(ebook.getEstimatedPagesHigh() != null && ebook.getEstimatedPagesHigh() >= ebook.getEstimatedPagesLow());
     }
@@ -442,11 +464,12 @@ class KnowledgeBookGenerationEndToEndTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.estimate.basis").value("BRIEF"))
                 .andReturn().getResponse().getContentAsString();
         int required = MAPPER.readTree(scopeJson).path("requiredCredits").asInt();
+        int requiredPages = MAPPER.readTree(scopeJson).path("estimate").path("pagesHigh").asInt();
         int balance = creditService.getBalance(user.getId());
         creditService.spend(user.getId(), balance - required, CreditTransactionType.GENERATION, null, "test spend");
 
         // The planner decides the subject needs far more than estimated (not a runaway).
-        int perChapter = required + 8;
+        int perChapter = requiredPages + 8;
         claude.legacyPlan = """
                 {"title": "Big Book", "subtitle": "s", "targetAudience": "a", "description": "d",
                  "writingGuidelines": "g", "chapters": [
@@ -496,13 +519,13 @@ class KnowledgeBookGenerationEndToEndTest {
         assertTrue(done.isFitToBudget());
         assertTrue(done.getPlannedPages() <= done.getApprovedPages(), "planned within the agreed length");
         assertEquals(2, chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).size(), "no chapter dropped");
-        assertTrue(creditService.getBalance(user.getId()) >= -10);
+        assertTrue(creditService.getBalance(user.getId()) >= -10 * RATE);
     }
 
     @Test
     void continuingALongerBookWithEnoughCreditsWritesItInFull() throws Exception {
         UUID ebookId = pausedAfterPlanning();
-        creditService.grant(user.getId(), 200, CreditTransactionType.CREDIT_PURCHASE, null, null, "top up");
+        creditService.grant(user.getId(), 200 * RATE, CreditTransactionType.CREDIT_PURCHASE, null, null, "top up");
         Ebook paused = ebookRepository.findById(ebookId).orElseThrow();
 
         mvc.perform(post("/api/ebooks/" + ebookId + "/scope-decision").with(auth())
@@ -512,7 +535,7 @@ class KnowledgeBookGenerationEndToEndTest {
         assertEquals(EbookStatus.COMPLETED, done.getStatus(), done.getErrorMessage());
         assertEquals(paused.getPlannedPages(), done.getApprovedPages(), "the user agreed to the longer book");
         assertTrue(done.getPageBudget() > paused.getPageBudget(), "the hold was extended");
-        assertEquals(done.getActualPageCount(), done.getCreditsCharged(), "billed for the real pages only");
+        assertEquals(expectedCharge(done), done.getCreditsCharged(), "billed for what was produced only");
     }
 
     @Test
@@ -550,7 +573,7 @@ class KnowledgeBookGenerationEndToEndTest {
     void cancellingAfterPlanningRefundsEverythingAndReturnsToDraft() throws Exception {
         UUID ebookId = pausedAfterPlanning();
         Ebook paused = ebookRepository.findById(ebookId).orElseThrow();
-        int balanceBeforeStart = creditService.getBalance(user.getId()) + paused.getPageBudget();
+        int balanceBeforeStart = creditService.getBalance(user.getId()) + paused.getCreditsCharged();
 
         mvc.perform(post("/api/ebooks/" + ebookId + "/scope-decision").with(auth())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"decision\": \"CANCEL\"}"))
