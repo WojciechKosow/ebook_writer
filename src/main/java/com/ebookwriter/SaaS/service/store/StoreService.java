@@ -631,6 +631,29 @@ public class StoreService {
     }
 
     /**
+     * "Disconnect Stripe": forget the store's connected account so the author can
+     * connect a different one (e.g. a live account after test mode). Only our link
+     * is removed — the account stays the author's on Stripe, so no Stripe call is
+     * made and it works even when the old account no longer exists for our key.
+     * Orders already in Checkout keep their own account id, so their webhooks
+     * still fulfil them.
+     */
+    @Transactional
+    public StoreDashboardResponse disconnectStripe(User user) {
+        Store store = requireOwn(user);
+        if (store.getStripeAccountId() != null) {
+            log.info("[StripeConnect] Store {} disconnected account {}", store.getId(), store.getStripeAccountId());
+            store.setStripeAccountId(null);
+            store.setChargesEnabled(false);
+            store.setDetailsSubmitted(false);
+            store.setRequirementsCurrentlyDue(null);
+            store.setStripeSyncedAt(null);
+            storeRepository.save(store);
+        }
+        return toDashboard(store);
+    }
+
+    /**
      * {@code account.updated} from the Connect webhook: re-fetch the account from
      * Stripe (the event payload is not trusted as the latest state) and store it.
      * Throws on a Stripe failure so the webhook returns 500 and Stripe retries.

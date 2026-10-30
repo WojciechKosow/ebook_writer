@@ -226,4 +226,10 @@ public class StoreController {
     public StoreDashboardResponse sync(Authentication authentication) {
         return storeService.syncOwn(currentUserService.require(authentication));
     }
+
+    /** "Disconnect Stripe": unlink the connected account so another one can be connected. */
+    @DeleteMapping("/stripe")
+    public StoreDashboardResponse disconnectStripe(Authentication authentication) {
+        return storeService.disconnectStripe(currentUserService.require(authentication));
+    }
 }

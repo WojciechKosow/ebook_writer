@@ -31,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -443,6 +444,34 @@ class CreatorStorePaymentsIntegrationTest {
         Store connected = storeRepository.findById(store.getId()).orElseThrow();
         assertNotNull(connected.getStripeAccountId());
         assertFalse(connected.isChargesEnabled(), "never ready just because a link was created");
+    }
+
+    @Test
+    void disconnectUnlinksTheAccountSoAnotherCanBeConnected() throws Exception {
+        StoreOrder inFlight = checkout();
+
+        mvc.perform(delete("/api/store/stripe").with(asAuthor()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stripe.state").value("NOT_CONNECTED"))
+                .andExpect(jsonPath("$.stripe.chargesEnabled").value(false));
+        Store disconnected = storeRepository.findById(store.getId()).orElseThrow();
+        assertNull(disconnected.getStripeAccountId());
+        assertFalse(disconnected.isDetailsSubmitted());
+        verify(stripe, never()).retrieveAccount(anyString());
+        checkoutRequest(product.getId()).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(StoreService.REASON_PAYMENTS_SETUP));
+
+        // A buyer already in Checkout on the old account still gets their purchase.
+        webhook(completed(evt(), account, inFlight, "paid")).andExpect(status().isOk());
+        assertEquals(StoreOrderStatus.PAID, orderRepository.findById(inFlight.getId()).orElseThrow().getStatus());
+
+        when(stripe.createAccount(anyString(), any(), anyString())).thenReturn("acct_other");
+        when(stripe.createAccountLink(anyString(), anyString(), anyString())).thenReturn("https://connect.stripe.com/setup/y");
+        mvc.perform(post("/api/store/stripe/connect").with(asAuthor())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"country\":\"PL\"}"))
+                .andExpect(status().isOk());
+        verify(stripe).createAccountLink(eq("acct_other"), anyString(), anyString());
+        assertEquals("acct_other", storeRepository.findById(store.getId()).orElseThrow().getStripeAccountId());
     }
 
     // ---- Helpers ------------------------------------------------------------------
