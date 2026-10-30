@@ -22,6 +22,7 @@ Publishing a store and selling both require active Scrivetta PRO
 | Success page polls our order status until `PAID` | `GET /api/public/orders/{id}` |
 | Guest buyer downloads each file through the backend (token: 30 days, 5 downloads per file) | `GET /api/public/downloads/{token}/files/{fileId}` |
 | Signed-in buyer with a verified account: **My Purchases**, unlimited downloads | `GET /api/purchases`, see [product-files.md](product-files.md) |
+| Author unlinks the account (**Disconnect Stripe**) to connect a different one | `DELETE /api/store/stripe` |
 
 Connected accounts are created with **Accounts v2** (`POST /v2/core/accounts`). Stripe refuses
 v1 account creation for new Connect platforms, so the original v1 controller properties map to:
@@ -87,6 +88,32 @@ It is completely separate from the PRO subscription webhook (`/api/stripe/webhoo
 > service URL, each author must set it in their own Dashboard (Settings → Public
 > details) — or we revisit the approach. Do not switch to destination charges.
 
+## Disconnecting an account
+
+**Disconnect Stripe** in the store panel clears `stripe_account_id` and the synced state, so
+the next **Connect Stripe** creates a new account. Only Scrivetta's link is removed: no Stripe
+call is made, the account stays the author's (payouts, refunds and history in their own
+Dashboard), and it works even when the old account doesn't exist for the current key — e.g. a
+test-mode `acct_...` after going live. Orders already in Checkout keep their own
+`stripe_account_id`, so their webhooks still fulfil them. Until a new account is ready, the
+store shows the payments-setup notice and checkout is refused.
+
+## Going live
+
+1. Stripe Dashboard of the platform account, **live mode**: enable Connect (Settings →
+   Connect) and complete the platform profile; set a terms-of-service URL in Settings →
+   Public details.
+2. Create the live Connect webhook endpoint and the live event destination exactly as in
+   steps 3 and 5 of the test-mode setup below (same URLs, events and API version) — test-mode
+   endpoints don't receive live events.
+3. Set `STRIPE_CONNECT_SECRET_KEY=sk_live_...`, both new signing secrets
+   (`STRIPE_CONNECT_WEBHOOK_SECRET`, `STRIPE_CONNECT_V2_EVENTS_SECRET`) and
+   `STRIPE_CONNECT_LIVE_ENABLED=true`. The log should say
+   `Creator store payments in LIVE mode`.
+4. Authors connected in test mode click **Disconnect Stripe**, then **Connect Stripe** and
+   complete the real onboarding. Test-mode `PENDING` orders never get a webhook; they stay
+   `PENDING` and are harmless.
+
 ## Local testing
 
 ```bash
@@ -141,5 +168,4 @@ See `docs/migrations/2026-10-14-creator-store-payments.sql`; product files, cove
   (logged as an error). Resending is a follow-up.
 - Products can be Scrivetta ebooks (their current PDF is delivered) and/or carry uploaded
   PDF/EPUB/ZIP files — see [product-files.md](product-files.md).
-- Test mode only. Going live needs explicit production configuration
-  (`STRIPE_CONNECT_LIVE_ENABLED=true`, a live key and a live Connect webhook).
+- Going live needs explicit production configuration — see [Going live](#going-live).
