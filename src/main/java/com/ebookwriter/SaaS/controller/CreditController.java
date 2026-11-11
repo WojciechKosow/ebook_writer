@@ -55,7 +55,9 @@ public class CreditController {
     /** What each paid AI operation costs, and the PRO allowance — to explain credits in the UI. */
     @GetMapping("/pricing")
     public CreditPricingResponse pricing() {
-        return new CreditPricingResponse(creditPricing.creditsPerPage(), creditPricing.creditsPerImage(),
+        return new CreditPricingResponse(creditPricing.creditsPerPage(),
+                creditPricing.creditsPerPage(com.ebookwriter.SaaS.entity.WritingQuality.BASIC),
+                creditPricing.creditsPerImage(),
                 creditPricing.creditsPerCover(), creditPricing.maxImagesPerBook(),
                 creditProperties.getSubscriptionMonthlyGrant());
     }

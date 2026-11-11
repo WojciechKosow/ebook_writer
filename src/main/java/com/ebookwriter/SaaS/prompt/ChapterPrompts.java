@@ -294,6 +294,19 @@ public final class ChapterPrompts {
      */
     public static String bookContextSections(WritingContext context, int chapterNumber) {
         StringBuilder sb = new StringBuilder();
+        if (!context.writingBrief().isBlank()) {
+            sb.append("""
+
+                    WRITING BRIEF FROM THE LEAD AUTHOR — FOLLOW IT
+                    The lead author studied the whole book and the author's material and planned this
+                    chapter for you. Follow the brief: its sections in its order, the author's specifics
+                    it assigns here (values, steps, experiences, examples), and what it leaves to other
+                    chapters. It is a plan, not text: write the chapter itself in full, finished prose in
+                    the book's language. If the brief and the author's material ever disagree, the
+                    author's material wins.
+                    %s
+                    """.formatted(context.writingBrief()));
+        }
         if (!context.topicRegistry().isBlank()) {
             sb.append("""
 

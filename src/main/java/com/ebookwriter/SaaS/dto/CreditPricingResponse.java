@@ -11,6 +11,7 @@ package com.ebookwriter.SaaS.dto;
  * @param monthlyCredits    credits included in each PRO billing period
  */
 public record CreditPricingResponse(int creditsPerPage,
+                                    int basicCreditsPerPage,
                                     int creditsPerImage,
                                     int creditsPerCover,
                                     int maxImagesPerBook,

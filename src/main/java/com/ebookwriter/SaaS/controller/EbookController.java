@@ -104,9 +104,11 @@ public class EbookController {
     public ResponseEntity<GenerationBudgetResponse> generationBudget(
             @RequestParam(defaultValue = "0") int briefChars,
             @RequestParam(defaultValue = "0") long sourceChars,
+            @RequestParam(required = false) com.ebookwriter.SaaS.entity.WritingQuality writingQuality,
             Authentication authentication) {
         User user = currentUser(authentication);
-        return ResponseEntity.ok(ebookService.getGenerationBudget(user.getId(), briefChars, sourceChars));
+        return ResponseEntity.ok(ebookService.getGenerationBudget(user.getId(), briefChars, sourceChars,
+                com.ebookwriter.SaaS.entity.WritingQuality.defaultForNewBook(writingQuality)));
     }
 
     /**
@@ -161,7 +163,7 @@ public class EbookController {
         return ResponseEntity.ok(ebookService.updateDepth(id, user.getId(), request.getDepth()));
     }
 
-    /** Change a draft's writing quality (Basic / Pro); {@code 409} once generation has started. */
+    /** Change a draft's writing quality (Basic model / Better model); {@code 409} once generation has started. */
     @PutMapping("/{id}/writing-quality")
     public ResponseEntity<EbookStatusResponse> updateWritingQuality(@PathVariable UUID id,
                                                                     @Valid @RequestBody WritingQualityUpdateRequest request,

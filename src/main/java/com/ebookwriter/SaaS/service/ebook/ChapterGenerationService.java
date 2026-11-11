@@ -61,7 +61,7 @@ public class ChapterGenerationService {
     private final BookBlueprintService blueprintService;
     private final KnowledgeDocumentStore documentStore;
     private final KnowledgeWritingProperties writingProperties;
-    /** Which model writes (Basic: the lighter writer; Pro: the premium model). Null = the default model. */
+    /** Which model writes (Basic model: the lighter writer; Better model: the premium model). Null = the default model. */
     private final AnthropicProperties anthropicProperties;
 
     /** Write a chapter at its planned length (no credit pressure). */
@@ -100,9 +100,11 @@ public class ChapterGenerationService {
         // What the chapter is written with beyond its brief: everything earlier
         // chapters already explained (refer back, never re-explain) and the book
         // template (the same recurring sections in every chapter, or none).
+        // A Basic-model book also carries the premium model's brief for this chapter.
         WritingContext writing = new WritingContext(
                 TopicRegistry.forChapter(inBook, chapter.getChapterNumber()),
-                BookTemplate.fromJson(ebook.getChapterTemplateJson()));
+                BookTemplate.fromJson(ebook.getChapterTemplateJson()),
+                chapter.getWritingBrief());
 
         String system;
         String userPrompt;
@@ -142,7 +144,7 @@ public class ChapterGenerationService {
         // — never a silently shortened chapter.
         Draft draft = null;
         List<CompletenessCheck.Problem> problems = List.of();
-        // Basic: the premium model planned, a lighter model writes. Pro: the
+        // Basic model: the premium model prepared the brief, a lighter model writes. Better: the
         // premium model writes too.
         ModelChoice writer = anthropicProperties == null ? null
                 : anthropicProperties.writerFor(ebook.effectiveWritingQuality());

@@ -134,9 +134,10 @@ public class EbookService {
         List<ScopeEstimate> all = scopeEstimationService.estimateAllDepths(ebook);
         ScopeEstimate selected = all.stream().filter(e -> e.depth() == ebook.effectiveDepth()).findFirst()
                 .orElseGet(() -> scopeEstimationService.estimate(ebook));
-        int required = creditPricing.estimateHigh(requiredPages(ebook, selected));
-        return new BookScopeResponse(ebook.effectiveDepth(), ScopeEstimateDTO.from(selected, creditPricing),
-                all.stream().map(e -> ScopeEstimateDTO.from(e, creditPricing)).toList(), balance, required,
+        int rate = creditPricing.creditsPerPage(ebook.effectiveWritingQuality());
+        int required = creditPricing.minimumToStart(minimumPages(selected), rate);
+        return new BookScopeResponse(ebook.effectiveDepth(), ScopeEstimateDTO.from(selected, creditPricing, rate),
+                all.stream().map(e -> ScopeEstimateDTO.from(e, creditPricing, rate)).toList(), balance, required,
                 balance >= required,
                 ebook.getStatus() == EbookStatus.DRAFT ? ebook.getPlannedPages() : null,
                 scopeEstimationService.maxPages(),
@@ -145,17 +146,15 @@ public class EbookService {
     }
 
     /**
-     * Pages the user must be able to pay for to start: the high end of the
-     * estimate, so the expected book is never wound down early for lack of
-     * credits — or, if an earlier attempt already planned the book larger than
-     * that, the plan's size. {@link CreditPricing#estimateHigh} turns it into credits.
+     * Pages the user must be able to pay for to start: the <em>low</em> end of the
+     * estimate. The estimate is shown up front, but it never stops a book: the
+     * hold covers as much as the balance allows (plus the bounded overdraft),
+     * the book is written within it, and the user pays for the pages it really
+     * has — less than estimated if it comes out shorter.
+     * {@link CreditPricing#minimumToStart} turns it into credits.
      */
-    static int requiredPages(Ebook ebook, ScopeEstimate estimate) {
-        int required = estimate.requiredPages();
-        if (ebook.getStatus() == EbookStatus.DRAFT && ebook.getPlannedPages() != null) {
-            required = Math.max(required, ebook.getPlannedPages());
-        }
-        return Math.max(1, required);
+    static int minimumPages(ScopeEstimate estimate) {
+        return Math.max(1, estimate.pagesLow());
     }
 
     /**
@@ -165,11 +164,11 @@ public class EbookService {
      *
      * <p><b>Scope first, then credits.</b> Scrivetta estimates the book's length
      * from the selected depth, the brief and the materials ({@link ScopeEstimationService}).
-     * The user must hold enough credits for the <em>high end</em> of that estimate
-     * plus the image reserve ({@link CreditPricing#estimateHigh}) — otherwise this
-     * throws {@link InsufficientCreditsException} (→ 402) explaining how many credits
-     * the book needs. A book is never planned smaller to fit the balance: the user
-     * is told instead.
+     * The user must hold enough credits for the <em>low end</em> of that estimate
+     * plus the image reserve ({@link CreditPricing#minimumToStart}), at the page
+     * price of the book's writing quality — otherwise this throws
+     * {@link InsufficientCreditsException} (→ 402). Beyond that nothing stops the
+     * book: it is written within the hold and billed for what it really becomes.
      *
      * <p><b>Billing is on the real result</b>: we reserve a ceiling — pages up to
      * {@code min(affordable, maxGenerationBudget) + maxOverdraft} at the current
@@ -204,8 +203,9 @@ public class EbookService {
         // judged by OpenAI when available (cached; best-effort) and bounded in code.
         scopeEstimationService.assess(ebook);
         ScopeEstimate estimate = scopeEstimationService.estimate(ebook);
-        int requiredPages = requiredPages(ebook, estimate);
-        int required = creditPricing.estimateHigh(requiredPages);
+        int requiredPages = minimumPages(estimate);
+        int rate = creditPricing.creditsPerPage(ebook.effectiveWritingQuality());
+        int required = creditPricing.minimumToStart(requiredPages, rate);
 
         // Friendly early gate before we mutate any state. The authoritative,
         // race-safe check is in reserveGenerationHold below (same wallet lock).
@@ -223,8 +223,8 @@ public class EbookService {
         ebook.setStatus(EbookStatus.PENDING);
 
         // The hold is a credit ceiling, not a length: min(affordable, safety cap) +
-        // overdraft pages, plus the image reserve. Trued up to the real result.
-        int rate = creditPricing.creditsPerPage();
+        // overdraft pages, plus the image reserve, at the writing quality's page
+        // price. Trued up to the real result.
         CreditService.GenerationHold hold;
         try {
             hold = creditService.reserveGenerationHold(userId, ebookId, scopeEstimationService.maxPages(),
@@ -377,9 +377,9 @@ public class EbookService {
                 : "At %s depth, Scrivetta estimates this book at about %d–%d pages"
                         .formatted(estimate.depth().label(), estimate.pagesLow(), estimate.pagesHigh());
         return new InsufficientCreditsException(
-                "%s, so it needs up to %d credits to generate — you have %d. You only pay for what is actually "
+                "%s; starting needs at least %d credits — you have %d. You only pay for the pages actually "
                         .formatted(why, required, balance)
-                        + "produced. Add credits or choose a lighter depth.", required, balance);
+                        + "produced. Add credits, choose a lighter depth or the Basic model.", required, balance);
     }
 
     /** Record a freshly reserved hold on the book (page ceiling, credits, rate). */
@@ -409,18 +409,21 @@ public class EbookService {
             throw new IllegalStateException("The book's knowledge or blueprint changed; it can't be resumed.");
         }
         // The whole book is billed at the end, so the new hold must cover the plan.
-        int requiredPages = Math.max(1, ebook.getPlannedPages() != null ? ebook.getPlannedPages()
-                : ebook.getEstimatedPagesHigh() != null ? ebook.getEstimatedPagesHigh() : 1);
-        int required = creditPricing.estimateHigh(requiredPages);
+        // Like start: the low end of the estimate is enough to continue; the book
+        // is finished within the hold and billed for what it really has.
+        int requiredPages = Math.max(1, ebook.getEstimatedPagesLow() != null ? ebook.getEstimatedPagesLow()
+                : ebook.getPlannedPages() != null ? ebook.getPlannedPages() : 1);
+        int rate = ebook.getCreditsPerPage() > 0 ? ebook.getCreditsPerPage()
+                : creditPricing.creditsPerPage(ebook.effectiveWritingQuality());
+        int required = creditPricing.minimumToStart(requiredPages, rate);
         int balance = creditService.getBalance(userId);
         if (balance < required) {
-            throw new InsufficientCreditsException(("This book is planned at about %d pages, so resuming needs "
-                    + "up to %d credits — you have %d.").formatted(requiredPages, required, balance), required, balance);
+            throw new InsufficientCreditsException(("Resuming this book needs at least %d credits — you have %d. "
+                    + "You only pay for the pages actually produced.").formatted(required, balance), required, balance);
         }
         if (ebookRepository.claimStatus(ebookId, EbookStatus.FAILED, EbookStatus.PENDING) == 0) {
             throw new IllegalStateException("This ebook cannot be resumed.");
         }
-        int rate = creditPricing.creditsPerPage();
         CreditService.GenerationHold hold;
         try {
             hold = creditService.reserveGenerationHold(userId, ebookId, scopeEstimationService.maxPages(),
@@ -469,10 +472,18 @@ public class EbookService {
      */
     @Transactional(readOnly = true)
     public GenerationBudgetResponse getGenerationBudget(UUID userId, int briefChars, long sourceChars) {
+        return getGenerationBudget(userId, briefChars, sourceChars, WritingQuality.BASIC);
+    }
+
+    /** As above, priced for the chosen writing quality. */
+    @Transactional(readOnly = true)
+    public GenerationBudgetResponse getGenerationBudget(UUID userId, int briefChars, long sourceChars,
+                                                        WritingQuality quality) {
         int balance = creditService.getBalance(userId);
+        int rate = creditPricing.creditsPerPage(quality);
         List<ScopeEstimateDTO> options = java.util.Arrays.stream(BookDepth.values())
                 .map(d -> ScopeEstimateDTO.from(scopeEstimationService.estimateBrief(d,
-                        Math.max(0, briefChars), Math.max(0, sourceChars)), creditPricing))
+                        Math.max(0, briefChars), Math.max(0, sourceChars)), creditPricing, rate))
                 .toList();
         return new GenerationBudgetResponse(balance, BookDepth.STANDARD, options, scopeEstimationService.maxPages());
     }

@@ -100,13 +100,16 @@ class EbookServiceTest {
         return Ebook.builder().id(ebookId).topic("Topic").depth(depth).status(EbookStatus.DRAFT).build();
     }
 
-    private int requiredPages(BookDepth depth) {
-        return scopeEstimationService.estimate(draft(depth)).requiredPages();
+    private int lowPages(BookDepth depth) {
+        return scopeEstimationService.estimate(draft(depth)).pagesLow();
     }
 
-    /** Credits needed to start: the estimate's high end at 11 credits per page. */
+    /**
+     * Credits needed to start: the estimate's LOW end at the book's page rate (a
+     * draft without a stored quality is a Better-model book: 11 credits per page).
+     */
     private int required(BookDepth depth) {
-        return creditPricing.estimateHigh(requiredPages(depth));
+        return creditPricing.minimumToStart(lowPages(depth), 11);
     }
 
     @Test
@@ -143,7 +146,7 @@ class EbookServiceTest {
         assertEquals(required, ex.getRequired());
         assertEquals(required - 1, ex.getAvailable());
         assertTrue(ex.getMessage().contains("Standard depth"), ex.getMessage());
-        assertTrue(ex.getMessage().contains("needs up to " + required + " credits"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("needs at least " + required + " credits"), ex.getMessage());
         verify(ebookRepository, never()).claimForStart(any(), any(), any());
         verify(creditService, never()).reserveGenerationHold(any(), any(), anyInt(), anyInt(), anyInt(), anyInt());
         verify(generationService, never()).generate(any());
@@ -153,8 +156,8 @@ class EbookServiceTest {
     void startWithEnoughCreditsReservesACreditCeilingAndRecordsTheEstimate() {
         when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(draft(BookDepth.STANDARD)));
         int required = required(BookDepth.STANDARD);
-        int pages = requiredPages(BookDepth.STANDARD);
-        assertEquals(pages * 11, required, "1 page = 11 credits, no images configured");
+        int pages = lowPages(BookDepth.STANDARD);
+        assertEquals(pages * 11, required, "the low end at 11 credits per page, no images configured");
         when(creditService.getBalance(userId)).thenReturn(required);
         when(ebookRepository.claimForStart(ebookId, EbookStatus.DRAFT, EbookStatus.PENDING)).thenReturn(1);
         when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
@@ -178,23 +181,47 @@ class EbookServiceTest {
     }
 
     @Test
-    void deeperBooksNeedMoreCreditsToStart() {
-        assertTrue(required(BookDepth.QUICK) < required(BookDepth.STANDARD));
-        assertTrue(required(BookDepth.STANDARD) < required(BookDepth.COMPREHENSIVE));
+    void aBasicModelBookStartsAndIsHeldAtTheBasicPageRate() {
+        Ebook basic = draft(BookDepth.STANDARD);
+        basic.setWritingQuality(com.ebookwriter.SaaS.entity.WritingQuality.BASIC);
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(basic));
+        int pages = lowPages(BookDepth.STANDARD);
+        int rate = creditProperties.getPricing().getBasicCreditsPerPage();
+        assertTrue(rate < 11, "the Basic model is cheaper per page");
+        when(creditService.getBalance(userId)).thenReturn(pages * rate);
+        when(ebookRepository.claimForStart(ebookId, EbookStatus.DRAFT, EbookStatus.PENDING)).thenReturn(1);
+        when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
+        when(creditService.reserveGenerationHold(eq(userId), eq(ebookId),
+                eq(creditProperties.getMaxGenerationBudget()), eq(pages), eq(rate), eq(0)))
+                .thenReturn(new CreditService.GenerationHold(pages + 10, (pages + 10) * rate, 0));
+
+        Ebook started = ebookService.start(ebookId, userId);
+
+        assertEquals(rate, started.getCreditsPerPage(), "the Basic page rate is fixed at start");
+        verify(generationService).generate(ebookId);
     }
 
     @Test
-    void aPlanThatAlreadyBouncedRaisesWhatIsNeeded() {
-        Ebook bounced = draft(BookDepth.STANDARD);
-        bounced.setPlannedPages(90);
-        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(bounced));
-        when(creditService.getBalance(userId)).thenReturn(660);
+    void aBalanceBelowTheHighEndStillStarts() {
+        // The estimate is shown, but it never stops a book: between the low and the
+        // high end the book starts, is written within the hold and billed for what it has.
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(draft(BookDepth.STANDARD)));
+        ScopeEstimate estimate = scopeEstimationService.estimate(draft(BookDepth.STANDARD));
+        assertTrue(estimate.pagesLow() < estimate.pagesHigh());
+        when(creditService.getBalance(userId)).thenReturn(estimate.pagesHigh() * 11 - 1);
+        when(ebookRepository.claimForStart(ebookId, EbookStatus.DRAFT, EbookStatus.PENDING)).thenReturn(1);
+        when(ebookRepository.save(any(Ebook.class))).thenAnswer(i -> i.getArgument(0));
+        when(creditService.reserveGenerationHold(any(), any(), anyInt(), anyInt(), anyInt(), anyInt()))
+                .thenReturn(new CreditService.GenerationHold(estimate.pagesHigh() + 9, (estimate.pagesHigh() + 9) * 11, 0));
 
-        InsufficientCreditsException ex = assertThrows(InsufficientCreditsException.class,
-                () -> ebookService.start(ebookId, userId));
+        assertEquals(EbookStatus.PENDING, ebookService.start(ebookId, userId).getStatus());
+        verify(generationService).generate(ebookId);
+    }
 
-        assertEquals(90 * 11, ex.getRequired());
-        assertTrue(ex.getMessage().contains("planned this book at about 90 pages"), ex.getMessage());
+    @Test
+    void deeperBooksNeedMoreCreditsToStart() {
+        assertTrue(required(BookDepth.QUICK) < required(BookDepth.STANDARD));
+        assertTrue(required(BookDepth.STANDARD) < required(BookDepth.COMPREHENSIVE));
     }
 
     @Test
@@ -235,11 +262,21 @@ class EbookServiceTest {
         assertEquals(BookDepth.STANDARD, info.defaultDepth());
         assertEquals(List.of(BookDepth.QUICK, BookDepth.STANDARD, BookDepth.COMPREHENSIVE),
                 info.options().stream().map(ScopeEstimateDTO::depth).toList());
+        // A new book is a Basic-model book by default: priced at the Basic page rate,
+        // and starting needs only the low end of the estimate.
+        int basic = creditProperties.getPricing().getBasicCreditsPerPage();
         for (ScopeEstimateDTO o : info.options()) {
             assertTrue(o.pagesLow() <= o.pagesHigh());
-            assertEquals(o.pagesHigh() * 11, o.requiredCredits());
-            assertEquals(o.pagesLow() * 11, o.creditsLow());
+            assertEquals(o.pagesLow() * basic, o.requiredCredits());
+            assertEquals(o.pagesLow() * basic, o.creditsLow());
+            assertEquals(o.pagesHigh() * basic, o.creditsHigh());
+            assertEquals(basic, o.creditsPerPage());
+        }
+        GenerationBudgetResponse better = ebookService.getGenerationBudget(userId, 120, 0,
+                com.ebookwriter.SaaS.entity.WritingQuality.BETTER);
+        for (ScopeEstimateDTO o : better.options()) {
             assertEquals(11, o.creditsPerPage());
+            assertEquals(o.pagesHigh() * 11, o.creditsHigh());
         }
     }
 

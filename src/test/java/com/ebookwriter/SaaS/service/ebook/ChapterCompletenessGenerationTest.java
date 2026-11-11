@@ -221,18 +221,18 @@ class ChapterCompletenessGenerationTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("books")
-    void aProBookIsWrittenByThePremiumModel(GenreFixtures.Book fixture) {
+    void aBetterModelBookIsWrittenByThePremiumModel(GenreFixtures.Book fixture) {
         properties = new AnthropicProperties();
         GenreFixtures.Book book = fixture.copy();
-        book.ebook().setWritingQuality(WritingQuality.PRO);
+        book.ebook().setWritingQuality(WritingQuality.BETTER);
         EbookChapter chapter = setUp(book, 1);
-        ModelChoice pro = new ModelChoice(properties.getModel(), null);
-        when(ai.completeDetailed(anyString(), anyString(), anyLong(), eq(pro)))
+        ModelChoice better = new ModelChoice(properties.getModel(), null);
+        when(ai.completeDetailed(anyString(), anyString(), anyLong(), eq(better)))
                 .thenReturn(new AnthropicService.Completion(response(chapter.getContent()), false));
 
         writer.generate(book.ebook().getId(), chapter.getId());
 
-        verify(ai).completeDetailed(anyString(), anyString(), anyLong(), eq(pro));
+        verify(ai).completeDetailed(anyString(), anyString(), anyLong(), eq(better));
         assertEquals(ChapterStatus.WRITTEN, chapter.getStatus());
     }
 

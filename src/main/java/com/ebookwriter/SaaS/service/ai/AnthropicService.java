@@ -41,6 +41,11 @@ public class AnthropicService {
         return completeDetailed(systemPrompt, userPrompt, maxTokens, model).text();
     }
 
+    /** As {@link #complete(String, String, long)} with an explicit model and effort. */
+    public String complete(String systemPrompt, String userPrompt, long maxTokens, ModelChoice choice) {
+        return completeDetailed(systemPrompt, userPrompt, maxTokens, choice).text();
+    }
+
     /**
      * A completion's text plus whether the model was cut off by the output-token
      * limit. Long-form steps use this to detect a chapter that stopped mid-thought
@@ -130,6 +135,11 @@ public class AnthropicService {
         for (int attempt = 1; attempt <= Math.max(1, properties.getMaxRetries()); attempt++) {
             try {
                 Message response = anthropicClient.messages().create(params);
+                // Token usage per call and model, so the real cost of a Basic- and a
+                // Better-model book can be measured against the page prices.
+                log.info("Anthropic usage: model={} input_tokens={} output_tokens={} max_tokens={}",
+                        params.model().asString(), response.usage().inputTokens(), response.usage().outputTokens(),
+                        maxTokens);
 
                 String text = response.content().stream()
                         .flatMap(block -> block.text().stream())

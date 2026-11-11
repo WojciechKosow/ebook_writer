@@ -34,7 +34,7 @@ public class EbookStatusResponse {
     /** The depth the user selected — the user's control over scope. */
     private BookDepth depth;
 
-    /** Which model writes the book (Basic or Pro). */
+    /** Which model writes the book (Basic model or Better model). */
     private WritingQuality writingQuality;
 
     /**

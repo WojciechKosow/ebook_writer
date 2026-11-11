@@ -36,7 +36,8 @@ One place: `CreditPricing`, configured under `credits.pricing.*`.
 | Operation | Cost | Notes |
 |---|---|---|
 | Knowledge analysis, blueprint, scope assessment | free | small OpenAI model; cost recorded on `book_knowledge` / `book_blueprints` |
-| Writing a book (planning, chapters, editorial pass, QA) | **11 credits per final rendered page** | Claude; the bulk of the cost, scales with length |
+| Writing a book — **Better model** (the premium model plans, writes and edits) | **11 credits per final rendered page** | Claude Opus; the bulk of the cost, scales with length |
+| Writing a book — **Basic model** (the premium model plans and briefs every chapter, a lighter model writes and edits) | **7 credits per final rendered page** | Claude Opus + Claude Sonnet; see below |
 | AI illustration | **15 credits per image** | at most `openai.max-images-per-book` (6) are ever billed |
 | AI cover | **30 credits** | with the book, or `POST /images/cover/regenerate` |
 | Editing, preview, PDF export | free | no AI |
@@ -57,6 +58,34 @@ deterministic policy derived from the business reference, not measured cost:
 - The rest (~$12.5–13 for ~265 pages ≈ $0.048/page) → ≈ 10.7 credits/page → **11**.
 - Check: `265 × 11 + 6 × 15 + 30 = 3,035` credits (`EbookBillingScenarioTest#case10`).
 
+### The Basic model's page price
+
+Each book chooses who writes it (`ebooks.writing_quality`): the **Better model**
+is the original pipeline (Claude Opus plans, writes and edits — 11 credits/page,
+unchanged); the **Basic model** keeps Opus for the thinking (planning, and a
+brief for every chapter: sections, which of the author's specifics go where,
+what to leave to other chapters) and lets Claude Sonnet write and edit from those
+briefs. Reference: a 250-page book (~35 chapters) costs about **$11** on the
+Better model, i.e. **$0.044/page** → 11 credits/page (1 credit ≈ $0.004).
+
+| Basic-model cost, 250 pages | Model | Estimate |
+|---|---|---|
+| Planning, template, image and cover plans (as today) | Opus 5 ($5 / $25 per M tokens) | ≈ $0.50 |
+| Chapter briefs: 5 requests × 8 chapters, ≈ 30k input + ≈ 8k output each (medium effort) | Opus 5 | ≈ $1.75 |
+| Writing + editorial pass: the Better model's ≈ $10.50 at Sonnet's token prices ($2 / $10, i.e. 40% of Opus 5) | Sonnet 5.5 | ≈ $4.20 |
+| Briefs added to the writer prompts (≈ 500 tokens × 35) | Sonnet 5.5 | ≈ $0.05 |
+| **Total** | | **≈ $6.50 → $0.026/page** |
+
+$0.026 / $0.004 per credit = 6.5 → **7 credits/page**, rounded up so the Basic
+model never costs more to produce than it earns (no discount is assumed for
+Sonnet's lower effort setting). Images and the cover cost the same for both.
+Configurable as `CREDITS_PER_PAGE_BASIC`; models and effort as
+`ANTHROPIC_BASIC_WRITING_MODEL` (claude-sonnet-5-5), `ANTHROPIC_BASIC_WRITING_EFFORT`
+(medium), `ANTHROPIC_BRIEF_EFFORT` (medium), `ANTHROPIC_BETTER_WRITING_EFFORT`.
+
+Every Claude call now logs `Anthropic usage: model=… input_tokens=… output_tokens=…`,
+so both prices can be checked against real books and adjusted.
+
 These are estimates, not guarantees: retries, long sources and model changes
 move the real cost. Revisit the three numbers when models or prices change —
 they are env-configurable (`CREDITS_PER_PAGE`, `CREDITS_PER_IMAGE`,
@@ -65,17 +94,25 @@ they are env-configurable (`CREDITS_PER_PAGE`, `CREDITS_PER_IMAGE`,
 
 ## Lifecycle of a book's credits
 
+`rate` below is the book's page price: 7 (Basic model) or 11 (Better model),
+fixed when the book starts (`ebooks.credits_per_page`).
+
 1. **Estimate.** `GET /api/ebooks/{id}/scope` returns pages *and* credits:
-   `creditsLow = pagesLow × 11 + cover`, `creditsHigh = requiredCredits =
-   pagesHigh × 11 + image reserve (6 × 15 + 30)`. Shown before starting.
+   `creditsLow = pagesLow × rate + cover`, `creditsHigh = pagesHigh × rate +
+   image reserve (6 × 15 + 30)`. Shown before starting — an estimate, never a gate.
 2. **Hold.** `start` / `resume` call `CreditService.reserveGenerationHold` under
-   the wallet's `SELECT … FOR UPDATE` lock: requires `requiredCredits`, holds
-   `pages × 11 + image reserve`, where `pages = min(affordable, 400) + 10`
-   (overdraft, in pages). The balance can never go below `-10 × 11 = -110`.
+   the wallet's `SELECT … FOR UPDATE` lock: starting requires only
+   `requiredCredits = pagesLow × rate + image reserve` (the estimate's low end);
+   the hold is `pages × rate + image reserve`, where `pages = min(affordable, 400)
+   + 10` (overdraft, in pages). The balance can never go below `-10 × rate`.
    Concurrent starts serialise on the row lock; the DRAFT → PENDING claim is
    atomic, so a double click can't hold twice.
-3. **Longer book?** Writing pauses (`AWAITING_APPROVAL`) and asks; continuing
-   extends the hold by `extraPages × rate` (checked under the lock).
+3. **Never paused.** Generation does not stop to ask. A book longer than
+   estimated keeps going while the hold covers it; one that needs more than the
+   credits allow is brought to its planned ending within them (`credit_limited`).
+   Either way the user pays for the pages it really has — less than estimated if
+   it comes out shorter, more (up to the hold) if longer. (Books paused by an
+   older version can still be decided via `scope-decision`.)
 4. **Settle** once rendered (`reconcileCredits`, claimed once via
    `markReconciled`): charge `pages × rate + AI illustrations × 15 + AI cover × 30`,
    never more than held; refund the rest.
@@ -176,6 +213,7 @@ renewal grants the full 3,000. Moving them to $29.99 is a business decision
 | `CREDITS_SUBSCRIPTION_MONTHLY_GRANT` | 3000 | Pro credits per paid period |
 | `CREDITS_LEGACY_SUBSCRIPTION_MONTHLY_GRANT` | 1650 | per period on a legacy price |
 | `CREDITS_PER_PAGE` / `_IMAGE` / `_COVER` | 11 / 15 / 30 | operation costs |
+| `CREDITS_PER_PAGE_BASIC` | 7 | page price of a Basic-model book |
 | `CREDITS_MAX_OVERDRAFT` | 10 | overdraft tolerance, **pages** (was credits) |
 | `CREDITS_MAX_GENERATION_BUDGET` | 400 | per-book page ceiling (runaway/cost guard) |
 | `CREDITS_MIGRATION_ENABLED` | true | run the legacy conversion at startup |

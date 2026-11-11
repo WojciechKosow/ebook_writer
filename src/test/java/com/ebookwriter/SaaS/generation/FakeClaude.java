@@ -44,6 +44,11 @@ final class FakeClaude {
             return system.contains("planning the illustrations");
         }
 
+        /** Basic model: the premium model writing the chapter briefs. */
+        boolean isChapterBriefs() {
+            return system.contains("You are the lead author of a non-fiction book");
+        }
+
         String chapterTitle() {
             Matcher m = Pattern.compile("CHAPTER TO WRITE NOW\\nChapter \\d+: (.+)").matcher(user);
             return m.find() ? m.group(1).strip() : null;
@@ -69,7 +74,19 @@ final class FakeClaude {
         if (call.isEditing()) return between(user, "CURRENT CHAPTER TEXT\n", "\n\nReturn the improved chapter now.");
         if (call.isImagePlanning()) return imagePlan(user);
         if (call.isBookTemplate()) return bookTemplate(user);
+        if (call.isChapterBriefs()) return chapterBriefs(user);
         return "{}";
+    }
+
+    /** A brief for every "=== Chapter N: Title ===" in the request, naming the chapter. */
+    private static String chapterBriefs(String user) {
+        Matcher m = Pattern.compile("=== Chapter (\\d+): (.+?) ===").matcher(user);
+        List<String> entries = new ArrayList<>();
+        while (m.find()) {
+            entries.add("{\"chapterNumber\": " + m.group(1) + ", \"brief\": \"SECTIONS for " + m.group(2).replace("\"", "")
+                    + ": open with the author's own experience, then the steps.\"}");
+        }
+        return "{\"chapters\": [" + String.join(", ", entries) + "]}";
     }
 
     List<Call> knowledgeChapterCalls() {
