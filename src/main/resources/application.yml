@@ -93,6 +93,13 @@ anthropic:
   # Turn off, or point at a cheaper model, for cheap validation runs.
   editing-enabled: ${ANTHROPIC_EDITING_ENABLED:true}
   editing-model: ${ANTHROPIC_EDITING_MODEL:}
+  # Writing quality, chosen per book. "model" above (the premium model) always
+  # analyses and plans the book. BASIC books are then written and edited by this
+  # lighter model; PRO books are written by "model" and edited by "editing-model".
+  basic-writing-model: ${ANTHROPIC_BASIC_WRITING_MODEL:claude-sonnet-5-5}
+  # Effort per tier: low|medium|high|xhigh|max, or blank for the model's default.
+  basic-writing-effort: ${ANTHROPIC_BASIC_WRITING_EFFORT:medium}
+  pro-writing-effort: ${ANTHROPIC_PRO_WRITING_EFFORT:}
 
 # Cloudflare R2 (S3-compatible) object storage — ebook images (author uploads
 # now; AI-generated covers/illustrations later). The bucket is PRIVATE: the app

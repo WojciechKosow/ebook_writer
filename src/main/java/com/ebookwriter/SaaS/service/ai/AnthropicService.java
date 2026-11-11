@@ -3,6 +3,7 @@ package com.ebookwriter.SaaS.service.ai;
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
+import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.ThinkingConfigAdaptive;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
@@ -55,15 +56,27 @@ public class AnthropicService {
 
     /** As {@link #complete(String, String, long, String)}, reporting truncation. */
     public Completion completeDetailed(String systemPrompt, String userPrompt, long maxTokens, String model) {
+        return completeDetailed(systemPrompt, userPrompt, maxTokens, ModelChoice.of(model));
+    }
 
-        MessageCreateParams params = MessageCreateParams.builder()
-                .model(model)
+    /** As above, with an explicit model <em>and</em> effort (e.g. the Basic or Pro chapter writer). */
+    public Completion completeDetailed(String systemPrompt, String userPrompt, long maxTokens, ModelChoice choice) {
+        MessageCreateParams.Builder params = MessageCreateParams.builder()
+                .model(choice.model())
                 .maxTokens(maxTokens)
                 .system(systemPrompt)
                 .thinking(ThinkingConfigAdaptive.builder().build())
-                .addUserMessage(userPrompt)
-                .build();
-        return send(params, maxTokens, true);
+                .addUserMessage(userPrompt);
+        withEffort(params, choice);
+        return send(params.build(), maxTokens, true);
+    }
+
+    /** Set the effort when the choice names one; otherwise the model's default applies. */
+    private static void withEffort(MessageCreateParams.Builder params, ModelChoice choice) {
+        String effort = choice.effortOrNull();
+        if (effort != null) {
+            params.outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.of(effort)).build());
+        }
     }
 
     /**
@@ -86,18 +99,24 @@ public class AnthropicService {
      */
     public Completion continueFrom(String systemPrompt, String userPrompt, String partial, long maxTokens,
                                    String model) {
-        MessageCreateParams params = MessageCreateParams.builder()
-                .model(model)
+        return continueFrom(systemPrompt, userPrompt, partial, maxTokens, ModelChoice.of(model));
+    }
+
+    /** As above, with an explicit model and effort — a continuation uses the same writer as its start. */
+    public Completion continueFrom(String systemPrompt, String userPrompt, String partial, long maxTokens,
+                                   ModelChoice choice) {
+        MessageCreateParams.Builder params = MessageCreateParams.builder()
+                .model(choice.model())
                 .maxTokens(maxTokens)
                 .system(systemPrompt)
                 .thinking(ThinkingConfigAdaptive.builder().build())
                 .addUserMessage(userPrompt)
                 .addAssistantMessage(partial)
-                .addUserMessage(CONTINUE_PROMPT)
-                .build();
+                .addUserMessage(CONTINUE_PROMPT);
+        withEffort(params, choice);
         // Leading whitespace is part of the continuation (a paragraph break, the
         // space between two words), so only the end is trimmed.
-        return send(params, maxTokens, false);
+        return send(params.build(), maxTokens, false);
     }
 
     /** As {@link #continueFrom(String, String, String, long, String)} on the default model. */

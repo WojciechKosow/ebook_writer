@@ -58,6 +58,8 @@ public class SchemaConstraintPatch implements ApplicationRunner {
             new String[]{"knowledge_sources", "knowledge_sources_status_check"},
             new String[]{"book_blueprints", "book_blueprints_status_check"},
             new String[]{"ebooks", "ebooks_generation_mode_check"},
+            // Writing quality (Basic / Pro) — pre-emptive: it may grow.
+            new String[]{"ebooks", "ebooks_writing_quality_check"},
             new String[]{"ebooks", "ebooks_depth_check"},
             new String[]{"blueprint_questions", "blueprint_questions_status_check"},
             new String[]{"store_product_files", "store_product_files_format_check"},

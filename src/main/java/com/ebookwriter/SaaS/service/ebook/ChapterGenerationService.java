@@ -11,7 +11,9 @@ import com.ebookwriter.SaaS.prompt.KnowledgeChapterPrompts;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
+import com.ebookwriter.SaaS.service.ai.ModelChoice;
 import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
 import com.ebookwriter.SaaS.service.knowledge.KnowledgeDocumentStore;
 import lombok.RequiredArgsConstructor;
@@ -59,6 +61,8 @@ public class ChapterGenerationService {
     private final BookBlueprintService blueprintService;
     private final KnowledgeDocumentStore documentStore;
     private final KnowledgeWritingProperties writingProperties;
+    /** Which model writes (Basic: the lighter writer; Pro: the premium model). Null = the default model. */
+    private final AnthropicProperties anthropicProperties;
 
     /** Write a chapter at its planned length (no credit pressure). */
     @Transactional
@@ -138,9 +142,18 @@ public class ChapterGenerationService {
         // — never a silently shortened chapter.
         Draft draft = null;
         List<CompletenessCheck.Problem> problems = List.of();
+        // Basic: the premium model planned, a lighter model writes. Pro: the
+        // premium model writes too.
+        ModelChoice writer = anthropicProperties == null ? null
+                : anthropicProperties.writerFor(ebook.effectiveWritingQuality());
+        if (writer != null) {
+            log.info("Writing chapter {} of ebook {} with {} (effort {}, {} quality)", chapter.getChapterNumber(),
+                    ebookId, writer.model(), writer.effortOrNull() == null ? "default" : writer.effortOrNull(),
+                    ebook.effectiveWritingQuality());
+        }
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             AnthropicService.Completion completion =
-                    LongForm.complete(anthropicService, system, userPrompt, maxTokens, null);
+                    LongForm.complete(anthropicService, system, userPrompt, maxTokens, writer);
             draft = Draft.parse(completion.text());
             problems = new ArrayList<>(CompletenessCheck.inspect(draft.content(), directive.finalChapter()));
             if (completion.truncated()) {

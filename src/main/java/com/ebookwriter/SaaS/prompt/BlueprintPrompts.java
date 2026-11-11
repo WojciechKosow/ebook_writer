@@ -65,27 +65,35 @@ public final class BlueprintPrompts {
                 """ + SCHEMA + """
 
                 THE BOOK MUST REFLECT THE AUTHOR'S ACTUAL KNOWLEDGE
+                - The subject can be any field — software, photography, video editing, fitness,
+                  cooking, marketing, a YouTube channel, a business. Do not assume it is technical.
                 - Build the structure from BOOK KNOWLEDGE, not from what a typical book on this topic
-                  contains. If the author built a specific project, the chapters follow THAT project
-                  (its real parts, files, decisions). Never add a chapter about a feature, step or
-                  component that the knowledge does not contain — even if such books usually have it.
+                  contains. The chapters follow the author's own method, practice or project (its
+                  real parts, steps, techniques, decisions). Never add a chapter about a topic, step
+                  or component that the knowledge does not contain — even if such books usually have
+                  it (a portrait photographer's notes on natural light do not get a chapter on studio
+                  strobes; a project without payments does not get a payments chapter).
                 - If the knowledge has an intendedSequence (the author's own order), follow it unless
                   it clearly contradicts the goal; say so in structureRationale.
                 - Assign every userInsight (the author's problems, decisions, mistakes, tips) to the
                   chapter where it belongs, via knowledgeReferences and keyPoints.
                 - Every chapter must name the knowledge it uses (knowledgeReferences, using the exact
                   type and name from BOOK KNOWLEDGE) and the sources behind it (sourceReferences, only
-                  refs from VALID SOURCE REFS). A short orientation chapter (e.g. "What we're building")
-                  is fine when it is grounded in the materials; generic chapters like "Introduction",
+                  refs from VALID SOURCE REFS). A short orientation chapter (e.g. "What we're
+                  building", "My approach to portraits") is fine when it is grounded in the materials; generic chapters like "Introduction",
                   "Basics", "Advanced topics", "Conclusion" with no grounding are not.
-                - Chapter titles are specific ("Securing the API with JWT", not "Security").
+                - Chapter titles are specific ("Securing the API with JWT", "Shaping a Face with
+                  Window Light" — not "Security", "Lighting").
+                - Size the structure to the material. A few pages of notes make a short book with a
+                  few chapters; never split thin material into many small chapters to look bigger.
                 - Use the brief's depth to decide the structure (see DEPTH and CHAPTER GUIDANCE).
                 - purpose and keyPoints are short planning notes, never book prose.
 
                 KNOWLEDGE GAPS
                 - A gap is something THIS book needs that the author has not provided:
-                  * the author mentions something but does not explain it ("had problems with JWT":
-                    we don't know what went wrong, how it was fixed, or the lesson for the reader);
+                  * the author mentions something but does not explain it ("had problems with JWT",
+                    "clients often feel awkward posing": we don't know what went wrong, how it was
+                    solved, or the lesson for the reader);
                   * a chapter needs information that is not in the materials;
                   * an important process is incomplete; a decision is made but the reason is unknown;
                   * an example is mentioned without details;
@@ -93,7 +101,8 @@ public final class BlueprintPrompts {
                 - Do NOT fill a gap with your own general knowledge presented as the author's. Missing
                   author knowledge is a gap, not a fact.
                 - Set canBeInferred=true when the materials let a writer reasonably work it out (e.g.
-                  the Java version is in pom.xml). Never ask about those.
+                  the Java version is in pom.xml, the lens is named in the settings). Never ask about
+                  those.
                 - Consider the knowledgeGaps already listed in BOOK KNOWLEDGE, refine them in terms of
                   the chapters, and drop those the knowledge itself answers.
 
@@ -109,6 +118,8 @@ public final class BlueprintPrompts {
                   provided. Bad: "Please provide more information about authentication." Good: "You
                   mentioned JWT caused problems. What went wrong, and how did you fix it?" Better:
                   "What was your biggest mistake implementing JWT, and what should beginners avoid?"
+                  The same in any field: "Which of these mistakes do your beginners make most, and
+                  how do you correct it during a shoot?"
                 - One question per gap at most; do not ask about something an existing answer covers.
                 - It is fine to return no gaps and no questions when the materials are complete.
 

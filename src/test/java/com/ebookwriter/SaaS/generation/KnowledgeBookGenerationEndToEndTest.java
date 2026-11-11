@@ -20,6 +20,7 @@ import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.repository.UserRepository;
 import com.ebookwriter.SaaS.service.MailService;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
+import com.ebookwriter.SaaS.service.ai.ModelChoice;
 import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
 import com.ebookwriter.SaaS.service.blueprint.FakePlanner;
 import com.ebookwriter.SaaS.service.credit.CreditService;
@@ -138,6 +139,9 @@ class KnowledgeBookGenerationEndToEndTest {
              "rationale": "Inflated on purpose."}
             """;
 
+    /** The model of every chapter writing / editing call (they carry an explicit writer). */
+    private final List<String> writerModels = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     @BeforeEach
     void setUp() throws Exception {
         mvc = MockMvcBuilders.webAppContextSetup(context).apply(springSecurity()).build();
@@ -149,10 +153,16 @@ class KnowledgeBookGenerationEndToEndTest {
                 : KnowledgePipelineIntegrationTest.modelLikeAnswer(r));
 
         claude = new FakeClaude();
+        writerModels.clear();
         when(anthropic.completeDetailed(anyString(), anyString(), anyLong()))
                 .thenAnswer(i -> new AnthropicService.Completion(claude.respond(i.getArgument(0), i.getArgument(1)), false));
         when(anthropic.completeDetailed(anyString(), anyString(), anyLong(), anyString()))
                 .thenAnswer(i -> new AnthropicService.Completion(claude.respond(i.getArgument(0), i.getArgument(1)), false));
+        when(anthropic.completeDetailed(anyString(), anyString(), anyLong(), any(ModelChoice.class)))
+                .thenAnswer(i -> {
+                    writerModels.add(((ModelChoice) i.getArgument(3)).model());
+                    return new AnthropicService.Completion(claude.respond(i.getArgument(0), i.getArgument(1)), false);
+                });
         when(anthropic.complete(anyString(), anyString(), anyLong()))
                 .thenAnswer(i -> claude.respond(i.getArgument(0), i.getArgument(1)));
         when(anthropic.complete(anyString(), anyString(), anyLong(), anyString()))
@@ -220,6 +230,11 @@ class KnowledgeBookGenerationEndToEndTest {
                 "no OpenAI text calls during writing (only the scope assessment before it)");
         // The blueprint is the plan: no Claude planning call.
         assertTrue(claude.calls.stream().noneMatch(FakeClaude.Call::isLegacyPlanning));
+        // Basic writing quality (the default): the lighter model writes and edits every
+        // chapter; the planning calls (template, images, cover) stay on the premium model.
+        assertEquals(com.ebookwriter.SaaS.entity.WritingQuality.BASIC, ebook.getWritingQuality());
+        assertFalse(writerModels.isEmpty());
+        assertTrue(writerModels.stream().allMatch("claude-sonnet-5-5"::equals), writerModels.toString());
 
         // ---- Structure = the approved blueprint ----
         List<EbookChapter> chapters = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
@@ -237,7 +252,7 @@ class KnowledgeBookGenerationEndToEndTest {
             assertTrue(call.user().contains("Title: Building an Online Shop with Spring Boot"));
             assertTrue(call.user().contains("Reader: Beginner Java developers"));
             assertTrue(call.user().contains("Name: Online Shop"));
-            assertTrue(call.user().contains("Technologies: Java 21, Spring Boot, PostgreSQL, JWT"));
+            assertTrue(call.user().contains("Tools, methods and technologies: Java 21, Spring Boot, PostgreSQL, JWT"));
             assertTrue(call.user().contains("BOOK STRUCTURE (the approved blueprint"));
             assertFalse(call.user().contains("super-secret-value"), "no raw secrets");
             assertFalse(call.user().contains("module.exports"), "no dependency folders");
@@ -277,11 +292,11 @@ class KnowledgeBookGenerationEndToEndTest {
 
         // The editorial pass was told to keep the author's specifics.
         assertTrue(claude.calls.stream().filter(FakeClaude.Call::isEditing)
-                .allMatch(c -> c.user().contains("THIS BOOK IS BASED ON THE AUTHOR'S OWN PROJECT AND EXPERIENCE")));
+                .allMatch(c -> c.user().contains("THIS BOOK IS BASED ON THE AUTHOR'S OWN KNOWLEDGE AND EXPERIENCE")));
 
         // ---- Images: the existing pipeline, with project context ----
         FakeClaude.Call imagePlan = claude.calls.stream().filter(FakeClaude.Call::isImagePlanning).findFirst().orElseThrow();
-        assertTrue(imagePlan.user().contains("THE AUTHOR'S PROJECT (this book teaches it)"));
+        assertTrue(imagePlan.user().contains("WHAT THIS BOOK TEACHES (from the author's own material)"));
         assertTrue(imagePlan.user().contains("Online Shop"));
         assertTrue(jwtChapter.getId() != null && chapterRepository.findById(jwtChapter.getId()).orElseThrow()
                 .getContent().contains("ebook-image:"), "generated image placed in the JWT chapter");

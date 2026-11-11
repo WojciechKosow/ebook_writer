@@ -57,7 +57,8 @@ public class KnowledgeBookPlanner {
         BookDepth depth = ebook.effectiveDepth();
         ScopeEstimate estimate = scopeEstimationService.estimate(ebook);
         List<PlannedChapter> planned = size(bp.chapters(), depth,
-                estimate.midpoint() - EbookHtmlBuilder.FRONT_MATTER_PAGES);
+                estimate.midpoint() - EbookHtmlBuilder.FRONT_MATTER_PAGES,
+                estimate.pagesHigh() - EbookHtmlBuilder.FRONT_MATTER_PAGES);
         List<PlannedChapter> kept = BookPlanningService.clampToBudget(planned,
                 Math.min(scopeEstimationService.maxPages(), ScopeEstimator.depthCap(depth))
                         - EbookHtmlBuilder.FRONT_MATTER_PAGES);
@@ -119,6 +120,18 @@ public class KnowledgeBookPlanner {
      */
     static List<PlannedChapter> size(List<BlueprintData.Chapter> chapters, BookDepth depth,
                                      int estimatedContentPages) {
+        return size(chapters, depth, estimatedContentPages, Integer.MAX_VALUE);
+    }
+
+    /**
+     * As {@link #size(List, BookDepth, int)}, never planning more than
+     * {@code maxContentPages} — the top of the range the user was shown and agreed
+     * to. The {@link #MIN_SCALE} anchor gives way to it: a blueprint with many
+     * chapters on thin material gets shorter chapters, not a longer book than
+     * promised. Every chapter keeps at least one page.
+     */
+    static List<PlannedChapter> size(List<BlueprintData.Chapter> chapters, BookDepth depth,
+                                     int estimatedContentPages, int maxContentPages) {
         List<Double> raw = new ArrayList<>();
         double total = 0;
         for (BlueprintData.Chapter c : chapters) {
@@ -128,11 +141,28 @@ public class KnowledgeBookPlanner {
         }
         double scale = total <= 0 ? 1.0
                 : Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.max(1, estimatedContentPages) / total));
+        int max = Math.max(chapters.size(), maxContentPages);
+        if (total > 0 && total * scale > max) {
+            scale = max / total;
+        }
+        int[] pages = new int[chapters.size()];
+        int sum = 0;
+        for (int i = 0; i < chapters.size(); i++) {
+            pages[i] = Math.max(1, (int) Math.round(raw.get(i) * scale));
+            sum += pages[i];
+        }
+        // Rounding may still land a page or two over: take them from the largest chapters.
+        while (sum > max) {
+            int largest = 0;
+            for (int i = 1; i < pages.length; i++) if (pages[i] > pages[largest]) largest = i;
+            if (pages[largest] <= 1) break;
+            pages[largest]--;
+            sum--;
+        }
         List<PlannedChapter> out = new ArrayList<>();
         for (int i = 0; i < chapters.size(); i++) {
             BlueprintData.Chapter c = chapters.get(i);
-            int pages = Math.max(1, (int) Math.round(raw.get(i) * scale));
-            out.add(new PlannedChapter(c.title(), describe(c), pages));
+            out.add(new PlannedChapter(c.title(), describe(c), pages[i]));
         }
         return out;
     }
@@ -150,14 +180,14 @@ public class KnowledgeBookPlanner {
     /** Book-wide guidelines derived from the blueprint (shown to the writer and the editor). */
     static String writingGuidelines(Ebook e, BlueprintData bp) {
         StringBuilder sb = new StringBuilder();
-        sb.append("This book is written from the author's own knowledge and project, not from a generic outline.\n");
+        sb.append("This book is written from the author's own knowledge and experience, not from a generic outline.\n");
         if (bp.audience() != null) sb.append("Reader: ").append(bp.audience()).append(".\n");
         if (bp.readerGoal() != null) sb.append("Reader's goal: ").append(bp.readerGoal()).append(".\n");
         if (bp.promise() != null) sb.append("Promise: ").append(bp.promise()).append("\n");
         if (bp.structureRationale() != null) sb.append("Structure: ").append(bp.structureRationale()).append("\n");
         if (e.getStyle() != null && !e.getStyle().isBlank()) sb.append("Style: ").append(e.getStyle().strip()).append(".\n");
-        sb.append("Use the author's project names, decisions, steps and experiences; never replace them with "
-                + "generic examples or invented ones.");
+        sb.append("Use the author's own methods, names, values, decisions, steps and experiences; never replace "
+                + "them with generic examples or invented ones.");
         return sb.toString();
     }
 

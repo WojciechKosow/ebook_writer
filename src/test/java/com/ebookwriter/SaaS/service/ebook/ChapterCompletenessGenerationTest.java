@@ -1,6 +1,9 @@
 package com.ebookwriter.SaaS.service.ebook;
 
+import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
+import com.ebookwriter.SaaS.entity.WritingQuality;
+import com.ebookwriter.SaaS.service.ai.ModelChoice;
 import com.ebookwriter.SaaS.entity.EbookChapter;
 import com.ebookwriter.SaaS.prompt.ChapterPrompts;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
@@ -42,6 +45,8 @@ class ChapterCompletenessGenerationTest {
     private AnthropicService ai;
     private EbookChapterRepository chapters;
     private ChapterGenerationService writer;
+    /** Null = the default model (most tests); set to test the Basic/Pro writer routing. */
+    private AnthropicProperties properties;
 
     private EbookChapter setUp(GenreFixtures.Book book, int chapterNumber) {
         ai = mock(AnthropicService.class);
@@ -51,7 +56,7 @@ class ChapterCompletenessGenerationTest {
         when(ebooks.findById(book.ebook().getId())).thenReturn(Optional.of(book.ebook()));
         when(chapters.findByEbookIdOrderByChapterNumberAsc(book.ebook().getId())).thenReturn(book.chapters());
         when(images.findByChapterId(any())).thenReturn(List.of());
-        writer = new ChapterGenerationService(ai, ebooks, chapters, images, null, null, null);
+        writer = new ChapterGenerationService(ai, ebooks, chapters, images, null, null, null, properties);
         EbookChapter target = book.chapter(chapterNumber);
         target.setStatus(ChapterStatus.PENDING);
         return target;
@@ -194,5 +199,60 @@ class ChapterCompletenessGenerationTest {
         int words = ChapterGenerationService.plannedWords(chapter);
         assertTrue(user.getValue().contains("Length budget: about " + words + " words (acceptable range "
                 + Math.round(words * 0.75) + "–" + Math.round(words * 1.25) + ")"), user.getValue());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("books")
+    void aBasicBookIsWrittenByTheLighterModelFromThePremiumPlan(GenreFixtures.Book fixture) {
+        properties = new AnthropicProperties();
+        GenreFixtures.Book book = fixture.copy();
+        book.ebook().setWritingQuality(WritingQuality.BASIC);
+        EbookChapter chapter = setUp(book, 1);
+        ModelChoice basic = new ModelChoice("claude-sonnet-5-5", "medium");
+        when(ai.completeDetailed(anyString(), anyString(), anyLong(), eq(basic)))
+                .thenReturn(new AnthropicService.Completion(response(chapter.getContent()), false));
+
+        writer.generate(book.ebook().getId(), chapter.getId());
+
+        verify(ai).completeDetailed(anyString(), anyString(), anyLong(), eq(basic));
+        verify(ai, never()).completeDetailed(anyString(), anyString(), anyLong());
+        assertEquals(ChapterStatus.WRITTEN, chapter.getStatus());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("books")
+    void aProBookIsWrittenByThePremiumModel(GenreFixtures.Book fixture) {
+        properties = new AnthropicProperties();
+        GenreFixtures.Book book = fixture.copy();
+        book.ebook().setWritingQuality(WritingQuality.PRO);
+        EbookChapter chapter = setUp(book, 1);
+        ModelChoice pro = new ModelChoice(properties.getModel(), null);
+        when(ai.completeDetailed(anyString(), anyString(), anyLong(), eq(pro)))
+                .thenReturn(new AnthropicService.Completion(response(chapter.getContent()), false));
+
+        writer.generate(book.ebook().getId(), chapter.getId());
+
+        verify(ai).completeDetailed(anyString(), anyString(), anyLong(), eq(pro));
+        assertEquals(ChapterStatus.WRITTEN, chapter.getStatus());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("books")
+    void aContinuationUsesTheSameWriterAsItsStart(GenreFixtures.Book fixture) {
+        properties = new AnthropicProperties();
+        GenreFixtures.Book book = fixture.copy();
+        book.ebook().setWritingQuality(WritingQuality.BASIC);
+        EbookChapter chapter = setUp(book, 1);
+        String full = response(chapter.getContent());
+        int cut = chapter.getContent().indexOf(' ', chapter.getContent().length() / 2);
+        ModelChoice basic = properties.writerFor(WritingQuality.BASIC);
+        when(ai.completeDetailed(anyString(), anyString(), anyLong(), eq(basic)))
+                .thenReturn(new AnthropicService.Completion(full.substring(0, cut), true));
+        when(ai.continueFrom(anyString(), anyString(), anyString(), anyLong(), eq(basic)))
+                .thenReturn(new AnthropicService.Completion(full.substring(cut), false));
+
+        writer.generate(book.ebook().getId(), chapter.getId());
+
+        verify(ai).continueFrom(anyString(), anyString(), anyString(), anyLong(), eq(basic));
     }
 }

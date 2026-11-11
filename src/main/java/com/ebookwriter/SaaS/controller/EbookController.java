@@ -8,6 +8,7 @@ import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.User;
 import com.ebookwriter.SaaS.repository.UserRepository;
 import com.ebookwriter.SaaS.request.DepthUpdateRequest;
+import com.ebookwriter.SaaS.request.WritingQualityUpdateRequest;
 import com.ebookwriter.SaaS.request.EbookContentUpdateRequest;
 import com.ebookwriter.SaaS.request.EbookRequest;
 import com.ebookwriter.SaaS.service.ebook.EbookPreviewService;
@@ -158,6 +159,15 @@ public class EbookController {
                                                          Authentication authentication) {
         User user = currentUser(authentication);
         return ResponseEntity.ok(ebookService.updateDepth(id, user.getId(), request.getDepth()));
+    }
+
+    /** Change a draft's writing quality (Basic / Pro); {@code 409} once generation has started. */
+    @PutMapping("/{id}/writing-quality")
+    public ResponseEntity<EbookStatusResponse> updateWritingQuality(@PathVariable UUID id,
+                                                                    @Valid @RequestBody WritingQualityUpdateRequest request,
+                                                                    Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(ebookService.updateWritingQuality(id, user.getId(), request.getWritingQuality()));
     }
 
     /** Load the full editable manuscript (all chapters + Markdown bodies). */

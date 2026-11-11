@@ -1,6 +1,7 @@
 package com.ebookwriter.SaaS.dto;
 
 import com.ebookwriter.SaaS.entity.BookDepth;
+import com.ebookwriter.SaaS.entity.WritingQuality;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookStatus;
 import lombok.AllArgsConstructor;
@@ -32,6 +33,9 @@ public class EbookStatusResponse {
 
     /** The depth the user selected — the user's control over scope. */
     private BookDepth depth;
+
+    /** Which model writes the book (Basic or Pro). */
+    private WritingQuality writingQuality;
 
     /**
      * Scrivetta's length estimate taken when generation started (whole-book
@@ -118,6 +122,7 @@ public class EbookStatusResponse {
                 .errorMessage(ebook.getErrorMessage())
                 .downloadReady(ebook.getStatus() == EbookStatus.COMPLETED)
                 .depth(ebook.effectiveDepth())
+                .writingQuality(ebook.effectiveWritingQuality())
                 .estimatedPagesLow(ebook.getEstimatedPagesLow())
                 .estimatedPagesHigh(ebook.getEstimatedPagesHigh())
                 .plannedPages(ebook.getPlannedPages())

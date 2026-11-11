@@ -21,6 +21,7 @@ import com.ebookwriter.SaaS.dto.BookScopeResponse;
 import com.ebookwriter.SaaS.dto.GenerationBudgetResponse;
 import com.ebookwriter.SaaS.dto.ScopeEstimateDTO;
 import com.ebookwriter.SaaS.entity.BookDepth;
+import com.ebookwriter.SaaS.entity.WritingQuality;
 import com.ebookwriter.SaaS.service.credit.CreditPricing;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
@@ -73,6 +74,7 @@ public class EbookService {
                 .bookGoal(request.getBookGoal())
                 .style(request.getStyle())
                 .depth(BookDepth.orDefault(request.getDepth()))
+                .writingQuality(WritingQuality.defaultForNewBook(request.getWritingQuality()))
                 .language(blankToEnglish(request.getLanguage()))
                 .additionalInstructions(request.getAdditionalInstructions())
                 .sourceMaterial(request.getSourceMaterial())
@@ -82,6 +84,21 @@ public class EbookService {
                 .build();
 
         return ebookRepository.save(ebook);
+    }
+
+    /**
+     * Change a draft's writing quality (which model writes the chapters). Only
+     * before generation starts, so a book is never written by two models.
+     */
+    public EbookStatusResponse updateWritingQuality(UUID ebookId, UUID userId, WritingQuality quality) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        if (ebook.getStatus() != EbookStatus.DRAFT) {
+            throw new IllegalStateException("The writing quality can only be changed before generation starts.");
+        }
+        ebook.setWritingQuality(WritingQuality.defaultForNewBook(quality));
+        ebookRepository.save(ebook);
+        return getStatus(ebookId, userId);
     }
 
     /**

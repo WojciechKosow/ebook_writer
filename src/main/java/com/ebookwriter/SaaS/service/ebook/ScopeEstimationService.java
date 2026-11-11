@@ -277,7 +277,9 @@ public class ScopeEstimationService {
                 .filter(s -> s.getStatus() != KnowledgeSourceStatus.FAILED)
                 .mapToLong(KnowledgeSource::getExtractedChars).sum();
         // Prefer what was actually analysed; fall back to what was extracted.
-        long sourceChars = knowledgeRow.map(BookKnowledge::getAnalyzedChars).filter(c -> c > 0).orElse(extracted) + pasted;
+        // The author's answers to the blueprint questions are material too.
+        long sourceChars = knowledgeRow.map(BookKnowledge::getAnalyzedChars).filter(c -> c > 0).orElse(extracted) + pasted
+                + blueprintService.answeredChars(ebook.getId());
         int knowledgeUnits = knowledgeRow.map(k -> knowledgeUnits(KnowledgeAssembler.read(k.getKnowledgeJson()))).orElse(0);
         List<ScopeEstimator.ChapterSignal> chapters = blueprint
                 .map(bp -> bp.chapters().stream().map(ScopeEstimationService::chapterSignal).toList())

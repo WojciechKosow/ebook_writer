@@ -1,6 +1,7 @@
 package com.ebookwriter.SaaS.service.ebook;
 
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
+import com.ebookwriter.SaaS.service.ai.ModelChoice;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -25,21 +26,21 @@ final class LongForm {
     /**
      * Complete, continuing past the output limit.
      *
-     * @param model the model, or null for the default
+     * @param choice the model and effort (every continuation uses the same), or null for the default model
      */
     static AnthropicService.Completion complete(AnthropicService ai, String system, String user, long maxTokens,
-                                                String model) {
-        AnthropicService.Completion c = model == null
+                                                ModelChoice choice) {
+        AnthropicService.Completion c = choice == null
                 ? ai.completeDetailed(system, user, maxTokens)
-                : ai.completeDetailed(system, user, maxTokens, model);
+                : ai.completeDetailed(system, user, maxTokens, choice);
         String text = c.text();
         boolean truncated = c.truncated();
         for (int round = 1; truncated && round <= MAX_CONTINUATIONS; round++) {
             log.info("Output limit reached; continuing from where it stopped (continuation {}/{})",
                     round, MAX_CONTINUATIONS);
-            AnthropicService.Completion next = model == null
+            AnthropicService.Completion next = choice == null
                     ? ai.continueFrom(system, user, text, maxTokens)
-                    : ai.continueFrom(system, user, text, maxTokens, model);
+                    : ai.continueFrom(system, user, text, maxTokens, choice);
             text = join(text, next.text());
             truncated = next.truncated();
         }
