@@ -1,7 +1,11 @@
 package com.ebookwriter.SaaS.service.ai;
 
 import com.anthropic.client.AnthropicClient;
+import com.anthropic.models.messages.Base64ImageSource;
+import com.anthropic.models.messages.ContentBlockParam;
+import com.anthropic.models.messages.ImageBlockParam;
 import com.anthropic.models.messages.Message;
+import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.StopReason;
@@ -11,6 +15,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.List;
 import java.util.stream.Collectors;
 
 /**
@@ -74,6 +81,37 @@ public class AnthropicService {
                 .addUserMessage(userPrompt);
         withEffort(params, choice);
         return send(params.build(), maxTokens, true);
+    }
+
+    /**
+     * A completion that LOOKS at images: the text {@code intro}, then each image
+     * labelled with its id, then {@code outro}. Used to analyse the author's own
+     * photos and figures so they can be placed and written about from what they
+     * actually show, not from their file names.
+     */
+    public String completeWithImages(String systemPrompt, String intro, List<VisionImage> images, String outro,
+                                     long maxTokens, ModelChoice choice) {
+        List<ContentBlockParam> content = new ArrayList<>();
+        content.add(ContentBlockParam.ofText(TextBlockParam.builder().text(intro).build()));
+        for (VisionImage image : images) {
+            content.add(ContentBlockParam.ofText(TextBlockParam.builder().text("Image id=" + image.label() + ":").build()));
+            content.add(ContentBlockParam.ofImage(ImageBlockParam.builder()
+                    .source(Base64ImageSource.builder()
+                            .mediaType("image/webp".equals(image.mediaType())
+                                    ? Base64ImageSource.MediaType.IMAGE_WEBP : Base64ImageSource.MediaType.IMAGE_JPEG)
+                            .data(Base64.getEncoder().encodeToString(image.bytes()))
+                            .build())
+                    .build()));
+        }
+        content.add(ContentBlockParam.ofText(TextBlockParam.builder().text(outro).build()));
+        MessageCreateParams.Builder params = MessageCreateParams.builder()
+                .model(choice.model())
+                .maxTokens(maxTokens)
+                .system(systemPrompt)
+                .thinking(ThinkingConfigAdaptive.builder().build())
+                .addUserMessageOfBlockParams(content);
+        withEffort(params, choice);
+        return send(params.build(), maxTokens, true).text();
     }
 
     /** Set the effort when the choice names one; otherwise the model's default applies. */

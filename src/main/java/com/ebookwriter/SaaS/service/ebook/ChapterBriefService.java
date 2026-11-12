@@ -7,9 +7,11 @@ import com.ebookwriter.SaaS.dto.knowledge.NormalizedDocument;
 import com.ebookwriter.SaaS.entity.ChapterStatus;
 import com.ebookwriter.SaaS.entity.Ebook;
 import com.ebookwriter.SaaS.entity.EbookChapter;
+import com.ebookwriter.SaaS.entity.EbookImage;
 import com.ebookwriter.SaaS.entity.WritingQuality;
 import com.ebookwriter.SaaS.prompt.BriefPrompts;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
+import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
 import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
@@ -72,6 +74,8 @@ public class ChapterBriefService {
     private final BookBlueprintService blueprintService;
     private final KnowledgeDocumentStore documentStore;
     private final KnowledgeWritingProperties writingProperties;
+    /** The author's images assigned to each chapter, so the brief says where each goes. */
+    private final EbookImageRepository imageRepository;
 
     /** Brief every chapter still to be written that has no brief yet. No-op for a Better-model book. */
     @Transactional
@@ -105,7 +109,8 @@ public class ChapterBriefService {
             List<BriefPrompts.ChapterInput> inputs = new ArrayList<>();
             for (EbookChapter c : batch) {
                 String material = knowledge.map(in -> material(KnowledgeChapterContext.build(
-                        in, c.getBlueprintChapterId(), documents, writingProperties))).orElse("");
+                        in, c.getBlueprintChapterId(), documents, writingProperties))).orElse("")
+                        + images(c);
                 inputs.add(new BriefPrompts.ChapterInput(c.getChapterNumber(), c.getTitle(), c.getDescription(),
                         ChapterGenerationService.plannedWords(c), material));
             }
@@ -146,6 +151,22 @@ public class ChapterBriefService {
         if (body != null && !body.isBlank()) {
             sb.append(label).append(":\n").append(body.strip()).append("\n\n");
         }
+    }
+
+    /** The author's images assigned to this chapter, as the brief request sees them. */
+    private String images(EbookChapter c) {
+        if (imageRepository == null || c.getId() == null) {
+            return "";
+        }
+        List<EbookImage> assigned = imageRepository.findByChapterId(c.getId());
+        if (assigned.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder("\n\nThe author's images for this chapter (say in which section each goes):\n");
+        for (EbookImage a : assigned) {
+            sb.append(ChapterGenerationService.describeForWriter(a));
+        }
+        return sb.toString();
     }
 
     /** chapterNumber → brief from the model's JSON. */

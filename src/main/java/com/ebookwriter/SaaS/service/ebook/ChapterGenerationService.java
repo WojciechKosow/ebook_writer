@@ -249,6 +249,26 @@ public class ChapterGenerationService {
      * description). Empty when nothing is assigned, so the prompt offers no
      * images and the model adds none.
      */
+    /**
+     * One available image as the writer sees it: its token, a short description,
+     * the author's own note (what it is and where it belongs) and what the AI saw
+     * in it — so the chapter places it at the right point and talks about what the
+     * reader actually sees.
+     */
+    static String describeForWriter(EbookImage a) {
+        String desc = (a.getAiDescription() != null && !a.getAiDescription().isBlank())
+                ? a.getAiDescription().trim()
+                : (a.getOriginalFilename() != null ? a.getOriginalFilename() : "image");
+        StringBuilder sb = new StringBuilder("  - token: ").append(a.markdownRef()).append(" | ").append(desc).append('\n');
+        if (a.getAuthorNote() != null && !a.getAuthorNote().isBlank()) {
+            sb.append("    The author's note (follow it): ").append(a.getAuthorNote().strip().replace("\n", " ")).append('\n');
+        }
+        if (a.getAiAnalysis() != null && !a.getAiAnalysis().isBlank()) {
+            sb.append("    What the image shows: ").append(a.getAiAnalysis().strip().replace("\n", " ")).append('\n');
+        }
+        return sb.toString();
+    }
+
     private String availableImages(UUID chapterId) {
         List<EbookImage> assigned = imageRepository.findByChapterId(chapterId);
         if (assigned.isEmpty()) {
@@ -256,11 +276,7 @@ public class ChapterGenerationService {
         }
         StringBuilder sb = new StringBuilder();
         for (EbookImage a : assigned) {
-            String desc = (a.getAiDescription() != null && !a.getAiDescription().isBlank())
-                    ? a.getAiDescription().trim()
-                    : (a.getOriginalFilename() != null ? a.getOriginalFilename() : "image");
-            sb.append("  - token: ").append(a.markdownRef())
-                    .append(" | ").append(desc).append("\n");
+            sb.append(describeForWriter(a));
         }
         return sb.toString();
     }

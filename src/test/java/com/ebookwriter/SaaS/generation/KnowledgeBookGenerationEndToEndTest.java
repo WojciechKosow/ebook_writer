@@ -147,6 +147,8 @@ class KnowledgeBookGenerationEndToEndTest {
     private final List<String> writerModels = new java.util.concurrent.CopyOnWriteArrayList<>();
     /** The model of every call that carries an explicit model but writes no chapter (the chapter briefs). */
     private final List<String> briefModels = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** Images the model was shown (author photos analysed while placing them). */
+    private final java.util.concurrent.atomic.AtomicInteger imagesSeen = new java.util.concurrent.atomic.AtomicInteger();
 
     @BeforeEach
     void setUp() throws Exception {
@@ -161,6 +163,7 @@ class KnowledgeBookGenerationEndToEndTest {
         claude = new FakeClaude();
         writerModels.clear();
         briefModels.clear();
+        imagesSeen.set(0);
         when(anthropic.completeDetailed(anyString(), anyString(), anyLong()))
                 .thenAnswer(i -> new AnthropicService.Completion(claude.respond(i.getArgument(0), i.getArgument(1)), false));
         when(anthropic.completeDetailed(anyString(), anyString(), anyLong(), anyString()))
@@ -177,6 +180,12 @@ class KnowledgeBookGenerationEndToEndTest {
                 });
         when(anthropic.complete(anyString(), anyString(), anyLong()))
                 .thenAnswer(i -> claude.respond(i.getArgument(0), i.getArgument(1)));
+        when(anthropic.completeWithImages(anyString(), anyString(), any(), anyString(), anyLong(), any(ModelChoice.class)))
+                .thenAnswer(i -> {
+                    List<?> seen = i.getArgument(2);
+                    imagesSeen.addAndGet(seen.size());
+                    return claude.respond(i.getArgument(0), i.getArgument(1));
+                });
         when(anthropic.complete(anyString(), anyString(), anyLong(), anyString()))
                 .thenAnswer(i -> claude.respond(i.getArgument(0), i.getArgument(1)));
 
@@ -561,6 +570,32 @@ class KnowledgeBookGenerationEndToEndTest {
         assertTrue(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).stream()
                 .noneMatch(c -> c.getStatus() == ChapterStatus.DEFERRED), "nothing cut while credits allow");
         assertEquals(expectedCharge(done), done.getCreditsCharged());
+    }
+
+    @Test
+    void theAuthorsPhotoIsLookedAtAndPlacedByItsNote() throws Exception {
+        UUID ebookId = readyKnowledgeBook();
+        String uploaded = mvc.perform(multipart("/api/ebooks/" + ebookId + "/images")
+                        .file(new org.springframework.mock.web.MockMultipartFile("file", "img.png", "image/png", png()))
+                        .param("authorNote", "My window-light portrait").with(auth()))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.authorNote").value("My window-light portrait"))
+                .andReturn().getResponse().getContentAsString();
+        String imageId = MAPPER.readTree(uploaded).path("id").asText();
+        mvc.perform(patch("/api/ebooks/" + ebookId + "/images/" + imageId).with(auth())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"authorNote\": \"Window-light portrait — put it in the JWT chapter\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.authorNote").value("Window-light portrait — put it in the JWT chapter"));
+
+        mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth())).andExpect(status().isAccepted());
+        Ebook done = awaitFinished(ebookId);
+
+        assertEquals(EbookStatus.COMPLETED, done.getStatus(), done.getErrorMessage());
+        assertEquals(1, imagesSeen.get(), "the model was shown the photo itself");
+        assertTrue(claude.calls.stream().anyMatch(c -> c.user().contains(
+                        "AUTHOR'S NOTE: Window-light portrait — put it in the JWT chapter")),
+                "the placement request carries the author's note");
     }
 
     @Test

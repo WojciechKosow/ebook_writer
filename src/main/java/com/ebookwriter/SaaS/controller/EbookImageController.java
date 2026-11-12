@@ -43,9 +43,13 @@ public class EbookImageController {
             @PathVariable UUID ebookId,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "role", required = false) EbookImageRole role,
+            @RequestParam(value = "authorNote", required = false) String authorNote,
             Authentication authentication) {
         User user = currentUser(authentication);
         EbookImageDTO dto = imageService.upload(ebookId, user.getId(), file, role);
+        if (authorNote != null && !authorNote.isBlank()) {
+            dto = imageService.updateAuthorNote(ebookId, user.getId(), dto.getId(), authorNote);
+        }
         return ResponseEntity.status(HttpStatus.CREATED).body(dto);
     }
 
@@ -85,16 +89,20 @@ public class EbookImageController {
                 .body(image.bytes());
     }
 
-    /** Update editor-adjustable metadata: role, inline display width, and/or crop focal point. */
+    /** Update editor-adjustable metadata: role, inline display width, crop focal point and/or the author's note. */
     @PatchMapping("/{imageId}")
     public ResponseEntity<EbookImageDTO> update(@PathVariable UUID ebookId,
                                                 @PathVariable UUID imageId,
                                                 @Valid @RequestBody EbookImageUpdateRequest request,
                                                 Authentication authentication) {
         User user = currentUser(authentication);
-        return ResponseEntity.ok(imageService.updateMetadata(
+        EbookImageDTO dto = imageService.updateMetadata(
                 ebookId, user.getId(), imageId, request.getRole(), request.getDisplayWidthPercent(),
-                request.getFocalX(), request.getFocalY()));
+                request.getFocalX(), request.getFocalY());
+        if (request.getAuthorNote() != null) {
+            dto = imageService.updateAuthorNote(ebookId, user.getId(), imageId, request.getAuthorNote());
+        }
+        return ResponseEntity.ok(dto);
     }
 
     /** Make this image the book's cover (demotes any current cover). */

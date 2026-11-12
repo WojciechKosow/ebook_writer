@@ -36,6 +36,8 @@ public final class BriefPrompts {
                   values verbatim — e.g. "f/2–f/2.8, 1/125s, ISO 400–800"). Never invent any.
                 - ONE practical element where it fits (an example, an exercise, a checklist), drawn
                   from the material when the material has one.
+                - IMAGES: if the chapter lists the author's images, name the section each one goes
+                  in (follow the author's note) and what the text should point out in it.
                 - NOT HERE: topics this chapter must leave to another chapter (name the chapter), so
                   the book never explains the same thing twice.
                 - GAPS: what the material does not provide and the writer must not invent.

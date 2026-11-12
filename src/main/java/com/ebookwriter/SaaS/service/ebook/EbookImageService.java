@@ -162,6 +162,27 @@ public class EbookImageService {
     }
 
     /**
+     * Set the author's note on an image — what it shows and where it belongs. It
+     * guides where the image is placed and how the chapter refers to it; blank
+     * clears it. Capped at {@link #MAX_AUTHOR_NOTE_CHARS}.
+     */
+    @Transactional
+    public EbookImageDTO updateAuthorNote(UUID ebookId, UUID userId, UUID imageId, String note) {
+        requireOwnedEbook(ebookId, userId);
+        EbookImage image = imageRepository.findByIdAndEbookId(imageId, ebookId)
+                .orElseThrow(() -> new IllegalArgumentException("Image not found"));
+        String n = note == null ? null : note.strip();
+        if (n != null && n.length() > MAX_AUTHOR_NOTE_CHARS) {
+            n = n.substring(0, MAX_AUTHOR_NOTE_CHARS);
+        }
+        image.setAuthorNote(n == null || n.isEmpty() ? null : n);
+        return EbookImageDTO.from(imageRepository.save(image));
+    }
+
+    /** Longest author note on an image (chars). */
+    public static final int MAX_AUTHOR_NOTE_CHARS = 2000;
+
+    /**
      * As {@link #updateMetadata(UUID, UUID, UUID, EbookImageRole, Integer)}, also
      * setting the crop focal point (0–100% of width/height) used when the image
      * fills a region of a different shape (the cover).
