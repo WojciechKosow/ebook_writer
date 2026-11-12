@@ -93,6 +93,16 @@ anthropic:
   # Turn off, or point at a cheaper model, for cheap validation runs.
   editing-enabled: ${ANTHROPIC_EDITING_ENABLED:true}
   editing-model: ${ANTHROPIC_EDITING_MODEL:}
+  # Writing quality, chosen per book. "model" above (the premium model) always
+  # analyses and plans the book.
+  #  BASIC ("Basic model"): the premium model also writes a brief for every
+  #    chapter (brief-effort); this lighter model writes and edits from them.
+  #  BETTER ("Better model"): "model" writes, "editing-model" edits.
+  basic-writing-model: ${ANTHROPIC_BASIC_WRITING_MODEL:claude-sonnet-5-5}
+  # Effort per tier: low|medium|high|xhigh|max, or blank for the model's default.
+  basic-writing-effort: ${ANTHROPIC_BASIC_WRITING_EFFORT:medium}
+  better-writing-effort: ${ANTHROPIC_BETTER_WRITING_EFFORT:}
+  brief-effort: ${ANTHROPIC_BRIEF_EFFORT:medium}
 
 # Cloudflare R2 (S3-compatible) object storage — ebook images (author uploads
 # now; AI-generated covers/illustrations later). The bucket is PRIVATE: the app
@@ -250,7 +260,11 @@ credits:
   # (a ~265-page text-led book, up to 6 illustrations and a cover). Knowledge
   # analysis, the blueprint and scope checks are free.
   pricing:
+    # Page price of a "Better model" book (the premium model writes) — the standard price.
     credits-per-page: ${CREDITS_PER_PAGE:11}
+    # Page price of a "Basic model" book (the premium model prepares, a lighter
+    # model writes) — derived from the models' token prices in docs/PRICING.md.
+    basic-credits-per-page: ${CREDITS_PER_PAGE_BASIC:7}
     credits-per-image: ${CREDITS_PER_IMAGE:15}
     credits-per-cover: ${CREDITS_PER_COVER:30}
   # One-time conversion of legacy (1 credit = 1 page) wallets at startup.

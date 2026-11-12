@@ -40,6 +40,10 @@ public class EbookImageDTO {
     private int width;
     private int height;
     private String aiDescription;
+    /** The author's note on the image: what it shows and where it belongs. */
+    private String authorNote;
+    /** What the AI saw in the image. */
+    private String aiAnalysis;
     private List<String> tags;
     /** Markdown token to place this asset in a chapter: {@code ![caption](ebook-image:<id>)}. */
     private String markdownRef;
@@ -63,6 +67,8 @@ public class EbookImageDTO {
                 image.getWidth(),
                 image.getHeight(),
                 image.getAiDescription(),
+                image.getAuthorNote(),
+                image.getAiAnalysis(),
                 splitTags(image.getTags()),
                 image.markdownRef(),
                 "/api/ebooks/" + image.getEbook().getId() + "/images/" + image.getId() + "/raw",

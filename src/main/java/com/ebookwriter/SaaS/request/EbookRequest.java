@@ -1,6 +1,7 @@
 package com.ebookwriter.SaaS.request;
 
 import com.ebookwriter.SaaS.entity.BookDepth;
+import com.ebookwriter.SaaS.entity.WritingQuality;
 import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -42,4 +43,7 @@ public class EbookRequest {
 
     /** How deep the book should go. Optional — {@link BookDepth#STANDARD} when absent. */
     private BookDepth depth;
+
+    /** Which model writes the book. Optional — {@link WritingQuality#BASIC} when absent. */
+    private WritingQuality writingQuality;
 }

@@ -105,6 +105,22 @@ public class EbookImage {
     @Column(columnDefinition = "text")
     private String aiDescription;
 
+    /**
+     * The author's own note on this image: what it shows, why it matters and
+     * where in the book it belongs ("the window-light example for chapter 2,
+     * next to the 0.5–1.5 m setup"). The highest-priority signal for placing it
+     * and for how the writer refers to it.
+     */
+    @Column(columnDefinition = "text")
+    private String authorNote;
+
+    /**
+     * What the AI saw when it looked at the image (light, composition, subject,
+     * what it demonstrates), so the writer can refer to it concretely.
+     */
+    @Column(columnDefinition = "text")
+    private String aiAnalysis;
+
     /** Comma-separated tags (kept simple; exposed as a list in the API). */
     @Column(columnDefinition = "text")
     private String tags;

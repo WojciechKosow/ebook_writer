@@ -31,4 +31,14 @@ public class EbookImageUpdateRequest {
     @Min(0)
     @Max(100)
     private Integer focalY;
+
+    /**
+     * The author's note: what the image shows and where it belongs in the book.
+     * Null leaves it unchanged; blank clears it.
+     */
+    @jakarta.validation.constraints.Size(max = MAX_AUTHOR_NOTE)
+    private String authorNote;
+
+    /** Longest author note (chars). */
+    public static final int MAX_AUTHOR_NOTE = 2000;
 }

@@ -88,6 +88,13 @@ public class EbookChapter {
     private String generationError;
 
     /**
+     * Basic-model books: the section-by-section brief the premium model wrote for
+     * this chapter, from which the lighter model writes it. Null otherwise.
+     */
+    @Column(columnDefinition = "text")
+    private String writingBrief;
+
+    /**
      * Whether this chapter's current content was produced by the AI pipeline or
      * edited by the user. Set to {@link ContentSource#USER} when the editor saves
      * changes, so a future regeneration can preserve manual edits.

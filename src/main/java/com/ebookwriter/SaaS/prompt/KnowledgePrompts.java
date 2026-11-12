@@ -24,10 +24,10 @@ public final class KnowledgePrompts {
             {
               "project": {
                 "name": "short name of what the materials are about (a project, course, practice…)",
-                "type": "e.g. web application, online course, recipe collection, research notes",
+                "type": "e.g. web application, online course, photography workflow, training programme, recipe collection, research notes",
                 "description": "2-4 sentences: what it is and what it does",
                 "domain": "subject area",
-                "technologies": ["tools, languages, frameworks, methods actually used — empty if not applicable"],
+                "technologies": ["tools, equipment, software, languages, frameworks, techniques actually used — empty if not applicable"],
                 "sources": ["SOURCE labels"]
               },
               "summary": "4-8 sentences: what these materials teach or show, as input for planning a book",
@@ -52,9 +52,13 @@ public final class KnowledgePrompts {
             - Every item must cite its origin in "sources", using the exact SOURCE labels shown
               in the material headers (e.g. "src/main/java/com/shop/security/SecurityConfig.java"
               or "user-notes"). Cite several labels when several sources support an item.
+            - The materials can be about any field (software, photography, video editing,
+              fitness, cooking, marketing, a YouTube channel…). Do not assume they are technical.
             - Be specific to THIS material. "The project uses JWT; tokens are created in
-              JwtService and checked by JwtAuthFilter" is useful. "Spring Boot is a popular
-              framework" is not — do not write generic background knowledge.
+              JwtService and checked by JwtAuthFilter" is useful; so is "for indoor window
+              portraits the author starts at f/2–f/2.8, 1/125s, ISO 400–800". "Spring Boot is a
+              popular framework" or "light is important in photography" is not — do not write
+              generic background knowledge.
             - The author's notes ("user-notes") are a first-class source even when they are
               rough, misspelled or in another language. Interpret what they mean: an ordered
               list of what to cover becomes intendedSequence; "I had problems with X" becomes a
@@ -63,6 +67,8 @@ public final class KnowledgePrompts {
               knowledgeGap.
             - Look at the material through the brief: what will THIS book, for THIS audience,
               with THIS goal, need from it?
+            - Keep the author's concrete values (settings, quantities, durations, distances,
+              names of exercises or tools) exactly as written — they are what makes the book theirs.
             - For code: describe what the code does and how it is organised (entities,
               endpoints, configuration, flows) — do not just list file names. Keep snippets
               short and only where they are a genuinely useful example.
@@ -80,7 +86,7 @@ public final class KnowledgePrompts {
         return """
                 You are the knowledge-ingestion engine of Scrivetta, an app that turns an author's
                 own knowledge into a book. You read a batch of the author's materials (notes,
-                documents, project files, source code) and extract structured knowledge for the
+                documents, course scripts, project files, source code) and extract structured knowledge for the
                 book planner. You do not write the book.
 
                 Return JSON with this shape:

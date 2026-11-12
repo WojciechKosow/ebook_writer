@@ -2,6 +2,7 @@ package com.ebookwriter.SaaS.service.credit;
 
 import com.ebookwriter.SaaS.config.properties.CreditProperties;
 import com.ebookwriter.SaaS.config.properties.OpenAiProperties;
+import com.ebookwriter.SaaS.entity.WritingQuality;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -24,8 +25,20 @@ public class CreditPricing {
     private final CreditProperties creditProperties;
     private final OpenAiProperties openAiProperties;
 
+    /** The standard page price — the Better model's (premium model writes). */
     public int creditsPerPage() {
         return Math.max(1, creditProperties.getPricing().getCreditsPerPage());
+    }
+
+    /**
+     * The page price for a book written at this quality: the Basic model is
+     * cheaper (a lighter model writes from the premium model's briefs), the
+     * Better model is the standard price.
+     */
+    public int creditsPerPage(WritingQuality quality) {
+        return WritingQuality.orStored(quality) == WritingQuality.BASIC
+                ? Math.max(1, creditProperties.getPricing().getBasicCreditsPerPage())
+                : creditsPerPage();
     }
 
     public int creditsPerImage() {
@@ -46,9 +59,14 @@ public class CreditPricing {
         return imagesEnabled() ? Math.max(0, openAiProperties.getMaxImagesPerBook()) : 0;
     }
 
-    /** Credits for {@code pages} finished pages of text. */
+    /** Credits for {@code pages} finished pages of text at the standard rate. */
     public int pageCredits(int pages) {
-        return Math.max(0, pages) * creditsPerPage();
+        return pageCredits(pages, creditsPerPage());
+    }
+
+    /** Credits for {@code pages} finished pages of text at {@code creditsPerPage}. */
+    public int pageCredits(int pages, int creditsPerPage) {
+        return Math.max(0, pages) * Math.max(1, creditsPerPage);
     }
 
     /**
@@ -75,15 +93,31 @@ public class CreditPricing {
 
     /** Low end of a book's estimated cost: the estimate's low page count and a cover. */
     public int estimateLow(int pagesLow) {
-        return pageCredits(pagesLow) + (imagesEnabled() ? creditsPerCover() : 0);
+        return estimateLow(pagesLow, creditsPerPage());
+    }
+
+    /** As {@link #estimateLow(int)} at {@code creditsPerPage}. */
+    public int estimateLow(int pagesLow, int creditsPerPage) {
+        return pageCredits(pagesLow, creditsPerPage) + (imagesEnabled() ? creditsPerCover() : 0);
+    }
+
+    /** High end of a book's estimated cost: the estimate's high page count plus the full image reserve. */
+    public int estimateHigh(int pagesHigh) {
+        return estimateHigh(pagesHigh, creditsPerPage());
+    }
+
+    /** As {@link #estimateHigh(int)} at {@code creditsPerPage}. */
+    public int estimateHigh(int pagesHigh, int creditsPerPage) {
+        return pageCredits(pagesHigh, creditsPerPage) + imageReserveCredits();
     }
 
     /**
-     * High end of a book's estimated cost — also what a user must hold to start
-     * it: the estimate's high page count plus the full image reserve.
+     * What a user must hold to start a book: the low end of its estimate plus the
+     * image reserve. Starting never needs the high end — the book is written
+     * within whatever the credits allow and billed only for what it produces.
      */
-    public int estimateHigh(int pagesHigh) {
-        return pageCredits(pagesHigh) + imageReserveCredits();
+    public int minimumToStart(int pagesLow, int creditsPerPage) {
+        return pageCredits(Math.max(1, pagesLow), creditsPerPage) + imageReserveCredits();
     }
 
     /** The bounded generation overdraft, in credits. */

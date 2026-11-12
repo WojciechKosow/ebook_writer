@@ -11,7 +11,9 @@ import com.ebookwriter.SaaS.prompt.KnowledgeChapterPrompts;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
+import com.ebookwriter.SaaS.service.ai.ModelChoice;
 import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
 import com.ebookwriter.SaaS.service.knowledge.KnowledgeDocumentStore;
 import lombok.RequiredArgsConstructor;
@@ -59,6 +61,8 @@ public class ChapterGenerationService {
     private final BookBlueprintService blueprintService;
     private final KnowledgeDocumentStore documentStore;
     private final KnowledgeWritingProperties writingProperties;
+    /** Which model writes (Basic model: the lighter writer; Better model: the premium model). Null = the default model. */
+    private final AnthropicProperties anthropicProperties;
 
     /** Write a chapter at its planned length (no credit pressure). */
     @Transactional
@@ -96,9 +100,11 @@ public class ChapterGenerationService {
         // What the chapter is written with beyond its brief: everything earlier
         // chapters already explained (refer back, never re-explain) and the book
         // template (the same recurring sections in every chapter, or none).
+        // A Basic-model book also carries the premium model's brief for this chapter.
         WritingContext writing = new WritingContext(
                 TopicRegistry.forChapter(inBook, chapter.getChapterNumber()),
-                BookTemplate.fromJson(ebook.getChapterTemplateJson()));
+                BookTemplate.fromJson(ebook.getChapterTemplateJson()),
+                chapter.getWritingBrief());
 
         String system;
         String userPrompt;
@@ -138,9 +144,18 @@ public class ChapterGenerationService {
         // — never a silently shortened chapter.
         Draft draft = null;
         List<CompletenessCheck.Problem> problems = List.of();
+        // Basic model: the premium model prepared the brief, a lighter model writes. Better: the
+        // premium model writes too.
+        ModelChoice writer = anthropicProperties == null ? null
+                : anthropicProperties.writerFor(ebook.effectiveWritingQuality());
+        if (writer != null) {
+            log.info("Writing chapter {} of ebook {} with {} (effort {}, {} quality)", chapter.getChapterNumber(),
+                    ebookId, writer.model(), writer.effortOrNull() == null ? "default" : writer.effortOrNull(),
+                    ebook.effectiveWritingQuality());
+        }
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             AnthropicService.Completion completion =
-                    LongForm.complete(anthropicService, system, userPrompt, maxTokens, null);
+                    LongForm.complete(anthropicService, system, userPrompt, maxTokens, writer);
             draft = Draft.parse(completion.text());
             problems = new ArrayList<>(CompletenessCheck.inspect(draft.content(), directive.finalChapter()));
             if (completion.truncated()) {
@@ -234,6 +249,26 @@ public class ChapterGenerationService {
      * description). Empty when nothing is assigned, so the prompt offers no
      * images and the model adds none.
      */
+    /**
+     * One available image as the writer sees it: its token, a short description,
+     * the author's own note (what it is and where it belongs) and what the AI saw
+     * in it — so the chapter places it at the right point and talks about what the
+     * reader actually sees.
+     */
+    static String describeForWriter(EbookImage a) {
+        String desc = (a.getAiDescription() != null && !a.getAiDescription().isBlank())
+                ? a.getAiDescription().trim()
+                : (a.getOriginalFilename() != null ? a.getOriginalFilename() : "image");
+        StringBuilder sb = new StringBuilder("  - token: ").append(a.markdownRef()).append(" | ").append(desc).append('\n');
+        if (a.getAuthorNote() != null && !a.getAuthorNote().isBlank()) {
+            sb.append("    The author's note (follow it): ").append(a.getAuthorNote().strip().replace("\n", " ")).append('\n');
+        }
+        if (a.getAiAnalysis() != null && !a.getAiAnalysis().isBlank()) {
+            sb.append("    What the image shows: ").append(a.getAiAnalysis().strip().replace("\n", " ")).append('\n');
+        }
+        return sb.toString();
+    }
+
     private String availableImages(UUID chapterId) {
         List<EbookImage> assigned = imageRepository.findByChapterId(chapterId);
         if (assigned.isEmpty()) {
@@ -241,11 +276,7 @@ public class ChapterGenerationService {
         }
         StringBuilder sb = new StringBuilder();
         for (EbookImage a : assigned) {
-            String desc = (a.getAiDescription() != null && !a.getAiDescription().isBlank())
-                    ? a.getAiDescription().trim()
-                    : (a.getOriginalFilename() != null ? a.getOriginalFilename() : "image");
-            sb.append("  - token: ").append(a.markdownRef())
-                    .append(" | ").append(desc).append("\n");
+            sb.append(describeForWriter(a));
         }
         return sb.toString();
     }

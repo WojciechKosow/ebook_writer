@@ -1,8 +1,13 @@
 package com.ebookwriter.SaaS.service.ai;
 
 import com.anthropic.client.AnthropicClient;
+import com.anthropic.models.messages.Base64ImageSource;
+import com.anthropic.models.messages.ContentBlockParam;
+import com.anthropic.models.messages.ImageBlockParam;
 import com.anthropic.models.messages.Message;
+import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.MessageCreateParams;
+import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.ThinkingConfigAdaptive;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
@@ -10,6 +15,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.List;
 import java.util.stream.Collectors;
 
 /**
@@ -40,6 +48,11 @@ public class AnthropicService {
         return completeDetailed(systemPrompt, userPrompt, maxTokens, model).text();
     }
 
+    /** As {@link #complete(String, String, long)} with an explicit model and effort. */
+    public String complete(String systemPrompt, String userPrompt, long maxTokens, ModelChoice choice) {
+        return completeDetailed(systemPrompt, userPrompt, maxTokens, choice).text();
+    }
+
     /**
      * A completion's text plus whether the model was cut off by the output-token
      * limit. Long-form steps use this to detect a chapter that stopped mid-thought
@@ -55,15 +68,58 @@ public class AnthropicService {
 
     /** As {@link #complete(String, String, long, String)}, reporting truncation. */
     public Completion completeDetailed(String systemPrompt, String userPrompt, long maxTokens, String model) {
+        return completeDetailed(systemPrompt, userPrompt, maxTokens, ModelChoice.of(model));
+    }
 
-        MessageCreateParams params = MessageCreateParams.builder()
-                .model(model)
+    /** As above, with an explicit model <em>and</em> effort (e.g. the Basic or Pro chapter writer). */
+    public Completion completeDetailed(String systemPrompt, String userPrompt, long maxTokens, ModelChoice choice) {
+        MessageCreateParams.Builder params = MessageCreateParams.builder()
+                .model(choice.model())
                 .maxTokens(maxTokens)
                 .system(systemPrompt)
                 .thinking(ThinkingConfigAdaptive.builder().build())
-                .addUserMessage(userPrompt)
-                .build();
-        return send(params, maxTokens, true);
+                .addUserMessage(userPrompt);
+        withEffort(params, choice);
+        return send(params.build(), maxTokens, true);
+    }
+
+    /**
+     * A completion that LOOKS at images: the text {@code intro}, then each image
+     * labelled with its id, then {@code outro}. Used to analyse the author's own
+     * photos and figures so they can be placed and written about from what they
+     * actually show, not from their file names.
+     */
+    public String completeWithImages(String systemPrompt, String intro, List<VisionImage> images, String outro,
+                                     long maxTokens, ModelChoice choice) {
+        List<ContentBlockParam> content = new ArrayList<>();
+        content.add(ContentBlockParam.ofText(TextBlockParam.builder().text(intro).build()));
+        for (VisionImage image : images) {
+            content.add(ContentBlockParam.ofText(TextBlockParam.builder().text("Image id=" + image.label() + ":").build()));
+            content.add(ContentBlockParam.ofImage(ImageBlockParam.builder()
+                    .source(Base64ImageSource.builder()
+                            .mediaType("image/webp".equals(image.mediaType())
+                                    ? Base64ImageSource.MediaType.IMAGE_WEBP : Base64ImageSource.MediaType.IMAGE_JPEG)
+                            .data(Base64.getEncoder().encodeToString(image.bytes()))
+                            .build())
+                    .build()));
+        }
+        content.add(ContentBlockParam.ofText(TextBlockParam.builder().text(outro).build()));
+        MessageCreateParams.Builder params = MessageCreateParams.builder()
+                .model(choice.model())
+                .maxTokens(maxTokens)
+                .system(systemPrompt)
+                .thinking(ThinkingConfigAdaptive.builder().build())
+                .addUserMessageOfBlockParams(content);
+        withEffort(params, choice);
+        return send(params.build(), maxTokens, true).text();
+    }
+
+    /** Set the effort when the choice names one; otherwise the model's default applies. */
+    private static void withEffort(MessageCreateParams.Builder params, ModelChoice choice) {
+        String effort = choice.effortOrNull();
+        if (effort != null) {
+            params.outputConfig(OutputConfig.builder().effort(OutputConfig.Effort.of(effort)).build());
+        }
     }
 
     /**
@@ -86,18 +142,24 @@ public class AnthropicService {
      */
     public Completion continueFrom(String systemPrompt, String userPrompt, String partial, long maxTokens,
                                    String model) {
-        MessageCreateParams params = MessageCreateParams.builder()
-                .model(model)
+        return continueFrom(systemPrompt, userPrompt, partial, maxTokens, ModelChoice.of(model));
+    }
+
+    /** As above, with an explicit model and effort — a continuation uses the same writer as its start. */
+    public Completion continueFrom(String systemPrompt, String userPrompt, String partial, long maxTokens,
+                                   ModelChoice choice) {
+        MessageCreateParams.Builder params = MessageCreateParams.builder()
+                .model(choice.model())
                 .maxTokens(maxTokens)
                 .system(systemPrompt)
                 .thinking(ThinkingConfigAdaptive.builder().build())
                 .addUserMessage(userPrompt)
                 .addAssistantMessage(partial)
-                .addUserMessage(CONTINUE_PROMPT)
-                .build();
+                .addUserMessage(CONTINUE_PROMPT);
+        withEffort(params, choice);
         // Leading whitespace is part of the continuation (a paragraph break, the
         // space between two words), so only the end is trimmed.
-        return send(params, maxTokens, false);
+        return send(params.build(), maxTokens, false);
     }
 
     /** As {@link #continueFrom(String, String, String, long, String)} on the default model. */
@@ -111,6 +173,11 @@ public class AnthropicService {
         for (int attempt = 1; attempt <= Math.max(1, properties.getMaxRetries()); attempt++) {
             try {
                 Message response = anthropicClient.messages().create(params);
+                // Token usage per call and model, so the real cost of a Basic- and a
+                // Better-model book can be measured against the page prices.
+                log.info("Anthropic usage: model={} input_tokens={} output_tokens={} max_tokens={}",
+                        params.model().asString(), response.usage().inputTokens(), response.usage().outputTokens(),
+                        maxTokens);
 
                 String text = response.content().stream()
                         .flatMap(block -> block.text().stream())

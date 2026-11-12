@@ -31,7 +31,8 @@ import java.util.regex.Pattern;
  *   <li><b>answers</b> the author gave for this chapter (and book-wide ones);</li>
  *   <li><b>open gaps</b> — what the author did NOT provide, so it is not invented;</li>
  *   <li><b>source excerpts</b>: short quotes of this chapter's own source files
- *       (the real code/config names), at most a few, size-capped.</li>
+ *       (the real code/config names), at most a few, size-capped — and the passages
+ *       of the author's notes that belong to this chapter, in their own words.</li>
  * </ul>
  * Pure (no I/O): the caller passes the generation input and the documents.
  */
@@ -75,6 +76,11 @@ public final class KnowledgeChapterContext {
 
         List<String> excerptRefs = new ArrayList<>();
         String excerpts = excerpts(chapter, documents, limits, excerptRefs);
+        String notes = notesExcerpt(chapter, documents, limits);
+        if (!notes.isEmpty()) {
+            excerptRefs.add(KnowledgeChunker.NOTES_REF);
+            excerpts = notes + (excerpts.isEmpty() ? "" : "\n\n" + excerpts);
+        }
         return new Context(book, knowledge.toString().strip(), answers(input, chapter.id(), limits),
                 gaps(input, chapter.id()), excerpts, selected.size(), excerptRefs);
     }
@@ -91,12 +97,12 @@ public final class KnowledgeChapterContext {
         line(sb, "Concept", bp.concept());
         BookKnowledgeData.ProjectInfo p = k.project();
         if (p != null) {
-            sb.append("\nTHE AUTHOR'S PROJECT\n");
+            sb.append("\nWHAT THE AUTHOR'S MATERIAL IS ABOUT\n");
             line(sb, "Name", p.name());
             line(sb, "Type", p.type());
             line(sb, "What it is", p.description());
             line(sb, "Domain", p.domain());
-            if (!p.technologies().isEmpty()) line(sb, "Technologies", String.join(", ", p.technologies()));
+            if (!p.technologies().isEmpty()) line(sb, "Tools, methods and technologies", String.join(", ", p.technologies()));
         }
         if (!k.terminology().isEmpty()) {
             sb.append("\nTERMINOLOGY (use these names consistently in every chapter)\n");
@@ -251,6 +257,90 @@ public final class KnowledgeChapterContext {
             refsOut.add(ref);
         }
         return sb.toString().strip();
+    }
+
+    /**
+     * The passages of the author's pasted notes that belong to this chapter, quoted
+     * in the author's own words. Notes are often the whole material of a book that
+     * is not about software (a photographer's, trainer's or editor's notes), so the
+     * writer must see the original wording and values — not only the extracted
+     * summary. Notes can be long and cover the whole book, so only the blocks that
+     * share the most words with this chapter's title, topics and key points are
+     * quoted (in their original order), up to one excerpt's size. Empty when the
+     * chapter does not draw on the notes.
+     */
+    static String notesExcerpt(BlueprintData.Chapter chapter, Map<String, NormalizedDocument> documents,
+                               KnowledgeWritingProperties limits) {
+        NormalizedDocument notes = documents.get(KnowledgeChunker.NOTES_REF);
+        if (notes == null || notes.content() == null || notes.content().isBlank()
+                || !chapter.sourceReferences().contains(KnowledgeChunker.NOTES_REF)) {
+            return "";
+        }
+        int budget = limits.getMaxExcerptChars();
+        Set<String> words = new HashSet<>(tokens(chapter.title()));
+        for (String t : chapter.topics()) words.addAll(tokens(t));
+        for (BlueprintData.KeyPoint kp : chapter.keyPoints()) words.addAll(tokens(kp.point()));
+        List<String> blocks = noteBlocks(notes.content(), Math.max(200, budget / 4));
+
+        String body;
+        if (notes.content().length() <= budget) {
+            body = notes.content().strip();
+        } else {
+            record Scored(int index, int score) {
+            }
+            List<Scored> scored = new ArrayList<>();
+            for (int i = 0; i < blocks.size(); i++) {
+                int score = 0;
+                for (String w : tokens(blocks.get(i))) if (words.contains(w)) score++;
+                if (score > 0) scored.add(new Scored(i, score));
+            }
+            scored.sort(Comparator.comparingInt(Scored::score).reversed().thenComparingInt(Scored::index));
+            Set<Integer> picked = new java.util.TreeSet<>();
+            int used = 0;
+            for (Scored sc : scored) {
+                int len = blocks.get(sc.index()).length() + 2;
+                if (used + len > budget) continue;
+                picked.add(sc.index());
+                used += len;
+            }
+            if (picked.isEmpty()) {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder();
+            int previous = -2;
+            for (int i : picked) {
+                if (sb.length() > 0) sb.append(i == previous + 1 ? "\n" : "\n[…]\n");
+                sb.append(blocks.get(i));
+                previous = i;
+            }
+            body = sb.toString();
+        }
+        return "--- THE AUTHOR'S NOTES (passages for this chapter, in the author's own words) ---\n"
+                + body + "\n--- END NOTES ---";
+    }
+
+    /** Notes split at blank lines into blocks; overlong blocks are split at line ends near {@code maxBlock}. */
+    static List<String> noteBlocks(String text, int maxBlock) {
+        List<String> out = new ArrayList<>();
+        for (String para : text.strip().split("\\n\\s*\\n")) {
+            String p = para.strip();
+            if (p.isEmpty()) continue;
+            if (p.length() <= maxBlock) {
+                out.add(p);
+                continue;
+            }
+            StringBuilder cur = new StringBuilder();
+            for (String line : p.split("\\n")) {
+                if (cur.length() > 0 && cur.length() + line.length() + 1 > maxBlock) {
+                    out.add(cur.toString());
+                    cur.setLength(0);
+                }
+                if (cur.length() > 0) cur.append('\n');
+                cur.append(line);
+            }
+            if (cur.length() > 0) out.add(cur.toString());
+        }
+        return out;
     }
 
     // ---- helpers ------------------------------------------------------------------

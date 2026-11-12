@@ -113,7 +113,7 @@ public class ImagePlanningService {
         }
     }
 
-    /** Knowledge-based books: what the author's project is, for contextual image prompts. */
+    /** Knowledge-based books: what the author's material is about, for contextual image prompts. */
     private String projectContext(Ebook ebook) {
         if (!ebook.isKnowledgeBased() || blueprintService == null) return null;
         return blueprintService.getGenerationInput(ebook.getId())
@@ -121,7 +121,7 @@ public class ImagePlanningService {
                 .filter(p -> p != null && p.name() != null)
                 .map(p -> p.name() + (p.type() != null ? " — " + p.type() : "")
                         + (p.description() != null ? ". " + p.description() : "")
-                        + (p.technologies().isEmpty() ? "" : " Technologies: " + String.join(", ", p.technologies()) + "."))
+                        + (p.technologies().isEmpty() ? "" : " Tools, methods and technologies: " + String.join(", ", p.technologies()) + "."))
                 .orElse(null);
     }
 

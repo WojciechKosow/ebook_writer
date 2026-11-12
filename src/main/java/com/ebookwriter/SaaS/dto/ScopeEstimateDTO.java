@@ -42,11 +42,21 @@ public record ScopeEstimateDTO(BookDepth depth,
                                boolean capped,
                                boolean aiAssessed) {
 
+    /** At the standard (Better-model) page price. */
     public static ScopeEstimateDTO from(ScopeEstimate e, CreditPricing pricing) {
-        int high = pricing.estimateHigh(e.requiredPages());
+        return from(e, pricing, pricing.creditsPerPage());
+    }
+
+    /**
+     * At {@code creditsPerPage} (the book's writing quality). {@code requiredCredits}
+     * is what starting needs — the low end, not the high end: the book is billed
+     * for what it really becomes.
+     */
+    public static ScopeEstimateDTO from(ScopeEstimate e, CreditPricing pricing, int creditsPerPage) {
         return new ScopeEstimateDTO(e.depth(), e.depth().label(), e.depth().description(),
                 e.pagesLow(), e.pagesHigh(), e.chaptersLow(), e.chaptersHigh(),
-                pricing.estimateLow(e.pagesLow()), high, high, pricing.creditsPerPage(),
+                pricing.estimateLow(e.pagesLow(), creditsPerPage), pricing.estimateHigh(e.pagesHigh(), creditsPerPage),
+                pricing.minimumToStart(e.pagesLow(), creditsPerPage), creditsPerPage,
                 e.basis(), e.sourcePages(), e.capped(), e.aiAssessed());
     }
 }

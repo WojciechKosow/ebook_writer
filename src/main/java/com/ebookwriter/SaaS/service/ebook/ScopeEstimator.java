@@ -28,7 +28,8 @@ import java.util.List;
  *
  * <p>For a knowledge-based book the materials define the scope (the writer never
  * invents what the author did not provide), so a few pages of notes give a modest
- * book even at Comprehensive, while 150 pages of material are never summarised
+ * book even at Comprehensive — bounded by how far the material can be expanded
+ * ({@link #materialCeilingPages}) — while 150 pages of material are never summarised
  * into 30 pages. For a brief-only book the depth sets the scope and pasted source
  * text adds to it.
  *
@@ -129,8 +130,14 @@ public final class ScopeEstimator {
         double book; // whole-book pages
         if (s.knowledgeFlow()) {
             // The materials define the scope: no padding past what they support,
-            // beyond a modest floor that leaves room to explain the essentials.
+            // beyond a modest floor that leaves room to explain the essentials —
+            // and never more book than the material can carry (see materialCeilingPages).
             book = Math.max(material + frontMatter, p.knowledgeBookFloor());
+            if (sourcePages > 0) {
+                book = Math.min(book, Math.max(Math.max(p.knowledgeBookFloor(),
+                                structuralMinimumPages(s.blueprintChapters().size())),
+                        materialCeilingPages(s.depth(), sourcePages) + frontMatter));
+            }
         } else {
             double brief = p.briefBookPages() * briefRichness(s.briefChars());
             // Pasted source text adds to what the topic itself calls for.
@@ -185,6 +192,51 @@ public final class ScopeEstimator {
         };
     }
 
+    /** Words in one page of source material ({@link #SOURCE_CHARS_PER_PAGE} characters). */
+    static final double SOURCE_WORDS_PER_PAGE = 430;
+
+    /** Book pages one page of source material fills, at 200 words per book page. */
+    static final double BOOK_PAGES_PER_SOURCE_PAGE = SOURCE_WORDS_PER_PAGE / 200.0;
+
+    /**
+     * The most a book written from the author's materials may expand them, in
+     * words, at each depth. A book explains, gives examples and exercises, so it
+     * is longer than terse notes — but only so much longer before it stops being
+     * the author's book and becomes generic filler around it (eight pages of a
+     * photographer's notes do not make a 200-page book on light).
+     */
+    static double maxExpansion(BookDepth depth) {
+        return switch (BookDepth.orDefault(depth)) {
+            case QUICK -> 1.25;
+            case STANDARD -> 2.5;
+            case COMPREHENSIVE -> 4.0;
+        };
+    }
+
+    /**
+     * Content pages the author's materials can carry at this depth: their length
+     * in words times {@link #maxExpansion}. Large uploads (repositories, long
+     * PDFs) are far above every other bound, so this only ever limits books
+     * written from a small amount of material.
+     */
+    public static double materialCeilingPages(BookDepth depth, double sourcePages) {
+        return Math.max(0, sourcePages) * BOOK_PAGES_PER_SOURCE_PAGE * maxExpansion(depth);
+    }
+
+    /**
+     * The smallest book a structure of {@code chapters} chapters physically makes:
+     * every chapter at the writer's minimum length, with its opener — the same
+     * measure the credit hold uses ({@link WritingBudget#holdFor}). The material
+     * ceiling never pushes an estimate below it, so an approved blueprint can always
+     * be written within the credits its estimate asked for. 0 without a structure.
+     */
+    public static int structuralMinimumPages(int chapters) {
+        if (chapters <= 0) {
+            return 0;
+        }
+        return WritingBudget.holdFor((long) chapters * WritingBudget.MIN_CHAPTER_WORDS, chapters, 0);
+    }
+
     /** How far OpenAI's judgement may move the estimate away from the material-based one. */
     static final double AI_MIN_FACTOR = 0.6;
     static final double AI_MAX_FACTOR = 1.8;
@@ -206,6 +258,16 @@ public final class ScopeEstimator {
         double hMid = (heuristic.pagesLow() + heuristic.pagesHigh()) / 2.0;
         double aMid = (ai.pagesLow() + ai.pagesHigh()) / 2.0;
         double mid = Math.max(hMid * AI_MIN_FACTOR, Math.min(hMid * AI_MAX_FACTOR, aMid));
+        if (heuristic.basis() == ScopeEstimate.Basis.KNOWLEDGE || heuristic.basis() == ScopeEstimate.Basis.BLUEPRINT) {
+            // A book written from the author's materials: the AI may not judge it
+            // longer than the material can carry, however generous its guess.
+            int chapters = heuristic.basis() == ScopeEstimate.Basis.BLUEPRINT ? heuristic.chaptersHigh() : 0;
+            double ceiling = heuristic.sourcePages() > 0
+                    ? Math.max(Math.max(profile(heuristic.depth()).knowledgeBookFloor(), structuralMinimumPages(chapters)),
+                            materialCeilingPages(heuristic.depth(), heuristic.sourcePages()) + frontMatter)
+                    : Double.MAX_VALUE;
+            mid = Math.min(mid, Math.max(hMid, ceiling));
+        }
         double spread = Math.max(0.08, Math.min(0.25, (ai.pagesHigh() - ai.pagesLow()) / (2.0 * aMid)));
         boolean capped = heuristic.capped() || mid * (1 + spread) > cap;
         int high = Math.min(cap, nice(mid * (1 + spread)));

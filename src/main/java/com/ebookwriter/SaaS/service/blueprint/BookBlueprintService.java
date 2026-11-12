@@ -114,6 +114,17 @@ public class BookBlueprintService {
                 .map(b -> readBlueprint(b.getBlueprintJson()));
     }
 
+    /**
+     * Characters of the author's answers to the blueprint questions — material in
+     * the author's own words, which the book may draw on like their uploads.
+     */
+    public long answeredChars(UUID ebookId) {
+        return questionRepository.findByEbookIdOrderBySortOrderAscCreatedAtAsc(ebookId).stream()
+                .filter(q -> q.getStatus() == QuestionStatus.ANSWERED && q.getAnswer() != null)
+                .mapToLong(q -> q.getAnswer().strip().length())
+                .sum();
+    }
+
     /** True when the blueprint is final (BLUEPRINT_READY) and the knowledge it was built on is still current. */
     public boolean isBlueprintReady(UUID ebookId) {
         return getGenerationInput(ebookId).isPresent();

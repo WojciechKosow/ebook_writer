@@ -83,6 +83,13 @@ public class CreditProperties {
          */
         private int creditsPerPage = 11;
 
+        /**
+         * Page price of a Basic-model book (the premium model prepares it, a
+         * lighter model writes it) — derived in docs/PRICING.md from the models'
+         * token prices. {@link #creditsPerPage} is the Better-model price.
+         */
+        private int basicCreditsPerPage = 7;
+
         /** Credits per AI-generated illustration placed in a book. */
         private int creditsPerImage = 15;
 

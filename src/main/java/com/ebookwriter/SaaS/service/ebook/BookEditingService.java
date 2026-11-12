@@ -77,7 +77,7 @@ public class BookEditingService {
         );
 
         AnthropicService.Completion completion = LongForm.complete(anthropicService, system, userPrompt, maxTokens,
-                anthropicProperties.resolveEditingModel());
+                anthropicProperties.editorFor(ebook.effectiveWritingQuality()));
         String edited = ManuscriptIntegrity.trimTrailingOrphans(completion.text().trim());
 
         // An edit must be at least as complete as the chapter it replaces. One

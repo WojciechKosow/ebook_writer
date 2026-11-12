@@ -77,6 +77,7 @@ public class EbookGenerationService {
     private final KnowledgeBookPlanner knowledgeBookPlanner;
     private final EbookImageRepository imageRepository;
     private final BookTemplateService bookTemplateService;
+    private final ChapterBriefService chapterBriefService;
 
     @Async("ebookExecutor")
     public void generate(UUID ebookId) {
@@ -117,21 +118,17 @@ public class EbookGenerationService {
                 // uploaded; best-effort so it never fails the book.
                 assetPlacementService.plan(ebookId);
 
-                // Step 1.6 — the plan is a result of the content. If it came out
-                // clearly longer than what the user agreed to (or than their credits
-                // cover), pause and ask instead of either cutting it or silently
-                // writing a much longer (more expensive) book.
-                Ebook plannedBook = ebookRepository.findById(ebookId).orElseThrow();
-                int plannedPages = plannedBook.getPlannedPages() == null ? 0 : plannedBook.getPlannedPages();
-                List<EbookChapter> outline = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
-                int holdNeeded = WritingBudget.holdFor(
-                        outline.stream().mapToLong(ChapterGenerationService::plannedWords).sum(),
-                        outline.size(), imageReservePages());
-                if (ScopeApproval.planNeedsApproval(plannedPages, holdNeeded, plannedBook)) {
-                    pauseForApproval(ebookId, plannedPages, holdNeeded, ScopeApproval.STAGE_PLAN);
-                    return;
-                }
+                // Step 1.6 — Basic model: the premium model prepares the book for the
+                // writer, a brief per chapter from the plan and the author's material.
+                // No-op for the Better model; best-effort.
+                chapterBriefService.prepare(ebookId);
+
+                // The plan is a result of the content and is never a reason to stop:
+                // the book is billed for what it really becomes, within the credit
+                // hold (see writeChapters).
             } else {
+                // Basic model: brief any chapter still to write that has no brief yet.
+                chapterBriefService.prepare(ebookId);
                 // A book planned before templates existed gets its template now,
                 // so the chapters still to write follow one.
                 if (ebookRepository.findById(ebookId).map(Ebook::getChapterTemplateJson).orElse(null) == null) {
@@ -150,17 +147,12 @@ public class EbookGenerationService {
                     chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
 
             // Step 2 — write chapters sequentially. The depth and the content shaped
-            // the plan; the writing follows it. If the book grows clearly past what
-            // the user agreed to, or the credits genuinely run short, writing pauses
-            // for the user's decision (continue / keep it within the agreed length) —
-            // it is never silently cut and never silently grows.
+            // the plan; the writing follows it without stopping to ask. Only the
+            // credit hold bounds it: a book that needs more than the user's credits
+            // can pay for is brought to its planned ending within them, and the user
+            // is billed only for the pages actually produced.
             updateStatus(ebookId, EbookStatus.WRITING, WRITING_START);
-            try {
-                writeChapters(ebookId, chapters);
-            } catch (ApprovalRequired pause) {
-                pauseForApproval(ebookId, pause.proposedPages, pause.holdNeeded, ScopeApproval.STAGE_WRITING);
-                return;
-            }
+            writeChapters(ebookId, chapters);
             chapters = ManuscriptContext.inBook(
                     chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId));
 
@@ -232,35 +224,6 @@ public class EbookGenerationService {
         }
     }
 
-    /** Thrown inside the writing loop when the user's decision is needed before continuing. */
-    static final class ApprovalRequired extends RuntimeException {
-        final int proposedPages;
-        final int holdNeeded;
-
-        ApprovalRequired(int proposedPages, int holdNeeded) {
-            super("User approval needed for ~" + proposedPages + " pages", null, false, false);
-            this.proposedPages = proposedPages;
-            this.holdNeeded = holdNeeded;
-        }
-    }
-
-    /**
-     * Pause the book in {@link EbookStatus#AWAITING_APPROVAL}: the credit hold
-     * stays reserved, everything written so far is kept, and nothing continues
-     * until the user decides (see {@code EbookService.decideScope}).
-     */
-    private void pauseForApproval(UUID ebookId, int proposedPages, int holdNeeded, String stage) {
-        ebookRepository.findById(ebookId).ifPresent(ebook -> {
-            log.info("Ebook {}: now expected at ~{} pages (agreed {}, credit hold {}); pausing at {} for the user",
-                    ebookId, proposedPages, ebook.getApprovedPages(), ebook.getPageBudget(), stage);
-            ebook.setStatus(EbookStatus.AWAITING_APPROVAL);
-            ebook.setProposedPages(proposedPages);
-            ebook.setProposedHold(holdNeeded);
-            ebook.setApprovalStage(stage);
-            ebookRepository.save(ebook);
-        });
-    }
-
     /**
      * The user cancelled a book paused after planning: refund the whole hold
      * (nothing was written), drop the plan and return it to {@link EbookStatus#DRAFT}.
@@ -309,18 +272,14 @@ public class EbookGenerationService {
      *       which topics are out of scope so it never references them.</li>
      * </ul>
      * The decision is re-taken before every chapter from the words actually
-     * written, so a chapter that ran long or short is accounted for. Unless the
-     * user chose to keep the book within the agreed length, a wind-down — or a
-     * projection clearly past the agreed length — throws {@link ApprovalRequired}
-     * so the user decides first.
+     * written, so a chapter that ran long or short is accounted for. Writing
+     * never pauses to ask: the credit hold is the only bound, and the book is
+     * billed for the pages it really has.
      */
     private void writeChapters(UUID ebookId, List<EbookChapter> chapters) {
         Ebook book = ebookRepository.findById(ebookId).orElseThrow();
         int pageBudget = book.getPageBudget();
         int capacity = WritingBudget.capacityWords(pageBudget, chapters.size(), imageReservePages());
-        // Until the user says "keep it within the agreed length", growth past the
-        // agreement or a real credit shortfall pauses instead of shrinking the book.
-        boolean mayFit = book.isFitToBudget();
 
         Set<Integer> deferred = new HashSet<>();
         List<String> omittedTitles = new ArrayList<>();
@@ -347,17 +306,7 @@ public class EbookGenerationService {
                             c.getChapterNumber(), ChapterGenerationService.plannedWords(c)));
                 }
             }
-            int remainingWords = remaining.stream().mapToInt(WritingBudget.PlannedWords::words).sum();
             WritingBudget.Decision decision = WritingBudget.decide(remaining, wordsWritten, capacity);
-            if (!mayFit) {
-                int projected = ScopeApproval.projectedPages(wordsWritten, remainingWords);
-                // Growing clearly past the agreed length, or credits genuinely short
-                // for the rest of the book: ask first, never shrink or grow silently.
-                if (ScopeApproval.writingNeedsApproval(projected, book) || decision.windDown()) {
-                    throw new ApprovalRequired(projected, WritingBudget.holdFor(
-                            (long) wordsWritten + remainingWords, chapters.size(), imageReservePages()));
-                }
-            }
 
             if (decision.windDown()) {
                 for (EbookChapter c : chapters) {

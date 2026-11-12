@@ -68,6 +68,14 @@ public class Ebook {
     @Enumerated(EnumType.STRING)
     private BookDepth depth;
 
+    /**
+     * Which model writes the chapters (Basic: a lighter model writes from the
+     * premium model's plan and briefs; Better: the premium model writes too). Null on books
+     * stored before the choice existed — see {@link #effectiveWritingQuality()}.
+     */
+    @Enumerated(EnumType.STRING)
+    private WritingQuality writingQuality;
+
     private String language;
 
     @Column(columnDefinition = "text")
@@ -287,6 +295,11 @@ public class Ebook {
 
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    /** The selected writing quality ({@link WritingQuality#BETTER} for books that predate the choice). */
+    public WritingQuality effectiveWritingQuality() {
+        return WritingQuality.orStored(writingQuality);
+    }
 
     /** The selected depth ({@link BookDepth#STANDARD} for books that predate depth). */
     public BookDepth effectiveDepth() {

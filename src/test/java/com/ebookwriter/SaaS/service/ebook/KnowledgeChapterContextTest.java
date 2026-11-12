@@ -80,7 +80,7 @@ class KnowledgeChapterContextTest {
             assertTrue(ctx.book().contains("Reader: Beginner Java developers"));
             assertTrue(ctx.book().contains("Promise: A running, secured shop API."));
             assertTrue(ctx.book().contains("Name: Online Shop"));
-            assertTrue(ctx.book().contains("Technologies: Java 21, Spring Boot, PostgreSQL, JWT"));
+            assertTrue(ctx.book().contains("Tools, methods and technologies: Java 21, Spring Boot, PostgreSQL, JWT"));
             assertTrue(ctx.book().contains("- JWT: Signed token carrying the user's email"), "terminology for continuity");
             assertTrue(ctx.book().contains("1. Create the project"), "the author's own order of work");
         }
@@ -102,7 +102,10 @@ class KnowledgeChapterContextTest {
         assertTrue(ctx.gaps().contains("Why JWT over server sessions is not explained."));
         assertTrue(ctx.gaps().contains("Target deployment is unknown."), "book-level gap");
 
-        assertEquals(List.of(SECURITY, JWT_SERVICE), ctx.excerptRefs(), "code files of this chapter, notes excluded");
+        assertEquals(List.of(SECURITY, JWT_SERVICE, NOTES), ctx.excerptRefs(),
+                "code files of this chapter, then the author's notes it draws on");
+        assertTrue(ctx.excerpts().contains("--- THE AUTHOR'S NOTES"), "notes are quoted in the author's words");
+        assertTrue(ctx.excerpts().contains("I had problems with JWT."));
         assertTrue(ctx.excerpts().contains("--- FILE: " + SECURITY + " (java) ---"));
         assertTrue(ctx.excerpts().contains("SessionCreationPolicy.STATELESS"));
         assertTrue(ctx.excerpts().contains("[… rest of the file omitted …]"), "long files are cut");
@@ -126,8 +129,9 @@ class KnowledgeChapterContextTest {
         limits.setMaxExcerptChars(100);
         limits.setMaxChapterKnowledgeChars(200);
         var ctx = KnowledgeChapterContext.build(input, "c-jwt", documents, limits);
-        assertEquals(1, ctx.excerptRefs().size());
-        assertTrue(ctx.excerpts().length() < 400);
+        assertEquals(1, ctx.excerptRefs().stream().filter(r -> !r.equals(NOTES)).count(),
+                "at most maxExcerpts source files");
+        assertTrue(ctx.excerpts().length() < 500, "file and notes excerpts are both capped");
         assertTrue(ctx.itemCount() >= 1, "explicitly mapped knowledge is always included");
         assertTrue(ctx.totalChars() < limits.getMaxBookContextChars() + 2_000);
     }

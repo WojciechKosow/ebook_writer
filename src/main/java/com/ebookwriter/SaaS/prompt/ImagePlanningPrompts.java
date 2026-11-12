@@ -48,6 +48,14 @@ public final class ImagePlanningPrompts {
                 - Do NOT add an image just because a chapter exists. A chapter may have
                   zero images. Whole books of pure prose need no images at all.
                 - Never propose decorative images that carry no information.
+                - Never propose an image that would pass as real evidence or as the
+                  author's own work. In books about a visual craft or a physical skill
+                  (photography, video, design, art, make-up, cooking, fitness technique)
+                  do NOT generate "example results" — e.g. a portrait lit from the side
+                  at f/1.8, a finished dish, a correct squat — because readers would take
+                  them as the author's real photos. Illustrate the setup or the idea
+                  instead (e.g. a clean top-down illustration of subject, window and
+                  camera positions), or propose nothing; the author adds real photos.
                 - Avoid repetition: no two images should communicate nearly the same
                   thing, and do not repeat a visual motif across chapters.
                 - Consider the surrounding text; anchor each image to the specific
@@ -94,8 +102,8 @@ public final class ImagePlanningPrompts {
     }
 
     /**
-     * As above, with the author's project described (knowledge-based books) so
-     * images depict THIS project's concepts instead of generic stock scenes.
+     * As above, with the author's subject described (knowledge-based books) so
+     * images depict THIS author's concepts instead of generic stock scenes.
      */
     public static String user(Ebook e, List<EbookChapter> chapters, String projectContext) {
         StringBuilder chaptersText = new StringBuilder();
@@ -136,11 +144,13 @@ public final class ImagePlanningPrompts {
 
     private static String projectSection(String projectContext) {
         return """
-                THE AUTHOR'S PROJECT (this book teaches it)
+                WHAT THIS BOOK TEACHES (from the author's own material)
                 %s
-                Images must show THIS project's concepts, structure and flows as described in the
-                chapters (e.g. how its parts connect), in a clean technical-editorial style. Never
-                propose generic stock scenes (laptops, people typing, abstract "technology" art).
+                Images must show THIS author's subject — their method, setups, concepts and how
+                things relate, as described in the chapters — in a clean editorial style that
+                fits the field (technical books: a clean technical-editorial style). Never propose
+                generic stock scenes (laptops, people typing, smiling people with props,
+                abstract "technology" art).
 
                 """.formatted(projectContext.strip());
     }
