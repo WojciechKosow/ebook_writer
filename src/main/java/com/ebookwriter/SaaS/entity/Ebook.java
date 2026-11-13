@@ -236,6 +236,24 @@ public class Ebook {
      */
     private String authorName;
 
+    /**
+     * The cover arrangement the author picked in the editor: {@code editorial}
+     * (full-bleed photo, title over it), {@code framed} (photo inset on paper,
+     * title below) or {@code type} (title only). Null follows {@link #coverLayout},
+     * the arrangement chosen when the cover was planned.
+     */
+    @Column(length = 16)
+    private String editorCoverStyle;
+
+    /**
+     * True when the manuscript was saved from the editor without rebuilding the
+     * PDF (autosave). The stored PDF is then out of date and is rebuilt on the
+     * next export or download.
+     */
+    @Column(nullable = false, columnDefinition = "boolean not null default false")
+    @Builder.Default
+    private boolean pdfStale = false;
+
     @Column(columnDefinition = "text")
     private String description;
 

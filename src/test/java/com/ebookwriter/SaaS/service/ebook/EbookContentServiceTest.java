@@ -111,6 +111,60 @@ class EbookContentServiceTest {
     }
 
     @Test
+    void autosaveKeepsBookDetailsAndStatusAndDefersThePdf() {
+        UUID id1 = UUID.randomUUID();
+        EbookChapter ch1 = chapter(id1, 1, "Intro", "old body");
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
+        when(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId))
+                .thenReturn(new java.util.ArrayList<>(List.of(ch1)));
+        echoSaveAll();
+
+        EbookContentUpdateRequest req = new EbookContentUpdateRequest(List.of(
+                new ChapterUpdateRequest(id1, "Intro", "new body", "revising")));
+        req.setTitle("  The Considered Frame ");
+        req.setSubtitle("");
+        req.setAuthorName("Elise Moreau");
+        req.setCoverLayout("framed");
+        req.setRender(false);
+
+        EbookContentResponse resp = ebookService.updateContent(ebookId, userId, req);
+
+        assertEquals("revising", ch1.getEditorialStatus());
+        assertEquals("The Considered Frame", ebook.getTitle());
+        assertNull(ebook.getSubtitle(), "a cleared subtitle is removed");
+        assertEquals("Elise Moreau", ebook.getAuthorName());
+        assertEquals("framed", ebook.getEditorCoverStyle());
+        assertEquals("framed", resp.getCoverLayout());
+        assertEquals("revising", resp.getChapters().get(0).getEditorialStatus());
+        // Autosave: the PDF is only marked stale, rebuilt on export or download.
+        assertTrue(ebook.isPdfStale());
+        verify(pdfGenerationService, never()).renderAndStore(any(UUID.class), anyInt());
+    }
+
+    @Test
+    void downloadRebuildsAStalePdfOnce() {
+        ebook.setPdfStale(true);
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
+
+        ebookService.ensureFreshPdf(ebookId, userId);
+        ebookService.ensureFreshPdf(ebookId, userId);
+
+        assertFalse(ebook.isPdfStale());
+        verify(pdfGenerationService, org.mockito.Mockito.times(1)).renderAndStore(eq(ebookId), eq(0));
+    }
+
+    @Test
+    void exportRendersWithTheChosenFrontMatter() {
+        when(ebookRepository.findByIdAndUserId(ebookId, userId)).thenReturn(Optional.of(ebook));
+        when(pdfGenerationService.renderAndStore(eq(ebookId), eq(0), any(RenderOptions.class))).thenReturn(24);
+
+        int pages = ebookService.exportPdf(ebookId, userId, false, true);
+
+        assertEquals(24, pages);
+        verify(pdfGenerationService).renderAndStore(ebookId, 0, new RenderOptions(false, true));
+    }
+
+    @Test
     void addsNewChapterForNullId() {
         UUID id1 = UUID.randomUUID();
         EbookChapter ch1 = chapter(id1, 1, "Intro", "body one");

@@ -84,6 +84,14 @@ public class AnthropicProperties {
         return new ModelChoice(model, briefEffort);
     }
 
+    /**
+     * The editor's writing assistant: short, interactive suggestions (a rewritten
+     * paragraph, a caption, a few section ideas), so the lighter model at low effort.
+     */
+    public ModelChoice assistant() {
+        return new ModelChoice(basicModel(), "low");
+    }
+
     private String basicModel() {
         return (basicWritingModel == null || basicWritingModel.isBlank()) ? model : basicWritingModel.trim();
     }

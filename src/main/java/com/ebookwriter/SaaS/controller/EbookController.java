@@ -14,6 +14,9 @@ import com.ebookwriter.SaaS.request.EbookRequest;
 import com.ebookwriter.SaaS.service.ebook.EbookPreviewService;
 import com.ebookwriter.SaaS.service.ebook.PdfDownloadLinkService;
 import com.ebookwriter.SaaS.service.ebook.EbookService;
+import com.ebookwriter.SaaS.service.ebook.EditorAssistService;
+import com.ebookwriter.SaaS.dto.AssistResponse;
+import com.ebookwriter.SaaS.request.AssistRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +42,7 @@ public class EbookController {
     private final EbookPreviewService previewService;
     private final UserRepository userRepository;
     private final PdfDownloadLinkService downloadLinkService;
+    private final EditorAssistService assistService;
 
     /**
      * Create a new ebook as a draft. No credits are held and generation does not
@@ -242,11 +246,44 @@ public class EbookController {
                 .body(html);
     }
 
+    /**
+     * The editor's Export: build the PDF from the saved manuscript with the
+     * chosen front matter. The browser then downloads it via
+     * {@code /download-link}. Returns the page count.
+     */
+    @PostMapping("/{id}/export")
+    public ResponseEntity<Map<String, Integer>> export(@PathVariable UUID id,
+                                                       @RequestBody(required = false) ExportRequest request,
+                                                       Authentication authentication) {
+        User user = currentUser(authentication);
+        boolean cover = request == null || request.includeCover() == null || request.includeCover();
+        boolean toc = request == null || request.includeToc() == null || request.includeToc();
+        int pages = ebookService.exportPdf(id, user.getId(), cover, toc);
+        return ResponseEntity.ok(Map.of("pages", pages));
+    }
+
+    /** Front matter to print in an export; a missing field means yes. */
+    public record ExportRequest(Boolean includeCover, Boolean includeToc) {
+    }
+
+    /**
+     * One suggestion from the editor's writing assistant (uses a credit; nothing
+     * is saved — the editor shows it and the author accepts or discards it).
+     */
+    @PostMapping("/{id}/assist")
+    public ResponseEntity<AssistResponse> assist(@PathVariable UUID id,
+                                                 @Valid @RequestBody AssistRequest request,
+                                                 Authentication authentication) {
+        User user = currentUser(authentication);
+        return ResponseEntity.ok(assistService.assist(id, user.getId(), request));
+    }
+
     /** Download the finished PDF. */
     @GetMapping("/{id}/download")
     public ResponseEntity<byte[]> download(@PathVariable UUID id,
                                            Authentication authentication) {
         User user = currentUser(authentication);
+        ebookService.ensureFreshPdf(id, user.getId());
         long started = System.currentTimeMillis();
         EbookService.PdfDownload pdf = ebookService.getPdf(id, user.getId());
         // Logged so a download that fails in the browser can be told apart from one
@@ -274,6 +311,8 @@ public class EbookController {
     public ResponseEntity<Map<String, String>> downloadLink(@PathVariable UUID id,
                                                             Authentication authentication) {
         User user = currentUser(authentication);
+        // Saved in the editor without a render (autosave)? Rebuild before linking.
+        ebookService.ensureFreshPdf(id, user.getId());
         ebookService.requireDownloadable(id, user.getId());
         String token = downloadLinkService.issue(id, user.getId());
         return ResponseEntity.ok(Map.of("url", "/api/ebooks/" + id + "/file?token=" + token));

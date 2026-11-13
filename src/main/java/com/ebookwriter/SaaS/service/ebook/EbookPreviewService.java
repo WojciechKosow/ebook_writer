@@ -174,7 +174,11 @@ public class EbookPreviewService {
             String type = image.getContentType();
             // The cover is cropped to its region exactly as the PDF renderer does,
             // so preview and download frame it identically.
-            if (image == cover && coverRegion != null) {
+            if (img.hasAttr("data-crop")) {
+                CoverImageFitter.Fitted fitted = CoverImageFitter.fitFramed(data, type, img.attr("data-crop"));
+                data = fitted.bytes();
+                type = fitted.contentType();
+            } else if (image == cover && coverRegion != null) {
                 CoverImageFitter.Fitted fitted = CoverImageFitter.fit(data, type, coverRegion,
                         image.getFocalX(), image.getFocalY());
                 data = fitted.bytes();
@@ -185,7 +189,7 @@ public class EbookPreviewService {
 
             // Persist the editor's "resize", exactly as the PDF renderer does.
             Integer pct = image.getDisplayWidthPercent();
-            if (pct != null) {
+            if (pct != null && img.closest("figure.figure--editor") == null) {
                 int clamped = Math.max(1, Math.min(100, pct));
                 String existing = img.attr("style");
                 String width = "width:" + clamped + "%";

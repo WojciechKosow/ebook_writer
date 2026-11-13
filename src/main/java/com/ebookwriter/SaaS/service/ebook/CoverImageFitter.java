@@ -75,6 +75,70 @@ public final class CoverImageFitter {
     }
 
     /**
+     * Crop to an editor framing {@code "W:H@fx,fy"} (fx, fy in 0–1): the largest
+     * W:H window, placed the way CSS {@code object-position: fx% fy%} places a
+     * cover-fitted image, so the PDF shows exactly what the editor showed.
+     * Malformed or already-matching framings return the bytes as they are.
+     */
+    public static Fitted fitFramed(byte[] bytes, String contentType, String framing) {
+        if (bytes == null || framing == null) {
+            return new Fitted(bytes, contentType, false);
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("^(\\d+):(\\d+)(?:@([0-9.]+),([0-9.]+))?$").matcher(framing.strip());
+        if (!m.matches() || Integer.parseInt(m.group(2)) == 0 || Integer.parseInt(m.group(1)) == 0) {
+            return new Fitted(bytes, contentType, false);
+        }
+        double ratio = Double.parseDouble(m.group(1)) / Double.parseDouble(m.group(2));
+        double fx = m.group(3) == null ? 0.5 : clamp01(Double.parseDouble(m.group(3)));
+        double fy = m.group(4) == null ? 0.5 : clamp01(Double.parseDouble(m.group(4)));
+        BufferedImage src;
+        try {
+            src = ImageIO.read(new ByteArrayInputStream(bytes));
+        } catch (IOException | RuntimeException e) {
+            src = null;
+        }
+        if (src == null || src.getWidth() <= 0 || src.getHeight() <= 0) {
+            return new Fitted(bytes, contentType, false);
+        }
+        int[] window = positionedWindow(src.getWidth(), src.getHeight(), ratio, fx, fy);
+        if (window == null) {
+            return new Fitted(bytes, contentType, false);
+        }
+        try {
+            BufferedImage cropped = src.getSubimage(window[0], window[1], window[2], window[3]);
+            ByteArrayOutputStream out = new ByteArrayOutputStream(bytes.length);
+            ImageIO.write(cropped, "png", out);
+            return new Fitted(out.toByteArray(), "image/png", true);
+        } catch (IOException | RuntimeException e) {
+            log.warn("Could not crop a figure to its framing; using it as-is: {}", e.getMessage());
+            return new Fitted(bytes, contentType, false);
+        }
+    }
+
+    /** As CSS object-position: the window's free space is split fx : (1 − fx). */
+    static int[] positionedWindow(int w, int h, double ratio, double fx, double fy) {
+        double actual = (double) w / h;
+        if (Math.abs(actual - ratio) / ratio <= RATIO_TOLERANCE) {
+            return null;
+        }
+        int cw = w;
+        int ch = h;
+        if (actual > ratio) {
+            cw = Math.max(1, (int) Math.round(h * ratio));
+        } else {
+            ch = Math.max(1, (int) Math.round(w / ratio));
+        }
+        int x = (int) Math.round((w - cw) * fx);
+        int y = (int) Math.round((h - ch) * fy);
+        return new int[]{Math.max(0, Math.min(w - cw, x)), Math.max(0, Math.min(h - ch, y)), cw, ch};
+    }
+
+    private static double clamp01(double v) {
+        return Double.isNaN(v) ? 0.5 : Math.max(0, Math.min(1, v));
+    }
+
+    /**
      * The crop window {@code [x, y, width, height]} of the largest {@code ratio}
      * (w/h) rectangle inside a {@code w×h} image, centred on the focal point and
      * clamped to the image; null when the image already has that ratio.

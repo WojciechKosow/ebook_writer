@@ -82,8 +82,12 @@ public class EbookHtmlBuilder {
                 .append(css)
                 .append("</style></head><body>");
 
-        appendCover(html, ebook, cover);
-        appendTableOfContents(html, chapters);
+        if (ctx.options().includeCover()) {
+            appendCover(html, ebook, cover);
+        }
+        if (ctx.options().includeToc()) {
+            appendTableOfContents(html, chapters);
+        }
         appendChapters(html, chapters, layoutByNumber, Boolean.TRUE.equals(ebook.getLayoutSnugEnding()), ctx);
 
         html.append("</body></html>");
@@ -107,7 +111,7 @@ public class EbookHtmlBuilder {
      * than a broken one.
      */
     private void appendCover(StringBuilder html, Ebook ebook, EbookImage cover) {
-        CoverLayout layout = resolveLayout(ebook.getCoverLayout(), cover != null);
+        CoverLayout layout = effectiveLayout(ebook, cover != null);
         String css = layout.name().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
 
         html.append("<div class=\"cover cover--").append(css).append("\">");
@@ -166,7 +170,47 @@ public class EbookHtmlBuilder {
         if (cover == null) {
             return null;
         }
-        return resolveLayout(ebook.getCoverLayout(), true).imageAspectRatio();
+        return effectiveLayout(ebook, true).imageAspectRatio();
+    }
+
+    /**
+     * The cover layout to render: the author's choice in the editor when there is
+     * one ({@code editorial} = the photo full-bleed, {@code framed} = the photo
+     * inset above the title, {@code type} = title only), else the planned layout.
+     * A photo layout without a photo falls back to the typographic cover.
+     */
+    static CoverLayout effectiveLayout(Ebook ebook, boolean hasImage) {
+        String style = ebook.getEditorCoverStyle();
+        if (style != null) {
+            switch (style) {
+                case "type":
+                    return CoverLayout.TYPOGRAPHIC;
+                case "editorial":
+                    return hasImage ? CoverLayout.IMAGE_LED : CoverLayout.TYPOGRAPHIC;
+                case "framed":
+                    return hasImage ? CoverLayout.EDITORIAL : CoverLayout.TYPOGRAPHIC;
+                default:
+                    break;
+            }
+        }
+        return resolveLayout(ebook.getCoverLayout(), hasImage);
+    }
+
+    /**
+     * The editor's name for the book's cover arrangement: the author's own choice,
+     * or the planned layout described in the editor's terms (a full-bleed photo is
+     * {@code editorial}, an inset one {@code framed}, no photo {@code type}).
+     */
+    public static String editorCoverStyle(Ebook ebook, boolean hasCover) {
+        if (ebook.getEditorCoverStyle() != null) {
+            return ebook.getEditorCoverStyle();
+        }
+        CoverLayout layout = resolveLayout(ebook.getCoverLayout(), hasCover);
+        return switch (layout) {
+            case TYPOGRAPHIC -> "type";
+            case IMAGE_LED -> "editorial";
+            default -> "framed";
+        };
     }
 
     /**

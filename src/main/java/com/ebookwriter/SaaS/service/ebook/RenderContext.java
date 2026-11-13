@@ -45,9 +45,20 @@ public final class RenderContext {
     private final Map<String, Integer> seenBlocks = new HashMap<>();
     private final List<Note> notes = new ArrayList<>();
     private int chapter;
+    private RenderOptions options = RenderOptions.FULL;
     private int refs;
 
     /** Mark the chapter being rendered (its chapter number); notes are attributed to it. */
+    /** What this render prints besides the chapters (cover, contents). */
+    public RenderOptions options() {
+        return options;
+    }
+
+    public RenderContext withOptions(RenderOptions options) {
+        this.options = options == null ? RenderOptions.FULL : options;
+        return this;
+    }
+
     public void startChapter(int chapterNumber) {
         this.chapter = chapterNumber;
     }

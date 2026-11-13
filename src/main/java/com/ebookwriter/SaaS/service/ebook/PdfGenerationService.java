@@ -84,6 +84,12 @@ public class PdfGenerationService {
      */
     @Transactional
     public int renderAndStore(UUID ebookId, int maxPages) {
+        return renderAndStore(ebookId, maxPages, RenderOptions.FULL);
+    }
+
+    /** As {@link #renderAndStore(UUID, int)}, printing only the front matter {@code options} ask for. */
+    @Transactional
+    public int renderAndStore(UUID ebookId, int maxPages, RenderOptions options) {
         Ebook ebook = ebookRepository.findById(ebookId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found: " + ebookId));
         List<EbookChapter> chapters = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
@@ -92,7 +98,7 @@ public class PdfGenerationService {
         // Each render starts from the natural layout; the final-page fix below is
         // re-decided every time (the manuscript may have been edited).
         ebook.setLayoutSnugEnding(null);
-        BookRender last = renderBook(ebook, chapters, images);
+        BookRender last = renderBook(ebook, chapters, images, options);
         byte[] pdf = last.rendered().pdf();
         int pageCount = countPages(pdf);
 
@@ -102,7 +108,7 @@ public class PdfGenerationService {
             if (!trimOverflow(chapters, overflowWords)) {
                 break; // nothing left to trim
             }
-            last = renderBook(ebook, chapters, images);
+            last = renderBook(ebook, chapters, images, options);
             pdf = last.rendered().pdf();
             pageCount = countPages(pdf);
             passes++;
@@ -120,7 +126,7 @@ public class PdfGenerationService {
         // final chapter slightly tighter. Kept only if it actually removes the page.
         if (PdfQualityInspector.lastPageSparse(pdf)) {
             ebook.setLayoutSnugEnding(true);
-            BookRender snugRender = renderBook(ebook, chapters, images);
+            BookRender snugRender = renderBook(ebook, chapters, images, options);
             byte[] snug = snugRender.rendered().pdf();
             int snugPages = countPages(snug);
             if (snugPages < pageCount) {
@@ -293,7 +299,11 @@ public class PdfGenerationService {
     }
 
     BookRender renderBook(Ebook ebook, List<EbookChapter> chapters, List<EbookImage> images) {
-        RenderContext ctx = new RenderContext();
+        return renderBook(ebook, chapters, images, RenderOptions.FULL);
+    }
+
+    BookRender renderBook(Ebook ebook, List<EbookChapter> chapters, List<EbookImage> images, RenderOptions options) {
+        RenderContext ctx = new RenderContext().withOptions(options);
         String html = htmlBuilder.build(ebook, chapters, css(), images, ctx);
         Map<String, ImageRef> refsByImageId = new LinkedHashMap<>();
         for (EbookImage image : images) {
@@ -302,7 +312,9 @@ public class PdfGenerationService {
         }
         Document doc = Jsoup.parse(html);
         rewriteImageReferences(doc, refsByImageId);
-        return new BookRender(renderValidated(doc, fittedCover(ebook, images)), doc, ctx);
+        Map<String, byte[]> overrides = new java.util.HashMap<>(fittedCover(ebook, images));
+        overrides.putAll(croppedFigures(doc, images));
+        return new BookRender(renderValidated(doc, overrides), doc, ctx);
     }
 
     /**
@@ -323,6 +335,43 @@ public class PdfGenerationService {
                 .filter(CoverImageFitter.Fitted::cropped)
                 .map(f -> Map.of(cover.getStorageKey(), f.bytes()))
                 .orElse(Map.of());
+    }
+
+    /**
+     * Photos the editor cropped ({@code data-crop="W:H@fx,fy"}): crop the bytes to
+     * that shape the way the editor frames them (CSS {@code object-position}
+     * fx% fy%), and point each image at its own crop. Keyed like the cover
+     * override: storage key plus the crop, so one photo can be cropped two ways.
+     */
+    private Map<String, byte[]> croppedFigures(Document doc, List<EbookImage> images) {
+        Map<String, byte[]> out = new java.util.HashMap<>();
+        if (storage == null) {
+            return out;
+        }
+        Map<String, String> typeByKey = new java.util.HashMap<>();
+        for (EbookImage image : images) {
+            if (image.getStorageKey() != null) {
+                typeByKey.put(image.getStorageKey(), image.getContentType());
+            }
+        }
+        for (Element img : doc.select("img[data-crop]")) {
+            String src = img.attr("src");
+            if (!src.startsWith(R2_SCHEME)) {
+                continue;
+            }
+            String key = src.substring(R2_SCHEME.length());
+            String crop = img.attr("data-crop");
+            String cropKey = key + "#crop=" + crop;
+            if (!out.containsKey(cropKey)) {
+                byte[] bytes = storage.download(key).orElse(null);
+                if (bytes == null) {
+                    continue;
+                }
+                out.put(cropKey, CoverImageFitter.fitFramed(bytes, typeByKey.get(key), crop).bytes());
+            }
+            img.attr("src", R2_SCHEME + cropKey);
+        }
+        return out;
     }
 
     /** Resolved reference for an image token: where to stream it and how wide to draw it. */
@@ -487,7 +536,8 @@ public class PdfGenerationService {
             img.attr("src", R2_SCHEME + ref.storageKey());
             // Persist the editor's "resize": constrain the width as a percentage
             // of the text column. Merge with any existing inline style.
-            if (ref.displayWidthPercent() != null) {
+            // An editor figure carries its own width on the figure; the image fills it.
+            if (ref.displayWidthPercent() != null && !img.hasClass("bleed") && img.closest("figure.figure--editor") == null) {
                 int pct = Math.max(1, Math.min(100, ref.displayWidthPercent()));
                 String existing = img.attr("style");
                 String width = "width:" + pct + "%";

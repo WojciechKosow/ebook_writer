@@ -292,15 +292,20 @@ public class EbookImageService {
     }
 
     /**
-     * Keep the downloadable PDF in sync with the book's assets. Only a COMPLETED
-     * book has a rendered PDF to refresh; while generating (or still a draft),
+     * Mark the downloadable PDF out of date after an asset change. Only a COMPLETED
+     * book has a rendered PDF to refresh (it is rebuilt on the next export or
+     * download); while generating (or still a draft),
      * the pipeline renders with whatever assets exist when it reaches the render
      * step. Usage is re-synced first so placement metadata stays accurate.
      */
     private void reRenderIfCompleted(Ebook ebook) {
         if (ebook.getStatus() == EbookStatus.COMPLETED) {
             assetUsageService.sync(ebook.getId(), ContentSource.USER);
-            pdfGenerationService.renderAndStore(ebook.getId(), 0);
+            // Rebuilt lazily on the next export or download: the editor changes the
+            // cover and its framing click by click, and each would otherwise cost a
+            // full PDF render.
+            ebook.setPdfStale(true);
+            ebookRepository.save(ebook);
         }
     }
 

@@ -54,6 +54,14 @@ public class EbookChapter {
     /** Target size for this chapter, in pages, derived from the plan. */
     private int approxPages;
 
+    /**
+     * The author's own progress mark in the editor: {@code draft},
+     * {@code revising} or {@code final}. Purely editorial — generation and
+     * rendering ignore it. Null for chapters never touched in the editor.
+     */
+    @Column(length = 16)
+    private String editorialStatus;
+
     /** Chapter body in Markdown. */
     @Column(columnDefinition = "text")
     private String content;

@@ -20,6 +20,8 @@ public enum CreditTransactionType {
     GENERATION_ADJUSTMENT,
     /** Credits spent regenerating a book's AI cover. */
     COVER_GENERATION,
+    /** Credits spent on one suggestion from the editor's writing assistant. */
+    EDITOR_ASSIST,
     /**
      * Credits reclaimed after a Stripe refund or chargeback — only from credits
      * that payment granted and that are still unspent; never below zero.

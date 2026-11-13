@@ -117,6 +117,7 @@ public class EbookContentRenderer {
         Document doc = Jsoup.parseBodyFragment(html);
         doc.outputSettings().prettyPrint(false);
         Element body = doc.body();
+        editorFigures(body, ctx.chapter());
         removeDuplicateBlocks(body, ctx);
         removeEmptyHeadings(body, ctx);
         float column = PageGeometry.book().contentWidthPt();
@@ -125,6 +126,76 @@ public class EbookContentRenderer {
         }
         paginate(body);
         return body.html();
+    }
+
+    /** Placements a photo can take in the editor. */
+    private static final java.util.Set<String> FIGURE_LAYOUTS = java.util.Set.of("full", "column", "left", "right");
+    /** Crops the editor offers (width:height); anything else keeps the photo's own shape. */
+    private static final Pattern FIGURE_ASPECT = Pattern.compile("^(\\d{1,2}):(\\d{1,2})$");
+
+    /**
+     * Turn the editor's photos ({@code <figure class="ebook-figure" data-layout
+     * data-width data-aspect data-focal>}) into the book's figures: placed full
+     * bleed, in the column at a width, or floated left/right with the text
+     * wrapping round them; numbered "Fig. chapter.n" with their caption. The crop
+     * (aspect and focal point) is carried on the image as {@code data-crop} and
+     * applied to the bytes by the renderer, which does not honour
+     * {@code object-fit}.
+     */
+    static void editorFigures(Element body, int chapter) {
+        int n = 0;
+        for (Element src : body.select("figure.ebook-figure")) {
+            Element img = src.selectFirst("img");
+            if (img == null) {
+                src.remove();
+                continue;
+            }
+            n++;
+            String layout = src.attr("data-layout");
+            if (!FIGURE_LAYOUTS.contains(layout)) {
+                layout = "column";
+            }
+            int width = 100;
+            try {
+                width = Integer.parseInt(src.attr("data-width").strip());
+            } catch (NumberFormatException ignored) {
+                // keep 100
+            }
+            width = "full".equals(layout) ? 100
+                    : "column".equals(layout) ? Math.max(40, Math.min(100, width)) : Math.max(25, Math.min(60, width));
+            Element caption = src.selectFirst("figcaption");
+            String captionText = caption == null ? "" : caption.text().strip();
+
+            Element figure = new Element("figure").addClass("figure").addClass("figure--editor")
+                    .addClass("figure--" + layout);
+            if (!"full".equals(layout)) {
+                figure.attr("style", "width:" + width + "%");
+            } else {
+                figure.addClass("bleed");
+            }
+            Element pic = new Element("img").attr("src", img.attr("src")).attr("alt", img.attr("alt"));
+            Matcher aspect = FIGURE_ASPECT.matcher(src.attr("data-aspect").strip());
+            if (aspect.matches() && Integer.parseInt(aspect.group(2)) > 0) {
+                pic.attr("data-crop", aspect.group(1) + ":" + aspect.group(2) + "@" + src.attr("data-focal").strip());
+            }
+            if ("full".equals(layout)) {
+                pic.addClass("bleed");
+            }
+            figure.appendChild(pic);
+            Element fc = figure.appendElement("figcaption");
+            if ("full".equals(layout)) {
+                fc.addClass("bleed");
+            }
+            fc.appendElement("span").addClass("figure-num").text("Fig. " + Math.max(1, chapter) + "." + n);
+            if (!captionText.isEmpty()) {
+                fc.appendText(captionText);
+            }
+            src.replaceWith(figure);
+        }
+        // A thematic break (the editor's divider) is set as a centred ornament.
+        for (Element hr : body.select("hr")) {
+            hr.replaceWith(new Element("div").addClass("divider").text("· · ·"));
+        }
     }
 
     /**
