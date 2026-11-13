@@ -136,8 +136,8 @@ final class LayoutValidator {
     private static void checkBlocksWithinColumn(LayoutSnapshot layout, List<LayoutIssue> issues) {
         Set<String> reported = new HashSet<>();
         for (Block b : layout.blocks()) {
-            if (b.decorative() || b.tag().matches("html|body") || b.tag().matches("td|th|tr|thead|tbody|tfoot")) {
-                continue;
+            if (b.decorative() || b.hasClass("bleed") || b.tag().matches("html|body") || b.tag().matches("td|th|tr|thead|tbody|tfoot")) {
+                continue; // a full-bleed photo is set into the side margins by design
             }
             Page page = layout.pageAt(b.rect().top());
             if (page == null || page.kind() == PageKind.COVER) {

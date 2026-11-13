@@ -453,6 +453,58 @@ th {
     max-width: 10cm;
 }
 
+/* Photos placed in the editor: full width, in the column
+   at a width, or floated left/right with the text wrapping round them. The
+   image is already cropped to its framing, so it simply fills its figure. */
+.figure--editor { margin: 1.3em 0; }
+.figure--editor img,
+.chapter-body .figure--editor img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: none;
+    margin: 0;
+}
+.figure--column { margin-left: auto; margin-right: auto; clear: both; }
+/* The PDF renderer clips to the page's text area, so a full-bleed photo is set
+   across the whole column (the widest it can print on a body page). */
+.chapter-body figure.figure--full { margin: 1.4em 0; clear: both; }
+.figure--left { float: left; clear: left; margin: 0.25em 1.3em 0.7em 0; }
+.figure--right { float: right; clear: right; margin: 0.25em 0 0.7em 1.3em; }
+.figure--editor figcaption {
+    font-family: "Ebook Serif";
+    font-style: italic;
+    font-size: 8.5pt;
+    line-height: 1.45;
+    color: #6E665A;
+    text-align: left;
+    max-width: none;
+    margin: 0.6em 0 0;
+}
+.figure-num {
+    font-family: "Ebook Sans";
+    font-style: normal;
+    font-weight: 700;
+    font-size: 6.5pt;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #7A5C30;
+    margin-right: 0.7em;
+}
+/* The editor's section break. */
+.divider {
+    clear: both;
+    text-align: center;
+    color: #A8834C;
+    letter-spacing: 0.9em;
+    padding-left: 0.9em;
+    margin: 1.6em 0;
+    page-break-after: avoid;
+}
+
+/* Components, tables and dividers start below a wrapped photo. */
+.chapter-body .cmp, .chapter-body table, .chapter-body hr, .chapter-body blockquote { clear: both; }
+
 /* ===========================================================================
    Semantic pagination
    Units that belong together are grouped by EbookContentRenderer so the page

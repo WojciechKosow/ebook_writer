@@ -1,6 +1,7 @@
 package com.ebookwriter.SaaS.request;
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -26,4 +27,12 @@ public class ChapterUpdateRequest {
 
     @NotNull
     private String content;
+
+    /** The editor's progress mark: draft, revising or final (null leaves it as it is). */
+    @Pattern(regexp = "draft|revising|final")
+    private String editorialStatus;
+
+    public ChapterUpdateRequest(UUID id, String title, String content) {
+        this(id, title, content, null);
+    }
 }

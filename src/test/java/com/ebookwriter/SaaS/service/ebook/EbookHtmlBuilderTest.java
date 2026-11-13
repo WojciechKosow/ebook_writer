@@ -113,4 +113,20 @@ class EbookHtmlBuilderTest {
         assertEquals(null, EbookHtmlBuilder.objectPosition(
                 EbookImage.builder().placement(EbookImagePlacement.COVER).build()), "no focal point → centre");
     }
+
+    @Test
+    void theEditorsCoverStyleWinsOverThePlannedLayout() {
+        com.ebookwriter.SaaS.entity.Ebook ebook = com.ebookwriter.SaaS.entity.Ebook.builder()
+                .topic("x").coverLayout(CoverLayout.SPLIT).build();
+        assertEquals(CoverLayout.SPLIT, EbookHtmlBuilder.effectiveLayout(ebook, true));
+        assertEquals("framed", EbookHtmlBuilder.editorCoverStyle(ebook, true));
+
+        ebook.setEditorCoverStyle("type");
+        assertEquals(CoverLayout.TYPOGRAPHIC, EbookHtmlBuilder.effectiveLayout(ebook, true), "type only, even with a photo");
+        ebook.setEditorCoverStyle("editorial");
+        assertEquals(CoverLayout.IMAGE_LED, EbookHtmlBuilder.effectiveLayout(ebook, true));
+        assertEquals(CoverLayout.TYPOGRAPHIC, EbookHtmlBuilder.effectiveLayout(ebook, false), "no photo, no photo layout");
+        ebook.setEditorCoverStyle("framed");
+        assertEquals(CoverLayout.EDITORIAL, EbookHtmlBuilder.effectiveLayout(ebook, true));
+    }
 }

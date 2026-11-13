@@ -26,9 +26,11 @@ public class ChapterContentDTO {
     private String content;
     /** Whether this chapter is still AI output or has been edited by the user. */
     private ContentSource contentSource;
+    /** The author's progress mark in the editor (draft, revising, final), or null. */
+    private String editorialStatus;
 
     public static ChapterContentDTO from(EbookChapter c) {
         return new ChapterContentDTO(c.getId(), c.getChapterNumber(), c.getTitle(),
-                c.getContent(), c.getContentSource());
+                c.getContent(), c.getContentSource(), c.getEditorialStatus());
     }
 }

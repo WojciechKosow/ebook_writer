@@ -57,6 +57,7 @@ public class EbookService {
     private final CreditPricing creditPricing;
     private final ScopeEstimationService scopeEstimationService;
     private final BookBlueprintService blueprintService;
+    private final com.ebookwriter.SaaS.repository.EbookImageRepository imageRepository;
 
     /**
      * Create the ebook as a {@link EbookStatus#DRAFT}: the row exists so the user
@@ -509,7 +510,7 @@ public class EbookService {
         // of the book, so the editor never sees them as empty chapters.
         List<EbookChapter> chapters = ManuscriptContext.inBook(
                 chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId));
-        return EbookContentResponse.from(ebook, chapters);
+        return EbookContentResponse.from(ebook, chapters, hasCover(ebookId));
     }
 
     /**
@@ -583,6 +584,9 @@ public class EbookService {
             chapter.setChapterNumber(number++);
             chapter.setTitle(edit.getTitle());
             chapter.setContent(edit.getContent());
+            if (edit.getEditorialStatus() != null) {
+                chapter.setEditorialStatus(edit.getEditorialStatus());
+            }
             // These are the user's own edits: mark them so a future regeneration
             // can preserve them rather than overwrite manual work.
             chapter.setContentSource(ContentSource.USER);
@@ -599,16 +603,39 @@ public class EbookService {
 
         List<EbookChapter> saved = chapterRepository.saveAll(ordered);
 
+        // Book details edited alongside the manuscript (a null field is untouched).
+        if (request.getTitle() != null && !request.getTitle().isBlank()) {
+            ebook.setTitle(request.getTitle().strip());
+        }
+        if (request.getSubtitle() != null) {
+            ebook.setSubtitle(request.getSubtitle().isBlank() ? null : request.getSubtitle().strip());
+        }
+        if (request.getAuthorName() != null) {
+            ebook.setAuthorName(request.getAuthorName().isBlank() ? null : request.getAuthorName().strip());
+        }
+        if (request.getCoverLayout() != null) {
+            ebook.setEditorCoverStyle(request.getCoverLayout());
+        }
+
         // Reconcile asset usage against the edited Markdown (images moved between
         // chapters, inserted, or removed) so the library's placement info stays
         // accurate and attributed to the user.
         assetUsageService.sync(ebookId, ContentSource.USER);
 
         // Re-render the PDF from the new manuscript (uncapped: keep exactly what
-        // the user wrote). renderAndStore re-reads the just-saved chapters.
-        pdfGenerationService.renderAndStore(ebookId, 0);
+        // the user wrote). renderAndStore re-reads the just-saved chapters. The
+        // editor's autosave skips this: the PDF is only marked stale and rebuilt
+        // on export or on the next download.
+        if (request.getRender() == null || request.getRender()) {
+            ebook.setPdfStale(false);
+            ebookRepository.save(ebook);
+            pdfGenerationService.renderAndStore(ebookId, 0);
+        } else {
+            ebook.setPdfStale(true);
+            ebookRepository.save(ebook);
+        }
 
-        return EbookContentResponse.from(ebook, saved);
+        return EbookContentResponse.from(ebook, saved, hasCover(ebookId));
     }
 
     @Transactional(readOnly = true)
@@ -616,6 +643,43 @@ public class EbookService {
         return ebookRepository.findByUserIdOrderByCreatedAtDesc(userId).stream()
                 .map(e -> EbookStatusResponse.from(e, List.of()))
                 .toList();
+    }
+
+    private boolean hasCover(UUID ebookId) {
+        return imageRepository != null && !imageRepository
+                .findByEbookIdAndPlacement(ebookId, com.ebookwriter.SaaS.entity.EbookImagePlacement.COVER).isEmpty();
+    }
+
+    /**
+     * Build the PDF from the saved manuscript, as the editor's Export does, with
+     * the chosen front matter. Returns the page count. Free: these are the
+     * user's own words, rendered uncapped.
+     */
+    @Transactional
+    public int exportPdf(UUID ebookId, UUID userId, boolean includeCover, boolean includeToc) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
+        if (ebook.getStatus() != EbookStatus.COMPLETED) {
+            throw new IllegalStateException("Ebook is not ready to export");
+        }
+        ebook.setPdfStale(false);
+        ebookRepository.save(ebook);
+        return pdfGenerationService.renderAndStore(ebookId, 0, new RenderOptions(includeCover, includeToc));
+    }
+
+    /**
+     * Rebuild the PDF first if the editor saved changes without rendering it, so
+     * a download always matches the manuscript. A no-op for an up-to-date book.
+     */
+    @Transactional
+    public void ensureFreshPdf(UUID ebookId, UUID userId) {
+        Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId).orElse(null);
+        if (ebook == null || !ebook.isPdfStale() || ebook.getStatus() != EbookStatus.COMPLETED) {
+            return;
+        }
+        ebook.setPdfStale(false);
+        ebookRepository.save(ebook);
+        pdfGenerationService.renderAndStore(ebookId, 0);
     }
 
     /** Throw unless the user owns this ebook and its PDF is ready to download. */

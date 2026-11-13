@@ -81,7 +81,7 @@ class EbookServiceTest {
                 ebookRepository);
         ebookService = new EbookService(ebookRepository, chapterRepository, pdfRepository,
                 generationService, pdfGenerationService, assetUsageService, creditService, creditPricing,
-                scopeEstimationService, blueprintService);
+                scopeEstimationService, blueprintService, null);
         // No materials / blueprint → the legacy brief-only flow (what these tests cover).
         lenient().when(blueprintService.readiness(any()))
                 .thenReturn(new BookBlueprintService.GenerationReadiness(

@@ -25,15 +25,25 @@ public class EbookContentResponse {
     private EbookStatus status;
     private String title;
     private String subtitle;
+    private String authorName;
+    /** The editor's cover layout (editorial, framed or type); null = classic. */
+    private String coverLayout;
     private boolean editable;
     private List<ChapterContentDTO> chapters;
 
     public static EbookContentResponse from(Ebook ebook, List<EbookChapter> chapters) {
+        return from(ebook, chapters, false);
+    }
+
+    /** As {@link #from(Ebook, List)}, with whether the book has a cover photo (for its cover style). */
+    public static EbookContentResponse from(Ebook ebook, List<EbookChapter> chapters, boolean hasCover) {
         return EbookContentResponse.builder()
                 .id(ebook.getId())
                 .status(ebook.getStatus())
                 .title(ebook.getTitle())
                 .subtitle(ebook.getSubtitle())
+                .authorName(ebook.getAuthorName())
+                .coverLayout(com.ebookwriter.SaaS.service.ebook.EbookHtmlBuilder.editorCoverStyle(ebook, hasCover))
                 .editable(ebook.getStatus() == EbookStatus.COMPLETED)
                 .chapters(chapters.stream().map(ChapterContentDTO::from).toList())
                 .build();
