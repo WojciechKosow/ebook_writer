@@ -113,13 +113,16 @@ public class EbookContentRenderer {
         if (markdown == null || markdown.isBlank()) {
             return "";
         }
-        String html = renderBody(markdown.replace("\r\n", "\n").replace("\r", "\n"));
+        String html = renderBody(attributeLines(markdown.replace("\r\n", "\n").replace("\r", "\n")));
         Document doc = Jsoup.parseBodyFragment(html);
         doc.outputSettings().prettyPrint(false);
         Element body = doc.body();
+        applyAttributeMarkers(body);
+        quoteSources(body);
         editorFigures(body, ctx.chapter());
         removeDuplicateBlocks(body, ctx);
         removeEmptyHeadings(body, ctx);
+        dropCaps(body, ctx.autoDropCap());
         float column = PageGeometry.book().contentWidthPt();
         for (Element pre : body.select("pre")) {
             VerbatimLayout.apply(pre, insetWidth(pre, column), ctx);
@@ -168,6 +171,10 @@ public class EbookContentRenderer {
 
             Element figure = new Element("figure").addClass("figure").addClass("figure--editor")
                     .addClass("figure--" + layout);
+            String align = src.attr("data-align");
+            if ("column".equals(layout) && ("left".equals(align) || "right".equals(align))) {
+                figure.addClass("figure--align-" + align);
+            }
             if (!"full".equals(layout)) {
                 figure.attr("style", "width:" + width + "%");
             } else {
@@ -182,20 +189,245 @@ public class EbookContentRenderer {
                 pic.addClass("bleed");
             }
             figure.appendChild(pic);
-            Element fc = figure.appendElement("figcaption");
-            if ("full".equals(layout)) {
-                fc.addClass("bleed");
-            }
-            fc.appendElement("span").addClass("figure-num").text("Fig. " + Math.max(1, chapter) + "." + n);
+            // No caption: the photo stands alone (the editor hides an empty caption).
             if (!captionText.isEmpty()) {
+                Element fc = figure.appendElement("figcaption");
+                if ("full".equals(layout)) {
+                    fc.addClass("bleed");
+                }
+                fc.appendElement("span").addClass("figure-num").text("Fig. " + Math.max(1, chapter) + "." + n);
                 fc.appendText(captionText);
             }
             src.replaceWith(figure);
         }
-        // A thematic break (the editor's divider) is set as a centred ornament.
+        // A thematic break is the editor's thin-line divider.
         for (Element hr : body.select("hr")) {
-            hr.replaceWith(new Element("div").addClass("divider").text("· · ·"));
+            hr.replaceWith(divider("line"));
         }
+        for (Element d : body.select("div[data-divider]")) {
+            d.replaceWith(divider(d.attr("data-divider")));
+        }
+    }
+
+    /** A section divider in one of the editor's styles: a thin line, an ornament, or three dots. */
+    static Element divider(String style) {
+        Element d = new Element("div").addClass("divider");
+        switch (style) {
+            case "ornament" -> {
+                d.addClass("divider--ornament");
+                d.appendElement("span").addClass("orn-rule");
+                d.appendElement("span").addClass("orn-dia");
+                d.appendElement("span").addClass("orn-rule");
+            }
+            case "dots" -> d.addClass("divider--dots").text("· · ·");
+            default -> d.addClass("divider--line");
+        }
+        return d;
+    }
+
+    // ---- Attribute lines -------------------------------------------------------------
+
+    /** An editor attribute line: {@code {.dropcap .align-center}} on its own line. */
+    static final Pattern ATTR_LINE = Pattern.compile("^\\{\\s*((?:\\.[A-Za-z][\\w-]*\\s*)+)\\}\\s*$");
+    /** The same attributes at the end of a heading line: {@code ## Title {.align-center}}. */
+    private static final Pattern HEADING_ATTRS =
+            Pattern.compile("^(#{1,6}\\s.*?)\\s+\\{\\s*((?:\\.[A-Za-z][\\w-]*\\s*)+)\\}\\s*$");
+    private static final Pattern THEMATIC_BREAK = Pattern.compile("^ {0,3}((\\*\\s*){3,}|(-\\s*){3,}|(_\\s*){3,})$");
+    /** Classes the editor writes; anything else in an attribute line is ignored. */
+    static final java.util.Set<String> KNOWN_ATTRS = java.util.Set.of("dropcap", "no-dropcap", "align-left",
+            "align-center", "align-right", "quote-rule", "divider-ornament", "divider-dots");
+    private static final String MARK_OPEN = "\u27e6st:";
+    private static final String MARK_CLOSE = "\u27e7";
+    private static final Pattern MARKER = Pattern.compile("\\s*\u27e6st:([^\u27e7]*)\u27e7");
+
+    /**
+     * The editor stores block formatting (a drop cap, alignment, the left-rule
+     * quote style, a divider's style) as an attribute line right after the block:
+     * <pre>
+     *   A paragraph…
+     *   {.dropcap .align-center}
+     * </pre>
+     * CommonMark knows no such thing, so before parsing each line is folded into
+     * an invisible marker at the end of the block it belongs to (resolved by
+     * {@link #applyAttributeMarkers}), and a styled divider becomes its own
+     * element. Code fences are left alone.
+     */
+    static String attributeLines(String markdown) {
+        if (markdown.indexOf('{') < 0) {
+            return markdown;
+        }
+        String[] lines = markdown.split("\n", -1);
+        List<String> out = new ArrayList<>(lines.length);
+        String fence = null;
+        for (String line : lines) {
+            String t = line.strip();
+            if (fence != null) {
+                if (closesFence(t, fence)) {
+                    fence = null;
+                }
+                out.add(line);
+                continue;
+            }
+            String open = fenceMarker(t);
+            if (open != null) {
+                fence = open;
+                out.add(line);
+                continue;
+            }
+            Matcher heading = HEADING_ATTRS.matcher(line);
+            if (heading.matches()) {
+                List<String> hc = classes(heading.group(2));
+                out.add(hc.isEmpty() ? heading.group(1) : heading.group(1) + marker(String.join(" ", hc)));
+                continue;
+            }
+            Matcher attr = ATTR_LINE.matcher(t);
+            int prev = out.size() - 1;
+            if (attr.matches() && prev >= 0 && !out.get(prev).isBlank()) {
+                List<String> classes = classes(attr.group(1));
+                String before = out.get(prev);
+                if (THEMATIC_BREAK.matcher(before).matches()) {
+                    String style = classes.contains("divider-ornament") ? "ornament"
+                            : classes.contains("divider-dots") ? "dots" : null;
+                    if (style != null) {
+                        out.set(prev, "<div data-divider=\"" + style + "\"></div>");
+                    }
+                    continue;
+                }
+                if (!classes.isEmpty()) {
+                    out.set(prev, before.stripTrailing() + marker(String.join(" ", classes)));
+                }
+                continue;
+            }
+            out.add(line);
+        }
+        return String.join("\n", out);
+    }
+
+    private static List<String> classes(String spec) {
+        List<String> out = new ArrayList<>();
+        for (String c : spec.trim().split("\\s+")) {
+            String name = c.startsWith(".") ? c.substring(1) : c;
+            if (KNOWN_ATTRS.contains(name)) {
+                out.add(name);
+            }
+        }
+        return out;
+    }
+
+    private static String marker(String classes) {
+        return " " + MARK_OPEN + classes.trim() + MARK_CLOSE;
+    }
+
+    /**
+     * Resolve the markers {@link #attributeLines} left: drop the marker text and
+     * put its classes on the block it ended — the paragraph or heading, or the
+     * whole blockquote for a quote style.
+     */
+    static void applyAttributeMarkers(Element body) {
+        if (!body.text().contains(MARK_OPEN)) {
+            return;
+        }
+        for (org.jsoup.nodes.TextNode tn : collectText(body)) {
+            Matcher m = MARKER.matcher(tn.getWholeText());
+            if (!m.find()) {
+                continue;
+            }
+            List<String> found = new ArrayList<>();
+            m.reset();
+            while (m.find()) {
+                found.addAll(List.of(m.group(1).trim().split("\\s+")));
+            }
+            tn.text(MARKER.matcher(tn.getWholeText()).replaceAll(""));
+            Element parent = tn.parent() instanceof Element pe ? pe : null;
+            Element block = parent == null ? null : parent.closest("p, h1, h2, h3, h4, h5, h6, li");
+            for (String c : found) {
+                if (c.isBlank()) {
+                    continue;
+                }
+                Element target = c.startsWith("quote-") && block != null && block.closest("blockquote") != null
+                        ? block.closest("blockquote") : block;
+                if (target != null) {
+                    target.addClass(c);
+                }
+            }
+        }
+    }
+
+    private static List<org.jsoup.nodes.TextNode> collectText(Element root) {
+        List<org.jsoup.nodes.TextNode> out = new ArrayList<>();
+        root.traverse((node, depth) -> {
+            if (node instanceof org.jsoup.nodes.TextNode t && t.getWholeText().contains(MARK_OPEN)) {
+                out.add(t);
+            }
+        });
+        return out;
+    }
+
+    /** A quotation's last paragraph "— Source" is set as its source line. */
+    static void quoteSources(Element body) {
+        for (Element q : body.select("blockquote")) {
+            Element last = q.children().isEmpty() ? null : q.child(q.childrenSize() - 1);
+            if (last != null && last.tagName().equals("p") && q.childrenSize() > 1
+                    && SOURCE_LINE.matcher(last.text().strip()).matches()) {
+                last.addClass("quote-source");
+            }
+        }
+    }
+
+    /**
+     * Drop caps: a paragraph the author marked {@code .dropcap}, and — as in the
+     * editor — the chapter's opening paragraph unless marked {@code .no-dropcap}.
+     * The first letter is set as a floated initial (the renderer does not float
+     * {@code ::first-letter}).
+     */
+    static void dropCaps(Element body, boolean auto) {
+        Element first = null;
+        for (Element child : body.children()) {
+            if (child.tagName().equals("figure")) {
+                continue;
+            }
+            first = child;
+            break;
+        }
+        if (auto && first != null && first.tagName().equals("p") && !first.hasClass("no-dropcap")) {
+            first.addClass("dropcap");
+        }
+        for (Element p : body.select("p.dropcap")) {
+            initial(p);
+        }
+    }
+
+    private static void initial(Element p) {
+        org.jsoup.nodes.TextNode[] holder = new org.jsoup.nodes.TextNode[1];
+        p.traverse((node, depth) -> {
+            if (holder[0] == null && node instanceof org.jsoup.nodes.TextNode t && !t.isBlank()) {
+                holder[0] = t;
+            }
+        });
+        org.jsoup.nodes.TextNode t = holder[0];
+        if (t == null) {
+            return;
+        }
+        String text = t.getWholeText();
+        int start = 0;
+        while (start < text.length() && Character.isWhitespace(text.charAt(start))) {
+            start++;
+        }
+        int end = start;
+        // An opening quotation mark travels with the letter it opens.
+        while (end < text.length() && "\"'“‘«(".indexOf(text.charAt(end)) >= 0) {
+            end++;
+        }
+        if (end < text.length()) {
+            end = text.offsetByCodePoints(end, 1);
+        }
+        if (end <= start || !Character.isLetterOrDigit(text.codePointBefore(end))) {
+            p.removeClass("dropcap");
+            return;
+        }
+        Element span = new Element("span").addClass("dropcap-letter").text(text.substring(start, end));
+        t.before(span);
+        t.text(text.substring(end));
     }
 
     /**
@@ -805,8 +1037,8 @@ public class EbookContentRenderer {
             case "done-when", "donewhen", "done" -> renderCallout("donewhen", "Done when", inner);
             case "key-idea", "keyidea", "key" -> renderCallout("keyidea", "Key idea", title, inner);
             case "takeaway", "takeaways", "summary" -> renderCallout("takeaway", "Takeaway", title, inner);
-            case "warning", "caution", "mistake", "common-mistake" ->
-                    renderCallout("warning", "Common mistake", title, inner);
+            case "warning", "caution" -> renderCallout("warning", "Warning", title, inner);
+            case "mistake", "common-mistake" -> renderCallout("mistake", "Common mistake", title, inner);
             case "example" -> renderCallout("example", "Example", title, inner);
             case "exercise", "practice" -> renderCallout("exercise", "Exercise", title, inner);
             case "tip" -> renderCallout("tip", "Tip", title, inner);
@@ -837,9 +1069,21 @@ public class EbookContentRenderer {
     /** A large editorial pull quote (no label). */
     private String renderPullQuote(String inner) {
         String text = inner.replaceFirst("^>\\s?", "").strip();
-        return "<div class=\"cmp cmp--pullquote\"><div class=\"cmp-body\">"
-                + renderBody(text) + "</div></div>";
+        // A final line "— Source" is the quotation's source, set under it.
+        String source = null;
+        int nl = text.lastIndexOf('\n');
+        String last = (nl < 0 ? text : text.substring(nl + 1)).strip();
+        if (nl >= 0 && SOURCE_LINE.matcher(last).matches()) {
+            source = last.replaceFirst("^(—|--|–)\\s*", "").strip();
+            text = text.substring(0, nl).strip();
+        }
+        return "<div class=\"cmp cmp--pullquote\"><div class=\"cmp-body\">" + renderBody(text) + "</div>"
+                + (source == null || source.isEmpty() ? "" : "<div class=\"cmp-source\">— " + escape(source) + "</div>")
+                + "</div>";
     }
+
+    /** A quotation's source line: "— Ansel Adams" (an em dash, en dash or "--" first). */
+    static final Pattern SOURCE_LINE = Pattern.compile("^(—|--|–)\\s*\\S.*$");
 
     /**
      * An action plan: numbered steps, each with a title, an optional duration/meta

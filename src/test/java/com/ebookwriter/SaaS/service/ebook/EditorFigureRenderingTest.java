@@ -51,7 +51,7 @@ class EditorFigureRenderingTest {
     void editorFiguresBecomePlacedNumberedFigures() {
         UUID id = UUID.randomUUID();
         String md = "Intro paragraph.\n\n" + figure(id, "right", 42, "4:5", "Birds &amp; foliage.")
-                + "\n\nText that wraps.\n\n" + figure(id, "full", 100, "16:9", "") + "\n\n---\n\nEnd.";
+                + "\n\nText that wraps.\n\n" + figure(id, "full", 100, "16:9", "Late light.") + "\n\n---\n\nEnd.";
         RenderContext ctx = new RenderContext();
         ctx.startChapter(2);
         Document doc = Jsoup.parseBodyFragment(new EbookContentRenderer().toHtml(md, ctx));
@@ -68,7 +68,7 @@ class EditorFigureRenderingTest {
         assertTrue(full.hasClass("bleed") && full.selectFirst("img").hasClass("bleed"));
         assertEquals("Fig. 2.2", full.selectFirst(".figure-num").text());
         assertNull(doc.selectFirst("figure.ebook-figure"), "no raw editor figure remains");
-        assertNotNull(doc.selectFirst("div.divider"), "the divider is set as an ornament");
+        assertNotNull(doc.selectFirst("div.divider--line"), "a bare --- is the thin-line divider");
     }
 
     @Test

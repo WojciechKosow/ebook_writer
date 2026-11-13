@@ -46,12 +46,23 @@ public final class RenderContext {
     private final List<Note> notes = new ArrayList<>();
     private int chapter;
     private RenderOptions options = RenderOptions.FULL;
+    private boolean autoDropCap;
     private int refs;
 
     /** Mark the chapter being rendered (its chapter number); notes are attributed to it. */
     /** What this render prints besides the chapters (cover, contents). */
     public RenderOptions options() {
         return options;
+    }
+
+    /** Whether each chapter's opening paragraph gets an initial (whole-book renders do, as in the editor). */
+    public boolean autoDropCap() {
+        return autoDropCap;
+    }
+
+    public RenderContext withAutoDropCap(boolean on) {
+        this.autoDropCap = on;
+        return this;
     }
 
     public RenderContext withOptions(RenderOptions options) {

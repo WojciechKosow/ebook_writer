@@ -34,6 +34,25 @@ public class EbookContentUpdateRequest {
     @Pattern(regexp = "editorial|framed|type")
     private String coverLayout;
 
+    /** The book's type from the Style tab; null leaves it as it is. */
+    @Valid
+    private Typography typography;
+
+    /** Font keys and spacing names as the editor names them (see BookTypography). */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Typography {
+        @Pattern(regexp = "news|bodoni|lora|merri|playfair|bask|georgia|source|inter|mont")
+        private String body;
+        @Pattern(regexp = "news|bodoni|lora|merri|playfair|bask|georgia|source|inter|mont|same")
+        private String heading;
+        @Pattern(regexp = "compact|normal|airy")
+        private String lineHeight;
+        @Pattern(regexp = "tight|normal|open")
+        private String paragraphSpacing;
+    }
+
     /**
      * Rebuild the PDF as part of this save. Defaults to true; the editor's
      * autosave sends false and the PDF is rebuilt on export or download.

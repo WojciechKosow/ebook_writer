@@ -96,13 +96,26 @@ em { font-style: italic; }
 
 a { color: inherit; text-decoration: none; }
 
+/* A quotation in the editor's "Editorial" style: italic, indented, an accent
+   quotation mark; "Left rule" ({.quote-rule}) draws a rule instead. */
 blockquote {
-    margin: 1em 0;
-    padding: 0.1em 0 0.1em 1em;
-    border-left: 2px solid #d8d3c9;
+    margin: 1.1em 0;
+    padding: 0.1em 0 0.1em 1.3em;
     color: #4a4a4a;
     font-style: italic;
 }
+blockquote:before {
+    content: "\201C";
+    float: left;
+    margin-left: -0.62em;
+    margin-top: -0.12em;
+    font-style: normal;
+    font-size: 2.2em;
+    line-height: 1;
+    color: #A8834C;
+}
+blockquote.quote-rule { border-left: 2px solid #A8834C; padding-left: 1em; color: #1F1C18; }
+blockquote.quote-rule:before { content: none; display: none; }
 
 code {
     font-family: "Ebook Mono";
@@ -469,6 +482,8 @@ th {
 /* The PDF renderer clips to the page's text area, so a full-bleed photo is set
    across the whole column (the widest it can print on a body page). */
 .chapter-body figure.figure--full { margin: 1.4em 0; clear: both; }
+.figure--column.figure--align-left { margin-left: 0; margin-right: auto; }
+.figure--column.figure--align-right { margin-left: auto; margin-right: 0; }
 .figure--left { float: left; clear: left; margin: 0.25em 1.3em 0.7em 0; }
 .figure--right { float: right; clear: right; margin: 0.25em 0 0.7em 1.3em; }
 .figure--editor figcaption {
@@ -491,15 +506,55 @@ th {
     color: #7A5C30;
     margin-right: 0.7em;
 }
-/* The editor's section break. */
+/* The editor's section dividers: a thin line, an ornament, or three dots. */
 .divider {
     clear: both;
     text-align: center;
     color: #A8834C;
-    letter-spacing: 0.9em;
-    padding-left: 0.9em;
     margin: 1.6em 0;
     page-break-after: avoid;
+}
+.divider--line { border-top: 1px solid #d8d0c2; height: 0; margin: 1.9em 0; }
+.divider--dots { letter-spacing: 0.9em; padding-left: 0.9em; }
+.divider--ornament { line-height: 1; }
+.divider--ornament .orn-rule {
+    display: inline-block;
+    width: 2.6em;
+    height: 0;
+    border-top: 1px solid #C2A77A;
+    vertical-align: middle;
+}
+.divider--ornament .orn-dia {
+    display: inline-block;
+    width: 4.5pt;
+    height: 4.5pt;
+    border: 1px solid #A8834C;
+    margin: 0 0.8em;
+    vertical-align: middle;
+    transform: rotate(45deg);
+}
+
+/* Paragraph and heading attributes from the editor. */
+.chapter-body .align-center { text-align: center; }
+.chapter-body .align-right { text-align: right; }
+.chapter-body .align-left { text-align: left; }
+.dropcap-letter {
+    float: left;
+    font-size: 3.4em;
+    line-height: 0.82em;
+    margin: 0.07em 0.08em 0 0;
+    padding: 0;
+    color: #1F1C18;
+}
+/* A short paragraph never lets its initial run into the next block. */
+p.dropcap { min-height: 2.95em; }
+p.dropcap + * { clear: left; }
+/* A heading 1 inside a chapter: one step below the chapter title. */
+.chapter-body h1 {
+    font-size: 19pt;
+    font-weight: bold;
+    letter-spacing: -0.015em;
+    margin: 1.4em 0 0.5em;
 }
 
 /* Components, tables and dividers start below a wrapped photo. */
@@ -629,13 +684,37 @@ li { orphans: 2; widows: 2; }
 }
 .cmp--exercise .cmp-label { color: #1a1a1a; }
 
-/* --- Warning / common mistake --- */
-.cmp--warning {
+/* --- Common mistake --- */
+.cmp--mistake {
     border-left: 3px solid #9a5b12;
     background: #faf6ee;
     padding: 0.75em 1.1em;
 }
-.cmp--warning .cmp-label { color: #9a5b12; }
+.cmp--mistake .cmp-label { color: #9a5b12; }
+
+/* --- Warning, tip and note: a subtle tint and a coloured rule, as in the editor --- */
+.cmp--warning {
+    border-top: 1px solid #B9862F;
+    background: #F8EFDF;
+    padding: 0.75em 1.1em;
+}
+.cmp--warning .cmp-label { color: #7E5612; }
+.cmp--tip {
+    border-left: 0;
+    border-top: 1px solid #6E8A69;
+    background: #F1F3EC;
+    padding: 0.75em 1.1em;
+    color: #24211b;
+}
+.cmp--tip .cmp-label { color: #46603F; }
+.cmp--note {
+    border-left: 0;
+    border-top: 1px solid #6C8295;
+    background: #F0F2F2;
+    padding: 0.75em 1.1em;
+    color: #24211b;
+}
+.cmp--note .cmp-label { color: #455A6C; }
 
 /* --- Done when: a positive completion criterion --- */
 .cmp--donewhen {
@@ -665,6 +744,16 @@ li { orphans: 2; widows: 2; }
     color: #2b271f;
 }
 .cmp--pullquote .cmp-body p { text-align: center; margin: 0; }
+.cmp--pullquote .cmp-source,
+blockquote p.quote-source {
+    font-family: "Ebook Sans";
+    font-style: normal;
+    font-size: 7.5pt;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #6E665A;
+}
+.cmp--pullquote .cmp-source { text-align: center; margin-top: 0.8em; }
 .cmp--pullquote:before {
     content: "";
     display: block;

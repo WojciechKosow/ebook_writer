@@ -134,6 +134,17 @@ public class EbookPreviewService {
      */
     String buildPreviewHtml(Ebook ebook, List<EbookChapter> chapters, List<EbookImage> images) {
         String html = htmlBuilder.build(ebook, chapters, previewCss(), images);
+        BookTypography typo = BookTypography.of(ebook);
+        if (typo != null) {
+            // The browser has no "Book Body" family: name the Google fonts themselves.
+            String body = BookTypography.FAMILIES.get(typo.body());
+            String head = BookTypography.FAMILIES.get(typo.headingKey());
+            html = html.replace("\"" + BookTypography.BODY_FAMILY + "\"", "'" + body + "',serif")
+                    .replace("\"" + BookTypography.HEADING_FAMILY + "\"", "'" + head + "',serif")
+                    .replaceFirst("<style>", "<style>@import url('https://fonts.googleapis.com/css2?family="
+                            + body.replace(' ', '+') + ":ital,wght@0,400;0,500;0,700;1,400;1,700&family="
+                            + head.replace(' ', '+') + ":ital,wght@0,400;0,500;0,700;1,400;1,700&display=swap');\n");
+        }
         return inlineImages(html, images, EbookHtmlBuilder.coverImage(images),
                 EbookHtmlBuilder.coverRegionRatio(ebook, images));
     }

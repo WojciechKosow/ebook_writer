@@ -106,7 +106,7 @@ class EbookPreviewServiceTest {
         String html = service.renderPreviewFromContent(ebookId, userId, req);
 
         assertTrue(html.contains("Draft chapter"), "posted title should render");
-        assertTrue(html.contains("Fresh unsaved text."), "posted body should render");
+        assertTrue(org.jsoup.Jsoup.parse(html).text().contains("Fresh unsaved text."), "posted body should render");
         assertTrue(html.contains("data:image/png;base64,"), "stored image should inline");
         assertFalse(html.contains(EbookImage.REF_SCHEME), "image token should be resolved");
     }

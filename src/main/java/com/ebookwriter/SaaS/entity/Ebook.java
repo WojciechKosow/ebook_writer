@@ -246,6 +246,20 @@ public class Ebook {
     private String editorCoverStyle;
 
     /**
+     * The book's type from the editor's Style tab (see {@code BookTypography}):
+     * body and heading font keys, line height and paragraph spacing. All null
+     * until the author chooses; the PDF then keeps its classic fonts.
+     */
+    @Column(length = 16)
+    private String bookBodyFont;
+    @Column(length = 16)
+    private String bookHeadingFont;
+    @Column(length = 16)
+    private String bookLineHeight;
+    @Column(length = 16)
+    private String bookParagraphSpacing;
+
+    /**
      * True when the manuscript was saved from the editor without rebuilding the
      * PDF (autosave). The stored PDF is then out of date and is rebuilt on the
      * next export or download.

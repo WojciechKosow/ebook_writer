@@ -28,6 +28,8 @@ public class EbookContentResponse {
     private String authorName;
     /** The editor's cover layout (editorial, framed or type); null = classic. */
     private String coverLayout;
+    /** The book's type from the Style tab, or null when never chosen (the editor shows its defaults). */
+    private com.ebookwriter.SaaS.request.EbookContentUpdateRequest.Typography typography;
     private boolean editable;
     private List<ChapterContentDTO> chapters;
 
@@ -44,6 +46,9 @@ public class EbookContentResponse {
                 .subtitle(ebook.getSubtitle())
                 .authorName(ebook.getAuthorName())
                 .coverLayout(com.ebookwriter.SaaS.service.ebook.EbookHtmlBuilder.editorCoverStyle(ebook, hasCover))
+                .typography(ebook.getBookBodyFont() == null ? null
+                        : new com.ebookwriter.SaaS.request.EbookContentUpdateRequest.Typography(ebook.getBookBodyFont(),
+                        ebook.getBookHeadingFont(), ebook.getBookLineHeight(), ebook.getBookParagraphSpacing()))
                 .editable(ebook.getStatus() == EbookStatus.COMPLETED)
                 .chapters(chapters.stream().map(ChapterContentDTO::from).toList())
                 .build();

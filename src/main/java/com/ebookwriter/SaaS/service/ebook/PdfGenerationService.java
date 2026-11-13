@@ -489,6 +489,7 @@ public class PdfGenerationService {
         PdfRendererBuilder builder = new PdfRendererBuilder();
         builder.useFastMode();
         registerFonts(builder);
+        registerBookFonts(builder, jsoupDoc.body() == null ? "" : jsoupDoc.body().attr("data-book-fonts"));
         builder.useUnicodeLineBreaker(new CodeBreakLineBreaker());
         builder.useProtocolsStreamImplementation(r2StreamFactory(overrides), R2_PROTOCOL);
         builder.withW3cDocument(dom, "/");
@@ -589,6 +590,41 @@ public class PdfGenerationService {
         builder.useFont(font("LiberationSans-Bold.ttf"), "Ebook Sans", 700, FontStyle.NORMAL, true);
         builder.useFont(font("LiberationMono-Regular.ttf"), "Ebook Mono", 400, FontStyle.NORMAL, true);
     }
+
+    /**
+     * The book's own type ({@link BookTypography}): each {@code key:Family} pair
+     * the builder wrote on the document registers that bundled font's files under
+     * the family the stylesheet asks for.
+     */
+    private void registerBookFonts(PdfRendererBuilder builder, String spec) {
+        if (spec == null || spec.isBlank()) {
+            return;
+        }
+        for (String pair : spec.trim().split(" (?=[a-z]+:)")) {
+            int colon = pair.indexOf(':');
+            if (colon < 0) {
+                continue;
+            }
+            String key = pair.substring(0, colon);
+            String family = pair.substring(colon + 1);
+            if (!BookTypography.FAMILIES.containsKey(key)) {
+                continue;
+            }
+            for (int weight : new int[]{400, 500, 700}) {
+                bookFont(builder, key + "-" + weight + ".ttf", family, weight, FontStyle.NORMAL);
+            }
+            bookFont(builder, key + "-400i.ttf", family, 400, FontStyle.ITALIC);
+            bookFont(builder, key + "-700i.ttf", family, 700, FontStyle.ITALIC);
+        }
+    }
+
+    private void bookFont(PdfRendererBuilder builder, String file, String family, int weight, FontStyle style) {
+        if (getClass().getResource(BOOK_FONT_DIR + file) != null) {
+            builder.useFont(() -> getClass().getResourceAsStream(BOOK_FONT_DIR + file), family, weight, style, true);
+        }
+    }
+
+    private static final String BOOK_FONT_DIR = "/fonts/book/";
 
     /** Supplies a fresh classpath stream each time openhtmltopdf asks for the font. */
     private FSSupplier<InputStream> font(String fileName) {

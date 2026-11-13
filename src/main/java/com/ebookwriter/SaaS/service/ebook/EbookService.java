@@ -616,6 +616,13 @@ public class EbookService {
         if (request.getCoverLayout() != null) {
             ebook.setEditorCoverStyle(request.getCoverLayout());
         }
+        if (request.getTypography() != null && request.getTypography().getBody() != null) {
+            var t = request.getTypography();
+            ebook.setBookBodyFont(t.getBody());
+            ebook.setBookHeadingFont(t.getHeading());
+            ebook.setBookLineHeight(t.getLineHeight());
+            ebook.setBookParagraphSpacing(t.getParagraphSpacing());
+        }
 
         // Reconcile asset usage against the edited Markdown (images moved between
         // chapters, inserted, or removed) so the library's placement info stays

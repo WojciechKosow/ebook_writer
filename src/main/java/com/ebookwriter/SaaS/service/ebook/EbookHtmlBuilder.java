@@ -69,6 +69,7 @@ public class EbookHtmlBuilder {
     public String build(Ebook ebook, List<EbookChapter> chapters, String css,
                         List<EbookImage> images, RenderContext ctx) {
         chapters = ReaderView.of(chapters);
+        ctx.withAutoDropCap(true); // each chapter opens with an initial, as in the editor
 
         EbookImage cover = coverImage(images);
         List<DocumentComposer.ChapterLayout> layouts = DocumentComposer.compose(ebook, chapters);
@@ -78,9 +79,13 @@ public class EbookHtmlBuilder {
         }
 
         StringBuilder html = new StringBuilder(64 * 1024);
+        BookTypography typo = BookTypography.of(ebook);
         html.append("<html><head><meta charset=\"UTF-8\"/><style>")
                 .append(css)
-                .append("</style></head><body>");
+                .append(typo == null ? "" : typo.css())
+                .append("</style></head><body")
+                .append(typo == null ? "" : " data-book-fonts=\"" + typo.fontSpec() + "\"")
+                .append(">");
 
         if (ctx.options().includeCover()) {
             appendCover(html, ebook, cover);

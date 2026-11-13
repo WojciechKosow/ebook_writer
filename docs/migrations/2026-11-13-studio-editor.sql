@@ -17,3 +17,10 @@ ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS pdf_stale boolean NOT NULL DEFAULT f
 -- New ledger type for the writing assistant. SchemaConstraintPatch drops the
 -- enum check on boot; run this only when that patch is disabled.
 ALTER TABLE credit_transactions DROP CONSTRAINT IF EXISTS credit_transactions_type_check;
+
+-- Book typography from the editor's Style tab (font keys and spacing names;
+-- all null until the author chooses — the PDF then keeps its classic fonts).
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS book_body_font varchar(16);
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS book_heading_font varchar(16);
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS book_line_height varchar(16);
+ALTER TABLE ebooks ADD COLUMN IF NOT EXISTS book_paragraph_spacing varchar(16);

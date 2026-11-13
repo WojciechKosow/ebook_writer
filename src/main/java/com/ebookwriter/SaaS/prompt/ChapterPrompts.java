@@ -134,7 +134,8 @@ public final class ChapterPrompts {
                   :::key-idea            one crucial insight, stated plainly
                   :::takeaway            a short summary of a section
                   :::pullquote           one memorable sentence, quoted for emphasis
-                  :::warning             a common mistake or caution
+                  :::common-mistake      a common mistake to avoid
+                  :::warning             a caution the reader must not miss
                   :::example             a concrete worked example
                   :::exercise Title      a practical task for the reader
                   :::done-when           a completion criterion (or just write a
