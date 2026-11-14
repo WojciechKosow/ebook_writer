@@ -112,10 +112,9 @@ public final class ChapterPrompts {
                 - Images: only if you are given "IMAGES AVAILABLE FOR THIS CHAPTER"
                   below, you MAY place one where it genuinely fits by writing its
                   exact token on its own line as: ![short caption](ebook-image:<id>)
-                  using the id given. These are the author's own images: when one
-                  comes with the author's note or a description of what it shows,
-                  place it right after the passage that discusses what it shows
-                  (or where the note says), write the caption from what it shows,
+                  using the id given. These are the author's own images: place each
+                  where the author wants it (when given), right after the passage
+                  that discusses what it shows; write the caption from what it shows,
                   and refer to it in the text ("In the photo below, the window is
                   on her left…") — describe only what the description says is in
                   it, never invent details. Use an image only if it clearly belongs;

@@ -28,11 +28,15 @@ public final class AssetPlacementPrompts {
                 you can see are attached after the list; an image without an attachment can only
                 be judged from its note, file name and dimensions.
 
-                THE AUTHOR'S NOTE COMES FIRST
-                - Many images have a note from the author ("the window-light example for
-                  chapter 2", "my client doing a goblet squat — use it in the technique part").
-                  Follow it: place the image where the note says, unless that chapter does not
-                  exist. Use the note's wording for what the image is meant to show.
+                THE AUTHOR'S NOTE SAYS WHERE IT GOES — YOU SAY WHAT IT SHOWS
+                - Many images have a note from the author on where they want it in the book
+                  ("chapter 2, next to the window-light setup", "the opening of the posing
+                  chapter", "the technique part"). Follow it: place the image where the note
+                  says, unless that chapter does not exist (then use the closest match).
+                - The note is about PLACEMENT, not a description. Look at the image yourself
+                  and describe what YOU see; never copy the note into the description or the
+                  analysis, and if the image doesn't show what the note suggests, describe
+                  what it really shows.
 
                 For EACH image decide exactly one:
                 - "cover"   — it works as the book's cover (at most ONE image in total).
@@ -48,7 +52,9 @@ public final class AssetPlacementPrompts {
                 - A logo suits the cover or an "about" section; a portrait of the author suits
                   an author/about section.
 
-                Describe what you SEE, factually and specifically, as it matters for this book:
+                Describe what you SEE, factually and specifically, as it matters for this book
+                (for an image that is not attached, say only what its note and file name tell
+                you, and say that it was not seen):
                 - "analysis": 2–4 sentences — the subject, and what the image demonstrates for
                   this book's topic (for a photo: direction and quality of the light, shadows,
                   background, framing, depth of field, expression or pose; for a fitness photo:
@@ -105,7 +111,7 @@ public final class AssetPlacementPrompts {
             }
             assetsText.append(attached.contains(a.getId()) ? " | attached below" : " | not attached (judge from the note)");
             if (a.getAuthorNote() != null && !a.getAuthorNote().isBlank()) {
-                assetsText.append("\n      AUTHOR'S NOTE: ").append(a.getAuthorNote().strip().replace("\n", " "));
+                assetsText.append("\n      WHERE THE AUTHOR WANTS IT: ").append(a.getAuthorNote().strip().replace("\n", " "));
             }
             assetsText.append("\n");
         }

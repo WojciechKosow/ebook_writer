@@ -37,7 +37,7 @@ public final class BriefPrompts {
                 - ONE practical element where it fits (an example, an exercise, a checklist), drawn
                   from the material when the material has one.
                 - IMAGES: if the chapter lists the author's images, name the section each one goes
-                  in (follow the author's note) and what the text should point out in it.
+                  in (where the author wants it, when given) and what the text should point out in it.
                 - NOT HERE: topics this chapter must leave to another chapter (name the chapter), so
                   the book never explains the same thing twice.
                 - GAPS: what the material does not provide and the writer must not invent.

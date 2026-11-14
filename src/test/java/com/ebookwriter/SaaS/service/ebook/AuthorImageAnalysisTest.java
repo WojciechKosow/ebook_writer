@@ -109,7 +109,7 @@ class AuthorImageAnalysisTest {
         assertEquals(photo.getId().toString(), seen.label());
         BufferedImage scaled = ImageIO.read(new ByteArrayInputStream(seen.bytes()));
         assertEquals(VisionImage.MAX_EDGE, Math.max(scaled.getWidth(), scaled.getHeight()), "downscaled for the model");
-        assertTrue(prompt.getValue().contains("AUTHOR'S NOTE: Side-light example — chapter 1"), "the note is in the request");
+        assertTrue(prompt.getValue().contains("WHERE THE AUTHOR WANTS IT: Side-light example — chapter 1"), "the note is in the request");
 
         assertEquals(EbookImagePlacement.CHAPTER, photo.getPlacement());
         assertEquals(light, photo.getChapter());
@@ -120,7 +120,7 @@ class AuthorImageAnalysisTest {
         // The chapter writer gets the note and what the photo shows.
         String forWriter = ChapterGenerationService.describeForWriter(photo);
         assertTrue(forWriter.contains("ebook-image:" + photo.getId()));
-        assertTrue(forWriter.contains("The author's note (follow it): Side-light example"));
+        assertTrue(forWriter.contains("Where the author wants it (follow it): Side-light example"));
         assertTrue(forWriter.contains("What the image shows: Soft window light from camera left"));
     }
 

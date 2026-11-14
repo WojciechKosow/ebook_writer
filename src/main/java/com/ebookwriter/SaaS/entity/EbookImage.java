@@ -106,10 +106,9 @@ public class EbookImage {
     private String aiDescription;
 
     /**
-     * The author's own note on this image: what it shows, why it matters and
-     * where in the book it belongs ("the window-light example for chapter 2,
-     * next to the 0.5–1.5 m setup"). The highest-priority signal for placing it
-     * and for how the writer refers to it.
+     * The author's own note on where this image goes in the book ("chapter 2,
+     * next to the 0.5–1.5 m window-light setup"). The highest-priority signal for
+     * placing it; what it shows comes from the AI looking at it ({@link #aiAnalysis}).
      */
     @Column(columnDefinition = "text")
     private String authorNote;
