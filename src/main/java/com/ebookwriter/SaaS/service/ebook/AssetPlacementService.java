@@ -89,7 +89,6 @@ public class AssetPlacementService {
             List<EbookImage> batch = assets.subList(from, Math.min(assets.size(), from + IMAGES_PER_REQUEST));
             try {
                 List<VisionImage> images = look(batch);
-                seen += images.size();
                 Set<UUID> attached = new HashSet<>();
                 images.forEach(i -> attached.add(UUID.fromString(i.label())));
                 String user = AssetPlacementPrompts.user(ebook, chapters, batch, attached);
@@ -99,6 +98,7 @@ public class AssetPlacementService {
                         : anthropicService.completeWithImages(system, user, images, AssetPlacementPrompts.OUTRO,
                                 PLACEMENT_MAX_TOKENS, model);
                 coverTaken = apply(parse(raw), batch, chapters, coverTaken);
+                seen += images.size(); // counted once the model has actually answered
             } catch (RuntimeException e) {
                 // Assets are a nice-to-have; never fail a generation because placement
                 // planning hiccuped. The book is still produced (text + any cover the

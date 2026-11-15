@@ -95,6 +95,24 @@ class AnthropicServiceFailureTest {
     }
 
     @Test
+    void aRejectedApiKeyIsReportedAsTheServiceBeingUnavailable() {
+        com.anthropic.errors.UnauthorizedException unauthorized = com.anthropic.errors.UnauthorizedException.builder()
+                .headers(Headers.builder().build())
+                .body(JsonValue.from(Map.of("type", "error", "error",
+                        Map.of("type", "authentication_error", "message", "invalid x-api-key"))))
+                .build();
+        when(messages.create(any(MessageCreateParams.class))).thenThrow(unauthorized);
+
+        AiServiceUnavailableException e = assertThrows(AiServiceUnavailableException.class,
+                () -> service.complete("system", "user", 1000));
+
+        assertEquals(401, e.status());
+        assertEquals(AiServiceUnavailableException.USER_MESSAGE, e.getMessage(), "no API JSON for the author");
+        assertTrue(e.detail().contains("invalid x-api-key"), "the operator still gets the API's explanation");
+        verify(messages, times(1)).create(any(MessageCreateParams.class));
+    }
+
+    @Test
     void whenRetriesRunOutTheCauseIsInTheMessage() {
         InternalServerException down = InternalServerException.builder()
                 .statusCode(529)

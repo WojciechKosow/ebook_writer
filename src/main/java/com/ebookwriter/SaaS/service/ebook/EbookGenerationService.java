@@ -14,6 +14,8 @@ import com.ebookwriter.SaaS.entity.EbookStatus;
 import com.ebookwriter.SaaS.repository.EbookImageRepository;
 import com.ebookwriter.SaaS.repository.EbookChapterRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
+import com.ebookwriter.SaaS.service.ai.AiServiceUnavailableException;
+import com.ebookwriter.SaaS.service.ai.AnthropicService;
 import com.ebookwriter.SaaS.service.credit.CreditPricing;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import lombok.RequiredArgsConstructor;
@@ -78,6 +80,8 @@ public class EbookGenerationService {
     private final EbookImageRepository imageRepository;
     private final BookTemplateService bookTemplateService;
     private final ChapterBriefService chapterBriefService;
+    /** Only to check, before a book starts, that the AI service accepts this server. */
+    private final AnthropicService anthropicService;
 
     @Async("ebookExecutor")
     public void generate(UUID ebookId) {
@@ -96,6 +100,10 @@ public class EbookGenerationService {
     private void run(UUID ebookId, boolean resume) {
         log.info("{} generation for ebook {}", resume ? "Resuming" : "Starting", ebookId);
         try {
+            // Before any step: does the AI service accept us? A rejected key would
+            // otherwise fail every step one by one (the best-effort ones silently).
+            anthropicService.verifyAccess(anthropicProperties.getModel());
+
             boolean knowledgeBased = ebookRepository.findById(ebookId).map(Ebook::isKnowledgeBased).orElse(false);
             boolean planned = resume && !chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).isEmpty();
 
@@ -218,6 +226,10 @@ public class EbookGenerationService {
             updateStatus(ebookId, EbookStatus.COMPLETED, 100);
             log.info("Finished generation for ebook {}", ebookId);
 
+        } catch (AiServiceUnavailableException e) {
+            log.error("Generation failed for ebook {}: the AI service rejects this server (HTTP {}): {}",
+                    ebookId, e.status(), e.detail());
+            fail(ebookId, e);
         } catch (Exception e) {
             log.error("Generation failed for ebook {}", ebookId, e);
             fail(ebookId, e);
@@ -376,6 +388,8 @@ public class EbookGenerationService {
         try {
             chapterGenerationService.generate(ebookId, chapter.getId(), directive);
             return true;
+        } catch (AiServiceUnavailableException e) {
+            throw e; // the service refuses this server: no chapter can be written, stop the book now
         } catch (RuntimeException e) {
             log.warn("Chapter {} of ebook {} failed: {}", chapter.getChapterNumber(), ebookId, e.getMessage());
             chapterRepository.findById(chapter.getId()).ifPresent(c -> {

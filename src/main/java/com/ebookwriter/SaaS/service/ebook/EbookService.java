@@ -26,6 +26,7 @@ import com.ebookwriter.SaaS.service.credit.CreditPricing;
 import com.ebookwriter.SaaS.service.credit.CreditService;
 import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,6 +44,7 @@ import java.util.stream.Collectors;
  * kicking off async generation, status reads, and PDF retrieval, all scoped to
  * the owning user.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class EbookService {
@@ -403,8 +405,15 @@ public class EbookService {
     public Ebook resume(UUID ebookId, UUID userId) {
         Ebook ebook = ebookRepository.findByIdAndUserId(ebookId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Ebook not found"));
-        if (!isResumable(ebook, chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId))) {
+        List<EbookChapter> existing = chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId);
+        if (!isResumable(ebook, existing)) {
             throw new IllegalStateException("This ebook cannot be resumed.");
+        }
+        if (!hasWrittenChapter(existing)) {
+            // Nothing was written (e.g. the AI service was unreachable): there is
+            // nothing to keep, so the same book starts again from its draft — the
+            // brief, materials, blueprint and images are all still there.
+            return restart(ebook, existing, userId);
         }
         if (ebook.isKnowledgeBased() && blueprintService.getGenerationInput(ebookId).isEmpty()) {
             throw new IllegalStateException("The book's knowledge or blueprint changed; it can't be resumed.");
@@ -443,14 +452,61 @@ public class EbookService {
     }
 
     /**
-     * A FAILED book whose billing was never settled and that has a plan with at
-     * least one chapter already written can be resumed.
+     * A FAILED book whose billing was never settled can be tried again: with
+     * chapters already written it is resumed (they are kept), otherwise it is
+     * started again from its draft.
      */
     public static boolean isResumable(Ebook ebook, List<EbookChapter> chapters) {
         return ebook.getStatus() == EbookStatus.FAILED
-                && !ebook.isCreditsReconciled()
-                && chapters.stream().anyMatch(c -> c.getStatus() == ChapterStatus.WRITTEN
+                && !ebook.isCreditsReconciled();
+    }
+
+    private static boolean hasWrittenChapter(List<EbookChapter> chapters) {
+        return chapters.stream().anyMatch(c -> c.getStatus() == ChapterStatus.WRITTEN
                 || c.getStatus() == ChapterStatus.EDITED);
+    }
+
+    /**
+     * Start a failed book with no written chapter again, exactly as the author set
+     * it up: its plan is dropped (images placed in a chapter go back to the pool,
+     * with the author's notes; the cover stays), the book returns to a
+     * draft and {@link #start} runs as for a new book — scope, readiness and a fresh
+     * credit hold. If starting is refused (e.g. too few credits) the book stays a
+     * draft with everything kept, ready to start once the author can.
+     */
+    private Ebook restart(Ebook ebook, List<EbookChapter> planned, UUID userId) {
+        UUID ebookId = ebook.getId();
+        if (ebook.getCreditsCharged() > 0 && !ebook.isCreditsRefunded()) {
+            throw new IllegalStateException("This ebook's credits are still being settled — try again in a moment.");
+        }
+        if (!planned.isEmpty()) {
+            for (com.ebookwriter.SaaS.entity.EbookImage image : imageRepository.findByEbookIdOrderByCreatedAtAsc(ebookId)) {
+                if (image.getChapter() == null) {
+                    continue;
+                }
+                // Its chapter is about to go: back to the pool, to be placed again
+                // (the author's note on where it goes is kept).
+                image.setChapter(null);
+                image.setPlacement(com.ebookwriter.SaaS.entity.EbookImagePlacement.UNUSED);
+                image.setPlacedBy(null);
+                imageRepository.save(image);
+            }
+            chapterRepository.deleteAll(planned);
+        }
+        if (ebookRepository.claimStatus(ebookId, EbookStatus.FAILED, EbookStatus.DRAFT) == 0) {
+            throw new IllegalStateException("This ebook cannot be resumed.");
+        }
+        ebook.setStatus(EbookStatus.DRAFT);
+        ebook.setProgress(0);
+        ebook.setPageBudget(0);
+        ebook.setCreditsCharged(0);
+        ebook.setSubscriptionCreditsHeld(0);
+        ebook.setCreditsRefunded(false);
+        ebook.setErrorMessage(null);
+        ebook.setChapterTemplateJson(null);
+        ebookRepository.save(ebook);
+        log.info("Ebook {}: nothing was written before it failed; starting it again from its draft", ebookId);
+        return start(ebookId, userId);
     }
 
     /**
