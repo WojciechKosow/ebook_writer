@@ -1,6 +1,7 @@
 package com.ebookwriter.SaaS.service.ai;
 
 import com.anthropic.client.AnthropicClient;
+import com.anthropic.errors.AnthropicServiceException;
 import com.anthropic.models.messages.Base64ImageSource;
 import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.ImageBlockParam;
@@ -169,15 +170,24 @@ public class AnthropicService {
 
     private Completion send(MessageCreateParams params, long maxTokens, boolean trimStart) {
         RuntimeException last = null;
+        String model = params.model().asString();
+        int attempts = Math.max(1, properties.getMaxRetries());
 
-        for (int attempt = 1; attempt <= Math.max(1, properties.getMaxRetries()); attempt++) {
+        for (int attempt = 1; attempt <= attempts; attempt++) {
             try {
                 Message response = anthropicClient.messages().create(params);
                 // Token usage per call and model, so the real cost of a Basic- and a
                 // Better-model book can be measured against the page prices.
-                log.info("Anthropic usage: model={} input_tokens={} output_tokens={} max_tokens={}",
-                        params.model().asString(), response.usage().inputTokens(), response.usage().outputTokens(),
-                        maxTokens);
+                log.info("Anthropic usage: model={} input_tokens={} output_tokens={} max_tokens={} stop_reason={}",
+                        model, response.usage().inputTokens(), response.usage().outputTokens(), maxTokens,
+                        response.stopReason().map(StopReason::asString).orElse("none"));
+
+                // A refusal is the model's answer to this exact request: asking again
+                // gets the same answer, so the caller has to change the request.
+                if (response.stopReason().map(r -> r.equals(StopReason.REFUSAL)).orElse(false)) {
+                    log.warn("Anthropic model {} declined the request (stop_reason=refusal)", model);
+                    throw new ModelRefusalException(model);
+                }
 
                 String text = response.content().stream()
                         .flatMap(block -> block.text().stream())
@@ -185,25 +195,41 @@ public class AnthropicService {
                         .collect(Collectors.joining("\n"));
                 text = trimStart ? text.strip() : text.stripTrailing();
 
-                if (text.isEmpty()) {
-                    throw new IllegalStateException("Model returned no text content");
-                }
                 boolean truncated = response.stopReason()
                         .map(r -> r.equals(StopReason.MAX_TOKENS))
                         .orElse(false);
+                if (text.isEmpty()) {
+                    throw new IllegalStateException(truncated
+                            ? "the model spent its whole output budget (" + maxTokens + " tokens) thinking and wrote no text"
+                            : "the model returned no text (stop_reason="
+                                    + response.stopReason().map(StopReason::asString).orElse("none") + ")");
+                }
                 if (truncated) {
                     log.warn("Anthropic completion hit the output-token limit ({} tokens)", maxTokens);
                 }
                 return new Completion(text, truncated);
 
+            } catch (ModelRefusalException e) {
+                throw e;
+            } catch (AnthropicServiceException e) {
+                if (NON_RETRYABLE.contains(e.statusCode())) {
+                    log.warn("Anthropic rejected the request to {} (HTTP {}): {}", model, e.statusCode(), e.getMessage());
+                    throw new ModelRequestRejectedException(e.statusCode(), e.getMessage(), e);
+                }
+                last = e;
+                log.warn("Anthropic completion attempt {}/{} on {} failed (HTTP {}): {}",
+                        attempt, attempts, model, e.statusCode(), e.getMessage());
             } catch (RuntimeException e) {
                 last = e;
-                log.warn("Anthropic completion attempt {}/{} failed: {}",
-                        attempt, properties.getMaxRetries(), e.getMessage());
+                log.warn("Anthropic completion attempt {}/{} on {} failed: {}", attempt, attempts, model, e.getMessage());
             }
         }
 
-        throw new RuntimeException("Anthropic completion failed after "
-                + properties.getMaxRetries() + " attempts", last);
+        // Keep the cause in the message: it is what the log and the failed chapter show.
+        throw new RuntimeException("Anthropic completion failed after " + attempts + " attempts"
+                + (last == null || last.getMessage() == null ? "" : ": " + last.getMessage()), last);
     }
+
+    /** Statuses that mean the request itself is wrong — the same request fails the same way again. */
+    private static final java.util.Set<Integer> NON_RETRYABLE = java.util.Set.of(400, 401, 403, 404, 413, 422);
 }

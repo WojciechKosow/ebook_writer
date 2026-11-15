@@ -594,7 +594,7 @@ class KnowledgeBookGenerationEndToEndTest {
         assertEquals(EbookStatus.COMPLETED, done.getStatus(), done.getErrorMessage());
         assertEquals(1, imagesSeen.get(), "the model was shown the photo itself");
         assertTrue(claude.calls.stream().anyMatch(c -> c.user().contains(
-                        "AUTHOR'S NOTE: Window-light portrait — put it in the JWT chapter")),
+                        "WHERE THE AUTHOR WANTS IT: Window-light portrait — put it in the JWT chapter")),
                 "the placement request carries the author's note");
     }
 

@@ -33,7 +33,8 @@ public class EbookImageUpdateRequest {
     private Integer focalY;
 
     /**
-     * The author's note: what the image shows and where it belongs in the book.
+     * The author's note on where the image goes in the book ("chapter 2, next to
+     * the window-light setup"). The AI still looks at the image itself for what it shows.
      * Null leaves it unchanged; blank clears it.
      */
     @jakarta.validation.constraints.Size(max = MAX_AUTHOR_NOTE)

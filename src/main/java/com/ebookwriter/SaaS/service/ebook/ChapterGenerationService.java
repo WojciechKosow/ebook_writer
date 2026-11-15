@@ -14,6 +14,7 @@ import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.config.properties.AnthropicProperties;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
 import com.ebookwriter.SaaS.service.ai.ModelChoice;
+import com.ebookwriter.SaaS.service.ai.ModelRefusalException;
 import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
 import com.ebookwriter.SaaS.service.knowledge.KnowledgeDocumentStore;
 import lombok.RequiredArgsConstructor;
@@ -106,8 +107,14 @@ public class ChapterGenerationService {
                 BookTemplate.fromJson(ebook.getChapterTemplateJson()),
                 chapter.getWritingBrief());
 
+        // The images placed in this chapter, with the author's notes and what the AI
+        // saw in each; and the same list without those details — what the chapter is
+        // written with if the model declines the detailed one.
+        String images = availableImages(chapterId, true);
+        String plainImages = availableImages(chapterId, false);
         String system;
         String userPrompt;
+        String plainImagesPrompt;
         if (ebook.isKnowledgeBased()) {
             BookGenerationInput input = blueprintService.getGenerationInput(ebookId)
                     .orElseThrow(() -> new IllegalStateException(
@@ -117,7 +124,11 @@ public class ChapterGenerationService {
             system = KnowledgeChapterPrompts.system(ebook.getLanguage());
             userPrompt = KnowledgeChapterPrompts.user(ebook, ManuscriptContext.outline(inBook), chapter,
                     ManuscriptContext.previousSummaries(inBook, chapter.getChapterNumber()), ctx, directive,
-                    availableImages(chapterId), positionOf(inBook, chapter), inBook.size(), writing);
+                    images, positionOf(inBook, chapter), inBook.size(), writing);
+            plainImagesPrompt = images.equals(plainImages) ? userPrompt
+                    : KnowledgeChapterPrompts.user(ebook, ManuscriptContext.outline(inBook), chapter,
+                            ManuscriptContext.previousSummaries(inBook, chapter.getChapterNumber()), ctx, directive,
+                            plainImages, positionOf(inBook, chapter), inBook.size(), writing);
             log.info("Chapter {} of ebook {}: knowledge context {} chars ({} knowledge items, sources {}), prompt {} chars",
                     chapter.getChapterNumber(), ebookId, ctx.totalChars(), ctx.itemCount(), ctx.excerptRefs(),
                     userPrompt.length());
@@ -129,11 +140,15 @@ public class ChapterGenerationService {
                     chapter,
                     ManuscriptContext.previousSummaries(inBook, chapter.getChapterNumber()),
                     directive,
-                    availableImages(chapterId),
+                    images,
                     positionOf(inBook, chapter),
                     inBook.size(),
                     writing
             );
+            plainImagesPrompt = images.equals(plainImages) ? userPrompt
+                    : ChapterPrompts.user(ebook, ManuscriptContext.outline(inBook), chapter,
+                            ManuscriptContext.previousSummaries(inBook, chapter.getChapterNumber()), directive,
+                            plainImages, positionOf(inBook, chapter), inBook.size(), writing);
         }
 
         // No unit reaches the book incomplete. A response cut off by the output
@@ -154,8 +169,8 @@ public class ChapterGenerationService {
                     ebook.effectiveWritingQuality());
         }
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-            AnthropicService.Completion completion =
-                    LongForm.complete(anthropicService, system, userPrompt, maxTokens, writer);
+            AnthropicService.Completion completion = writeOnce(ebookId, chapter, system, userPrompt,
+                    plainImagesPrompt, maxTokens, writer);
             draft = Draft.parse(completion.text());
             problems = new ArrayList<>(CompletenessCheck.inspect(draft.content(), directive.finalChapter()));
             if (completion.truncated()) {
@@ -191,6 +206,50 @@ public class ChapterGenerationService {
         }
         log.info("Wrote chapter {}/{} of ebook {} ({} chars, ~{} pages)", chapter.getChapterNumber(),
                 chapters.size(), ebookId, content.length(), String.format(java.util.Locale.ROOT, "%.1f", pages));
+    }
+
+    /**
+     * One generation of the chapter. If the model declines it (a refusal is its
+     * answer to this exact request, so it is not simply sent again), the chapter
+     * is written from the plainer request — the images listed by caption only,
+     * without the author's notes and the AI's description of what they show, the
+     * part of a photographer's or trainer's book most likely to trip a safety
+     * check — and, on the Basic model, by the premium model. If every variant is
+     * declined, the chapter fails with a reason the author can act on.
+     */
+    private AnthropicService.Completion writeOnce(UUID ebookId, EbookChapter chapter, String system,
+                                                  String userPrompt, String plainImagesPrompt, long maxTokens,
+                                                  ModelChoice writer) {
+        try {
+            return LongForm.complete(anthropicService, system, userPrompt, maxTokens, writer);
+        } catch (ModelRefusalException refused) {
+            List<Fallback> fallbacks = new ArrayList<>();
+            if (!plainImagesPrompt.equals(userPrompt)) {
+                fallbacks.add(new Fallback(plainImagesPrompt, writer, "without the image details"));
+            }
+            ModelChoice premium = anthropicProperties == null ? null
+                    : anthropicProperties.writerFor(com.ebookwriter.SaaS.entity.WritingQuality.BETTER);
+            if (writer != null && premium != null && !premium.model().equals(writer.model())) {
+                fallbacks.add(new Fallback(plainImagesPrompt, premium, "with " + premium.model()));
+            }
+            for (Fallback f : fallbacks) {
+                log.warn("Chapter {} of ebook {}: the model declined it; writing it again {}",
+                        chapter.getChapterNumber(), ebookId, f.label());
+                try {
+                    return LongForm.complete(anthropicService, system, f.prompt(), maxTokens, f.writer());
+                } catch (ModelRefusalException again) {
+                    // try the next variant
+                }
+            }
+            boolean hasImages = !plainImagesPrompt.equals(userPrompt);
+            throw new ModelRefusalException(refused.model(), "the AI declined to write this chapter"
+                    + (hasImages ? ", even without the notes and descriptions of its images" : "")
+                    + ". Check the chapter's topic and the images placed in it (remove an image or change its "
+                    + "note), then resume the generation");
+        }
+    }
+
+    private record Fallback(String prompt, ModelChoice writer, String label) {
     }
 
     /** Full generations of a chapter before it fails as incomplete (each with its own continuations). */
@@ -256,12 +315,24 @@ public class ChapterGenerationService {
      * reader actually sees.
      */
     static String describeForWriter(EbookImage a) {
+        return describeForWriter(a, true);
+    }
+
+    /**
+     * As {@link #describeForWriter(EbookImage)}; with {@code details} false only the
+     * token and a short caption (no note, no analysis) — the plainer request used
+     * when the model declines the detailed one.
+     */
+    static String describeForWriter(EbookImage a, boolean details) {
         String desc = (a.getAiDescription() != null && !a.getAiDescription().isBlank())
                 ? a.getAiDescription().trim()
                 : (a.getOriginalFilename() != null ? a.getOriginalFilename() : "image");
         StringBuilder sb = new StringBuilder("  - token: ").append(a.markdownRef()).append(" | ").append(desc).append('\n');
+        if (!details) {
+            return sb.toString();
+        }
         if (a.getAuthorNote() != null && !a.getAuthorNote().isBlank()) {
-            sb.append("    The author's note (follow it): ").append(a.getAuthorNote().strip().replace("\n", " ")).append('\n');
+            sb.append("    Where the author wants it (follow it): ").append(a.getAuthorNote().strip().replace("\n", " ")).append('\n');
         }
         if (a.getAiAnalysis() != null && !a.getAiAnalysis().isBlank()) {
             sb.append("    What the image shows: ").append(a.getAiAnalysis().strip().replace("\n", " ")).append('\n');
@@ -269,14 +340,14 @@ public class ChapterGenerationService {
         return sb.toString();
     }
 
-    private String availableImages(UUID chapterId) {
+    private String availableImages(UUID chapterId, boolean details) {
         List<EbookImage> assigned = imageRepository.findByChapterId(chapterId);
         if (assigned.isEmpty()) {
             return "";
         }
         StringBuilder sb = new StringBuilder();
         for (EbookImage a : assigned) {
-            sb.append(describeForWriter(a));
+            sb.append(describeForWriter(a, details));
         }
         return sb.toString();
     }
