@@ -19,6 +19,7 @@ import com.ebookwriter.SaaS.repository.EbookPdfRepository;
 import com.ebookwriter.SaaS.repository.EbookRepository;
 import com.ebookwriter.SaaS.repository.UserRepository;
 import com.ebookwriter.SaaS.service.MailService;
+import com.ebookwriter.SaaS.service.ai.AiServiceUnavailableException;
 import com.ebookwriter.SaaS.service.ai.AnthropicService;
 import com.ebookwriter.SaaS.service.ai.ModelChoice;
 import com.ebookwriter.SaaS.service.blueprint.BookBlueprintService;
@@ -452,6 +453,51 @@ class KnowledgeBookGenerationEndToEndTest {
         assertEquals(expectedCharge(done), done.getCreditsCharged());
         assertEquals(balanceBefore - done.getCreditsCharged(), creditService.getBalance(user.getId()));
         mvc.perform(post("/api/ebooks/" + ebookId + "/resume").with(auth())).andExpect(status().isConflict());
+    }
+
+    @Test
+    void aRejectedApiKeyStopsTheBookAtOnceWithAPlainMessageAndAFullRefund() throws Exception {
+        UUID ebookId = readyKnowledgeBook();
+        int balanceBefore = creditService.getBalance(user.getId());
+        org.mockito.Mockito.doThrow(new AiServiceUnavailableException(401,
+                        "401: {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"}}", null))
+                .when(anthropic).verifyAccess(anyString());
+
+        mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth())).andExpect(status().isAccepted());
+        Ebook failed = awaitFinished(ebookId);
+
+        assertEquals(EbookStatus.FAILED, failed.getStatus());
+        assertEquals(AiServiceUnavailableException.USER_MESSAGE, failed.getErrorMessage(),
+                "the author sees a plain message, not the API's JSON");
+        assertTrue(claude.calls.isEmpty(), "nothing was sent to the model");
+        assertEquals(balanceBefore, creditService.getBalance(user.getId()), "the hold is refunded in full");
+
+        // Once the key is fixed, the same book is tried again with one click — nothing re-entered.
+        mvc.perform(get("/api/ebooks/" + ebookId).with(auth())).andExpect(jsonPath("$.resumable").value(true));
+        org.mockito.Mockito.doNothing().when(anthropic).verifyAccess(anyString());
+        mvc.perform(post("/api/ebooks/" + ebookId + "/resume").with(auth())).andExpect(status().isAccepted());
+        Ebook done = awaitFinished(ebookId);
+        assertEquals(EbookStatus.COMPLETED, done.getStatus(), done.getErrorMessage());
+        assertFalse(claude.knowledgeChapterCalls().isEmpty(), "the book was written this time");
+        assertEquals(balanceBefore - done.getCreditsCharged(), creditService.getBalance(user.getId()));
+    }
+
+    @Test
+    void aBookThatFailedBeforeAnyChapterWasWrittenIsStartedAgainFromItsDraft() throws Exception {
+        UUID ebookId = readyKnowledgeBook();
+        // Every chapter fails: the book has a plan but nothing written.
+        claude.failWhen = FakeClaude.Call::isKnowledgeChapter;
+        mvc.perform(post("/api/ebooks/" + ebookId + "/start").with(auth())).andExpect(status().isAccepted());
+        assertEquals(EbookStatus.FAILED, awaitFinished(ebookId).getStatus());
+        assertFalse(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).isEmpty(), "it was planned");
+
+        claude.failWhen = c -> false;
+        mvc.perform(post("/api/ebooks/" + ebookId + "/resume").with(auth())).andExpect(status().isAccepted());
+        Ebook done = awaitFinished(ebookId);
+
+        assertEquals(EbookStatus.COMPLETED, done.getStatus(), done.getErrorMessage());
+        assertTrue(chapterRepository.findByEbookIdOrderByChapterNumberAsc(ebookId).stream()
+                .allMatch(c -> c.getStatus() == ChapterStatus.EDITED), "planned and written afresh");
     }
 
     @Test

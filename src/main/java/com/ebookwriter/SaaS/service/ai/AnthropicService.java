@@ -212,6 +212,11 @@ public class AnthropicService {
             } catch (ModelRefusalException e) {
                 throw e;
             } catch (AnthropicServiceException e) {
+                if (e.statusCode() == 401 || e.statusCode() == 403) {
+                    log.error("Anthropic refuses this server's API key (HTTP {}) — set a valid ANTHROPIC_API_KEY: {}",
+                            e.statusCode(), e.getMessage());
+                    throw new AiServiceUnavailableException(e.statusCode(), e.getMessage(), e);
+                }
                 if (NON_RETRYABLE.contains(e.statusCode())) {
                     log.warn("Anthropic rejected the request to {} (HTTP {}): {}", model, e.statusCode(), e.getMessage());
                     throw new ModelRequestRejectedException(e.statusCode(), e.getMessage(), e);
@@ -228,6 +233,29 @@ public class AnthropicService {
         // Keep the cause in the message: it is what the log and the failed chapter show.
         throw new RuntimeException("Anthropic completion failed after " + attempts + " attempts"
                 + (last == null || last.getMessage() == null ? "" : ": " + last.getMessage()), last);
+    }
+
+    /**
+     * Check, without spending tokens, that the API accepts this server's key and
+     * knows {@code model} (a models lookup). Throws {@link AiServiceUnavailableException}
+     * for a rejected key, {@link ModelRequestRejectedException} for an unknown model;
+     * a network hiccup is only logged — the real calls retry on their own.
+     */
+    public void verifyAccess(String model) {
+        try {
+            anthropicClient.models().retrieve(model);
+        } catch (AnthropicServiceException e) {
+            if (e.statusCode() == 401 || e.statusCode() == 403) {
+                throw new AiServiceUnavailableException(e.statusCode(), e.getMessage(), e);
+            }
+            if (e.statusCode() == 404) {
+                throw new ModelRequestRejectedException(404, "model '" + model + "' is not available to this "
+                        + "API key: " + e.getMessage(), e);
+            }
+            log.warn("Anthropic access check for {} inconclusive (HTTP {}): {}", model, e.statusCode(), e.getMessage());
+        } catch (RuntimeException e) {
+            log.warn("Anthropic access check for {} inconclusive: {}", model, e.getMessage());
+        }
     }
 
     /** Statuses that mean the request itself is wrong — the same request fails the same way again. */
